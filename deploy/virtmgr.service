@@ -1,0 +1,36 @@
+[Unit]
+Description=VirtMgr Console
+Documentation=file:///root/projects/virtmgr/README.md
+After=network-online.target libvirtd.service virtqemud.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=virtmgr
+Group=virtmgr
+SupplementaryGroups=libvirt
+EnvironmentFile=/etc/virtmgr/virtmgr.env
+ExecStart=/usr/local/bin/virtmgr
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+StateDirectory=virtmgr
+StateDirectoryMode=0750
+ConfigurationDirectory=virtmgr
+ConfigurationDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

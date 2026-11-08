@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 97%;
+    --foreground: 220 27% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 27% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 27% 14%;
+    --primary: 214 90% 43%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 25% 95%;
+    --secondary-foreground: 220 27% 18%;
+    --muted: 215 24% 95%;
+    --muted-foreground: 218 11% 42%;
+    --accent: 214 100% 96%;
+    --accent-foreground: 214 90% 36%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 65% 25%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 30%;
+    --warning-foreground: 0 0% 100%;
+    --border: 216 20% 89%;
+    --input: 216 20% 87%;
+    --ring: 214 90% 43%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 28% 9%;
+    --foreground: 214 26% 94%;
+    --card: 222 26% 12%;
+    --card-foreground: 214 26% 94%;
+    --popover: 222 27% 11%;
+    --popover-foreground: 214 26% 94%;
+    --primary: 214 92% 66%;
+    --primary-foreground: 222 36% 10%;
+    --secondary: 218 22% 17%;
+    --secondary-foreground: 214 24% 92%;
+    --muted: 218 21% 16%;
+    --muted-foreground: 215 17% 68%;
+    --accent: 216 31% 20%;
+    --accent-foreground: 214 30% 96%;
+    --destructive: 0 76% 68%;
+    --destructive-foreground: 222 36% 10%;
+    --success: 152 56% 66%;
+    --success-foreground: 222 36% 10%;
+    --warning: 38 92% 62%;
+    --warning-foreground: 222 36% 10%;
+    --border: 217 20% 24%;
+    --input: 217 20% 28%;
+    --ring: 214 92% 68%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  #root {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    @apply bg-primary/15 text-foreground;
+  }
+}
+
+@layer utilities {
+  .soft-wrap {
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+}
