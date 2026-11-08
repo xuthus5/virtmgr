@@ -1,0 +1,92 @@
+name: Release Binary
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-linux-amd64:
+    name: Build Linux amd64 binary
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install libvirt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libvirt-dev \
+            pkg-config
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build release binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+          VERSION: ${{ github.event.release.tag_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          make frontend
+
+          commit="${COMMIT:0:12}"
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -trimpath \
+            -ldflags "-s -w -X virtmgr/internal/version.Version=${VERSION} -X virtmgr/internal/version.Commit=${commit} -X virtmgr/internal/version.Date=${build_date}" \
+            -o bin/virtmgr ./cmd/virtmgr
+
+          safe_version="${VERSION//\//-}"
+          asset_name="virtmgr_${safe_version}_linux_amd64"
+          mkdir -p release
+          cp bin/virtmgr "release/${asset_name}"
+          chmod 0755 "release/${asset_name}"
+          tar -C release -czf "release/${asset_name}.tar.gz" "${asset_name}"
+          (
+            cd release
+            sha256sum "${asset_name}" "${asset_name}.tar.gz" > checksums.txt
+          )
+
+          ./bin/virtmgr version | tee "release/version.txt"
+          test "$(./bin/virtmgr version)" = "virtmgr ${VERSION} (${commit}, ${build_date})"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtmgr-linux-amd64
+          path: release/
+          if-no-files-found: error
+
+      - name: Attach assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" release/* --clobber
