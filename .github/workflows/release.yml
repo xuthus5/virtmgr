@@ -12,9 +12,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-linux-amd64:
-    name: Build Linux amd64 binary
-    runs-on: ubuntu-24.04
+  build:
+    name: Build Linux ${{ matrix.arch }} binary
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
       - name: Check out release tag
@@ -51,7 +59,7 @@ jobs:
         env:
           CGO_ENABLED: "1"
           GOOS: linux
-          GOARCH: amd64
+          GOARCH: ${{ matrix.arch }}
           VERSION: ${{ github.event.release.tag_name }}
           COMMIT: ${{ github.sha }}
         run: |
@@ -66,25 +74,45 @@ jobs:
             -o bin/virtmgr ./cmd/virtmgr
 
           safe_version="${VERSION//\//-}"
-          asset_name="virtmgr_${safe_version}_linux_amd64"
+          asset_name="virtmgr_${safe_version}_linux_${GOARCH}"
           mkdir -p release
           cp bin/virtmgr "release/${asset_name}"
           chmod 0755 "release/${asset_name}"
           tar -C release -czf "release/${asset_name}.tar.gz" "${asset_name}"
-          (
-            cd release
-            sha256sum "${asset_name}" "${asset_name}.tar.gz" > checksums.txt
-          )
 
-          ./bin/virtmgr version | tee "release/version.txt"
+          ./bin/virtmgr version | tee "release/version_linux_${GOARCH}.txt"
           test "$(./bin/virtmgr version)" = "virtmgr ${VERSION} (${commit}, ${build_date})"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: virtmgr-linux-amd64
+          name: virtmgr-linux-${{ matrix.arch }}
           path: release/
           if-no-files-found: error
+
+  publish:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: virtmgr-linux-*
+          path: release
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd release
+          checksums_tmp="$(mktemp)"
+          find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > "${checksums_tmp}"
+          mv "${checksums_tmp}" checksums.txt
+          ls -lh
 
       - name: Attach assets to GitHub Release
         env:
