@@ -10,6 +10,8 @@ import (
 
 type Config struct {
 	Listen        string
+	TLSCertFile   string
+	TLSKeyFile    string
 	LibvirtURI    string
 	DatabasePath  string
 	HostName      string
@@ -28,6 +30,8 @@ func Load() (Config, error) {
 	}
 	cfg := Config{
 		Listen:        env("VIRTMGR_LISTEN", "127.0.0.1:8443"),
+		TLSCertFile:   env("VIRTMGR_TLS_CERT_FILE", ""),
+		TLSKeyFile:    env("VIRTMGR_TLS_KEY_FILE", ""),
 		LibvirtURI:    env("VIRTMGR_LIBVIRT_URI", "qemu:///system"),
 		DatabasePath:  env("VIRTMGR_DATABASE_PATH", "/var/lib/virtmgr/virtmgr.db"),
 		HostName:      env("VIRTMGR_HOST_NAME", hostname),
@@ -51,7 +55,14 @@ func Load() (Config, error) {
 	if strings.TrimSpace(cfg.DatabasePath) == "" {
 		return Config{}, fmt.Errorf("VIRTMGR_DATABASE_PATH must not be empty")
 	}
+	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+		return Config{}, fmt.Errorf("VIRTMGR_TLS_CERT_FILE and VIRTMGR_TLS_KEY_FILE must be configured together")
+	}
 	return cfg, nil
+}
+
+func (c Config) TLSEnabled() bool {
+	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
 func env(key, fallback string) string {

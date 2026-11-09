@@ -186,8 +186,17 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 	go a.scheduler.Run(ctx)
 	go a.cleanupExpiredSessions(ctx)
-	a.logger.Info("virtmgr_started", "version", version.Version, "listen", a.config.Listen, "demo", a.config.DemoMode, "read_only", a.config.ReadOnly)
-	err := a.server.ListenAndServe()
+	scheme := "http"
+	if a.config.TLSEnabled() {
+		scheme = "https"
+	}
+	a.logger.Info("virtmgr_started", "version", version.Version, "listen", a.config.Listen, "scheme", scheme, "demo", a.config.DemoMode, "read_only", a.config.ReadOnly)
+	var err error
+	if a.config.TLSEnabled() {
+		err = a.server.ListenAndServeTLS(a.config.TLSCertFile, a.config.TLSKeyFile)
+	} else {
+		err = a.server.ListenAndServe()
+	}
 	if errors.Is(err, stdhttp.ErrServerClosed) {
 		return nil
 	}

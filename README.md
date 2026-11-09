@@ -84,7 +84,9 @@ cd web && npm run dev
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `VIRTMGR_LISTEN` | `127.0.0.1:8443` | HTTP 监听地址 |
+| `VIRTMGR_LISTEN` | `127.0.0.1:8443` | 监听地址 |
+| `VIRTMGR_TLS_CERT_FILE` | 无 | 原生 HTTPS 证书路径，与私钥必须同时配置 |
+| `VIRTMGR_TLS_KEY_FILE` | 无 | 原生 HTTPS 私钥路径，与证书必须同时配置 |
 | `VIRTMGR_LIBVIRT_URI` | `qemu:///system` | libvirt 连接 URI |
 | `VIRTMGR_DATABASE_PATH` | `/var/lib/virtmgr/virtmgr.db` | SQLite 路径 |
 | `VIRTMGR_HOST_NAME` | 系统主机名 | 页面展示的主机名 |
@@ -96,6 +98,15 @@ cd web && npm run dev
 | `VIRTMGR_DEMO_MODE` | `false` | 使用确定性的 demo 数据，供 E2E 使用 |
 
 > 写操作会直接调用 libvirt。首次在真实宿主机启用前，请确认已具备备份、维护窗口和回滚预案。E2E 只在 `VIRTMGR_DEMO_MODE=true` 下执行写操作，不会触碰真实虚拟机。
+
+## HTTPS 部署
+
+VirtMgr 支持两种 HTTPS 接入方式：
+
+1. Cloudflare Tunnel（推荐）：应用只监听 `127.0.0.1:8443`，由 `cloudflared` 建立出站连接，无需开放公网端口。Cloudflare DNS 使用指向 `<tunnel-id>.cfargotunnel.com` 的代理 CNAME。
+2. 反向代理或原生 TLS：由 nginx/Caddy 终止 TLS 后代理到本机 HTTP，或同时设置 `VIRTMGR_TLS_CERT_FILE` 与 `VIRTMGR_TLS_KEY_FILE` 让 VirtMgr 直接提供 HTTPS。
+
+启用 HTTPS 后必须设置 `VIRTMGR_COOKIE_SECURE=true`。Cloudflare Full (strict) 回源可使用 Cloudflare Origin CA 证书；原生 TLS 场景下，证书和私钥必须同时配置，任一项缺失都会导致启动配置校验失败。
 
 ## 已实现 API
 
