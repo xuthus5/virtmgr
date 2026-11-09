@@ -1877,6 +1877,12 @@ func TestSecurityHeaders(t *testing.T) {
 			t.Fatalf("%s = %q, want to contain %q", header, got, want)
 		}
 	}
+	csp := recorder.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"https://static.cloudflareinsights.com", "connect-src 'self' https://cloudflareinsights.com"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("Content-Security-Policy = %q, want to contain %q", csp, want)
+		}
+	}
 }
 
 func TestMissingStaticAssetReturnsNotFound(t *testing.T) {
