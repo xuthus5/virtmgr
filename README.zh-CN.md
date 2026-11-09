@@ -25,7 +25,7 @@
 
 VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它适用于家庭实验室、单机私有云，以及希望用浏览器替代重复 `virsh` 操作的运维场景。
 
-虚拟机、存储池、网络、快照和宿主机资源的唯一事实来源始终是 libvirt。SQLite 仅保存本地用户、会话、虚拟机模板、定时快照策略、任务、运行时设置和审计记录，不额外维护一份虚拟机状态。
+虚拟机、存储池、网络、快照和宿主机资源的唯一事实来源始终是 libvirt。SQLite 保存本地用户、会话、虚拟机模板、定时快照策略、任务、运行时设置、审计记录，以及压缩后的持久域 XML 版本历史，不额外维护一份虚拟机运行状态。
 
 前端通过 `go:embed` 打包进 Go 二进制，生产部署不需要单独运行 Web 服务器。VirtMgr 可直接连接本机 libvirt Socket，支持原生 HTTPS 或由反向代理终止 TLS，并以 systemd 服务运行。
 
@@ -56,6 +56,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | Web 控制台 | 通过一次性 token 和服务端 WebSocket 代理打开 noVNC 控制台，浏览器不直连宿主机 VNC 端口 |
 | 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整和磁盘扩容 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
+| 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
 | 快照 | 创建、回滚、删除快照，并按保留策略配置定时快照 |
 | 备份中心 | 集中管理冷备份、完整性校验、恢复为新虚拟机、定时计划、保留清理、固定保留和 libvirt 存储库 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；上传 ISO；阻止删除仍在使用的卷 |
@@ -258,12 +259,13 @@ VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中
 - **libvirt 是唯一事实来源。** VirtMgr 不保存第二份虚拟机清单；libvirt 不可用时页面会明确降级，而不是展示伪造状态。
 - **危险操作必须确认。** 强制下电、强制重启、快照回滚、删除存储卷和删除虚拟机都有明确确认流程，部分删除操作要求输入资源名称。
 - **长任务进入任务中心。** ISO 上传、克隆和冷备份都会展示进度、步骤、失败原因和关联资源。
-- **冷备份不是恢复。** 备份包含持久域 XML、SHA-256 manifest 和可写文件磁盘，不包含内存状态；当前不提供恢复能力。
+- **备份以新虚拟机方式恢复。** 备份包含持久域 XML、SHA-256 manifest 和可写文件磁盘，不包含内存状态；不支持原地覆盖恢复或内存状态恢复。
 - **磁盘扩容不等于扩展客户机分区。** VirtMgr 只扩展 qcow2/raw 虚拟磁盘。Linux 客户机通常还需执行 `growpart` 和 `resize2fs`/`xfs_growfs`；Windows 客户机需在磁盘管理中扩展卷。不支持缩容。
 - **CPU 与内存调整受 libvirt 上限约束。** 运行中的虚拟机只能在其活动最大值内热调整；提高最大值通常需要先关机。
 - **VNC 由服务端代理。** 浏览器只获得短时、一次性的控制台 token，宿主机 VNC 端口不会直接暴露。
 - **Cloud-init 内容不写入审计。** 审计仅记录是否启用、存储池和字节数，不保存用户数据正文。
 - **XML 编辑受到严格限制。** 只有可写模式下的管理员才能更新持久配置；名称和 UUID 不可变，QEMU commandline 命名空间会被拒绝，保存前由 libvirt 完成语义校验。
+- **配置回滚只恢复 XML。** 版本历史保存压缩后的持久定义，不包含磁盘、快照或运行内存。回滚仅限管理员，会校验当前 SHA-256 以避免覆盖并发修改，先自动归档当前配置；运行中的虚拟机需重启后生效。
 
 ## API
 
@@ -275,7 +277,7 @@ API 位于 `/api/v1`，使用 JSON。认证基于 Cookie，写操作还需要 `X
 |---|---|
 | 会话 | `POST /api/v1/session`、`GET /api/v1/session`、`DELETE /api/v1/session` |
 | 总览与宿主机 | `/api/v1/overview`、`/api/v1/host`、`/api/v1/host/devices`、`/api/v1/host/metrics` |
-| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/snapshots`、`/devices`、`/actions/{action}` |
+| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/devices`、`/actions/{action}` |
 | 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/export` |
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |

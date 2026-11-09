@@ -400,6 +400,57 @@ export type VMXMLUpdateInput = {
   xml: string;
 };
 
+export type VMConfigVersionSource =
+  | "manual_xml"
+  | "resources"
+  | "passthrough"
+  | "snapshot_revert"
+  | "external"
+  | "create"
+  | "clone"
+  | "backup_restore"
+  | "rollback"
+  | "pre_rollback"
+  | "disk_resize"
+  | "baseline";
+
+export type VMConfigVersion = {
+  vmUuid: string;
+  versionNo: number;
+  xmlSha256: string;
+  sizeBytes: number;
+  source: VMConfigVersionSource;
+  sourceVersion?: number;
+  actor: string;
+  role: Role;
+  requestId?: string;
+  sourceIp?: string;
+  note?: string;
+  protected: boolean;
+  createdAt: string;
+  isCurrent: boolean;
+};
+
+export type VMConfigVersionDetail = VMConfigVersion & {
+  xml: string;
+};
+
+export type VMConfigVersionList = {
+  items: VMConfigVersion[];
+  total: number;
+  currentSha256: string;
+  currentCaptured: boolean;
+};
+
+export type VMConfigVersionRollbackInput = {
+  xmlSha256: string;
+  note?: string;
+};
+
+export type VMConfigVersionProtectInput = {
+  protected: boolean;
+};
+
 export type VMExport = {
   formatVersion: string;
   exportedAt: string;

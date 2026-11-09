@@ -11,12 +11,15 @@ import (
 
 	"log/slog"
 
+	"virtmgr/internal/domain"
 	audithistoryapp "virtmgr/internal/modules/audithistory/app"
 	audithistoryhttp "virtmgr/internal/modules/audithistory/http"
 	authapp "virtmgr/internal/modules/auth/app"
 	authhttp "virtmgr/internal/modules/auth/http"
 	backupsapp "virtmgr/internal/modules/backups/app"
 	backupshttp "virtmgr/internal/modules/backups/http"
+	configversionsapp "virtmgr/internal/modules/configversions/app"
+	configversionshttp "virtmgr/internal/modules/configversions/http"
 	eventsapp "virtmgr/internal/modules/events/app"
 	eventshttp "virtmgr/internal/modules/events/http"
 	hostapp "virtmgr/internal/modules/host/app"
@@ -65,6 +68,8 @@ type App struct {
 	store           *sqlite.Store
 	scheduler       *snapshotpoliciesapp.Service
 	backupScheduler *backupsapp.Service
+	configVersions  *configversionsapp.Service
+	eventBus        *eventbus.Bus
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -128,15 +133,20 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	eventsHandler := eventshttp.New(eventsapp.New(eventBus))
 	tasksHandler := taskshttp.New(tasksapp.New(store))
 	taskRecorder := tasksplatform.New(store)
+	configVersionService := configversionsapp.New(store, backend, store, cfg.ReadOnly,
+		configversionsapp.WithReadOnlyMode(mode),
+	)
 	backupService := backupsapp.New(store, backend, store, taskRecorder, cfg.ReadOnly,
 		backupsapp.WithReadOnlyMode(mode),
 		backupsapp.WithErrorHandler(func(err error) { logger.Error("backup_scheduler_failed", "error", err) }),
+		backupsapp.WithConfigVersionRecorder(configVersionService),
 	)
 	backupsHandler := backupshttp.New(backupService)
+	configVersionsHandler := configversionshttp.New(configVersionService)
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService)))
 	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
@@ -165,6 +175,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		users:            usersHandler,
 		settings:         settingsHandler,
 		backups:          backupsHandler,
+		configVersions:   configVersionsHandler,
 		staticFS:         web.FS(),
 	})
 	server := &stdhttp.Server{
@@ -175,7 +186,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService}, nil
+	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, eventBus: eventBus}, nil
 }
 
 func (a *App) Handler() stdhttp.Handler { return a.handler }
@@ -197,6 +208,7 @@ func (a *App) Run(ctx context.Context) error {
 			a.logger.Warn("http_shutdown_failed", "error", err)
 		}
 	}()
+	go a.runConfigVersionLifecycle(ctx)
 	go a.scheduler.Run(ctx)
 	go a.backupScheduler.Run(ctx)
 	go a.cleanupExpiredSessions(ctx)
@@ -232,6 +244,58 @@ func (a *App) cleanupExpiredSessions(ctx context.Context) {
 	}
 }
 
+func (a *App) runConfigVersionLifecycle(ctx context.Context) {
+	_, events, unsubscribe := a.eventBus.Subscribe(0)
+	defer unsubscribe()
+
+	baselineCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	if err := a.configVersions.EnsureBaseline(baselineCtx); err != nil {
+		a.logger.Warn("vm_config_version_baseline_failed", "error", err)
+	}
+	cancel()
+
+	pending := make(map[string]time.Time)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if event.TargetKind != "vm" || event.TargetID == "" {
+				continue
+			}
+			if event.Kind != "domain.defined" && event.Kind != "domain.updated" {
+				continue
+			}
+			// Debounce libvirt bursts so a define operation produces at most one
+			// external-change capture after internal handlers have run.
+			pending[event.TargetID] = time.Now().Add(1500 * time.Millisecond)
+		case now := <-ticker.C:
+			for uuid, due := range pending {
+				if now.Before(due) {
+					continue
+				}
+				delete(pending, uuid)
+				captureCtx, captureCancel := context.WithTimeout(ctx, 30*time.Second)
+				_, err := a.configVersions.CaptureVM(captureCtx, uuid, domain.VMConfigCapture{
+					Source: domain.VMConfigSourceExternal,
+					Actor:  "libvirt-event",
+					Role:   domain.RoleAdmin,
+					Note:   "检测到外部域定义变更后自动采集",
+				})
+				captureCancel()
+				if err != nil {
+					a.logger.Warn("vm_config_version_external_capture_failed", "uuid", uuid, "error", err)
+				}
+			}
+		}
+	}
+}
+
 type routerDependencies struct {
 	logger  *slog.Logger
 	cfg     config.Config
@@ -253,6 +317,7 @@ type routerDependencies struct {
 	users            *usershttp.Handler
 	settings         *settingshttp.Handler
 	backups          *backupshttp.Handler
+	configVersions   *configversionshttp.Handler
 	staticFS         fs.FS
 }
 
@@ -299,6 +364,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.users.Mount(protected, deps.auth.RequireCSRF)
 			deps.settings.Mount(protected, deps.auth.RequireCSRF)
 			deps.backups.Mount(protected, deps.auth.RequireCSRF)
+			deps.configVersions.Mount(protected, deps.auth.RequireCSRF)
 		})
 	})
 	r.NotFound(spaHandler(deps.staticFS))

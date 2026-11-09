@@ -89,6 +89,7 @@ func (s *Service) runClone(ctx context.Context, taskID string, command CloneComm
 	detail["uuid"] = vm.UUID
 	detail["name"] = vm.Name
 	detail["state"] = string(vm.State)
+	s.captureConfigVersion(ctx, command.Request, vm.UUID, domain.VMConfigSourceClone, 0, "克隆虚拟机后保存初始配置")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.clone", vm.UUID, "success", detail, nil); err != nil {
 		_ = s.tasks.Fail(ctx, taskID, 100, "克隆完成但审计写入失败", err)
 		return

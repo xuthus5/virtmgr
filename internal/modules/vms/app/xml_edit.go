@@ -63,6 +63,7 @@ func (s *Service) UpdateXML(ctx context.Context, command XMLUpdateCommand) (doma
 	if updated.Format != domain.VMXMLFormatConfig {
 		updated.Format = domain.VMXMLFormatConfig
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceManualXML, 0, "管理员手动保存持久域 XML")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.xml.update", command.UUID, "success", detail, nil); err != nil {
 		return domain.VMXML{}, fmt.Errorf("record VM XML update audit: %w", err)
 	}

@@ -455,6 +455,25 @@ test("虚拟机详情展示只读域 XML 并支持切换和复制", async ({ pag
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("demo-db-01");
 });
 
+test("只读模式可查看域 XML 版本历史但禁止回滚", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
+
+  await page.getByTestId("vm-config-versions-open").click();
+  const dialog = page.getByTestId("vm-config-versions-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("域 XML 版本历史");
+  const versionItems = dialog.locator('[data-testid^="vm-config-version-item-"]');
+  await expect(versionItems.first()).toBeVisible({ timeout: 15_000 });
+  await expect(dialog.getByTestId("vm-config-version-current-xml")).toContainText("demo-db-01");
+  await expect(dialog.getByTestId("vm-config-version-xml")).toContainText("demo-db-01");
+  await expect(dialog.getByTestId("vm-config-version-rollback")).toBeDisabled();
+  await expect(dialog.getByTestId("vm-config-version-rollback")).toHaveAttribute("title", /只读模式/);
+  await expect(dialog.getByTestId("vm-config-version-pin")).toHaveCount(0);
+  await expect(dialog.getByTestId("vm-config-version-download")).toBeEnabled();
+});
+
 test("只读模式禁用虚拟机生命周期操作", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();

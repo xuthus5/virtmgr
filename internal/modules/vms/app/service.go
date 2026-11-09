@@ -45,6 +45,10 @@ type MetricsProvider interface {
 	VM(ctx context.Context, uuid string) (domain.VMMetrics, error)
 }
 
+type ConfigVersionRecorder interface {
+	CaptureVM(ctx context.Context, vmUUID string, capture domain.VMConfigCapture) (domain.VMConfigVersion, error)
+}
+
 type TaskRecorder interface {
 	Start(ctx context.Context, kind, targetKind, targetID, actor, step string) (string, error)
 	Progress(ctx context.Context, id string, progress int, step string) error
@@ -53,14 +57,15 @@ type TaskRecorder interface {
 }
 
 type Service struct {
-	repository    Repository
-	audit         AuditRecorder
-	readOnly      bool
-	readOnlyMode  domain.ReadOnlyProvider
-	consoleTokens ConsoleTokenStore
-	tasks         TaskRecorder
-	metrics       MetricsProvider
-	backupService *backupsapp.Service
+	repository     Repository
+	audit          AuditRecorder
+	readOnly       bool
+	readOnlyMode   domain.ReadOnlyProvider
+	consoleTokens  ConsoleTokenStore
+	tasks          TaskRecorder
+	metrics        MetricsProvider
+	backupService  *backupsapp.Service
+	configVersions ConfigVersionRecorder
 }
 
 type ConsoleTokenStore interface {
@@ -97,6 +102,12 @@ func WithMetrics(provider MetricsProvider) Option {
 func WithBackupService(service *backupsapp.Service) Option {
 	return func(current *Service) {
 		current.backupService = service
+	}
+}
+
+func WithConfigVersionRecorder(recorder ConfigVersionRecorder) Option {
+	return func(service *Service) {
+		service.configVersions = recorder
 	}
 }
 
@@ -349,6 +360,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 	detail := specDetail(normalized)
 	detail["uuid"] = vm.UUID
 	detail["state"] = string(vm.State)
+	s.captureConfigVersion(ctx, command.Request, vm.UUID, domain.VMConfigSourceCreate, 0, "创建虚拟机后保存初始配置")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.create", vm.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record VM create audit: %w", err)
 	}
@@ -475,6 +487,7 @@ func (s *Service) UpdateResources(ctx context.Context, command UpdateResourcesCo
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.resources.update", command.UUID, detail, err)
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceResources, 0, "调整 CPU 或内存后保存持久配置")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.resources.update", command.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record VM resources audit: %w", err)
 	}
@@ -551,6 +564,7 @@ func (s *Service) ResizeDisk(ctx context.Context, command ResizeDiskCommand) (do
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.resize", command.UUID, detail, err)
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceDiskResize, 0, "扩容磁盘后保存持久配置")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.disk.resize", command.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record VM disk resize audit: %w", err)
 	}
@@ -600,6 +614,7 @@ func (s *Service) AttachHostDevice(ctx context.Context, command HostDeviceComman
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.device.attach", command.UUID, detail, err)
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourcePassthrough, 0, "添加 PCI/USB 直通设备后保存持久配置")
 	addPassthroughAuditDetail(detail, updated, command.Device)
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.device.attach", command.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record host device attach audit: %w", err)
@@ -632,6 +647,7 @@ func (s *Service) DetachHostDevice(ctx context.Context, command HostDeviceComman
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.device.detach", command.UUID, detail, err)
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourcePassthrough, 0, "移除 PCI/USB 直通设备后保存持久配置")
 	addPassthroughAuditDetail(detail, vm, command.Device)
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.device.detach", command.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record host device detach audit: %w", err)
@@ -762,6 +778,7 @@ func (s *Service) RevertSnapshot(ctx context.Context, command SnapshotCommand) e
 	if err := s.repository.RevertSnapshot(ctx, command.UUID, command.Name); err != nil {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.revert", command.UUID+"/"+command.Name, detail, err)
 	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceSnapshotRevert, 0, "回滚快照后保存持久配置")
 	if err := s.recordSnapshotAudit(ctx, command.Request, "vm.snapshot.revert", command.UUID+"/"+command.Name, "success", detail, nil); err != nil {
 		return fmt.Errorf("record VM snapshot revert audit: %w", err)
 	}

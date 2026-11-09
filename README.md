@@ -25,7 +25,7 @@
 
 VirtMgr is a self-hosted management console for a single KVM/libvirt host. It is designed for home labs, single-server private clouds, and teams that want a practical browser-based alternative to repeated `virsh` commands.
 
-libvirt remains the source of truth for virtual machines, storage pools, networks, snapshots, and host resources. SQLite is only used for local users, sessions, templates, snapshot policies, tasks, runtime settings, and audit records. VirtMgr does not maintain a second copy of VM state.
+libvirt remains the source of truth for virtual machines, storage pools, networks, snapshots, and host resources. SQLite is used for local users, sessions, templates, snapshot policies, tasks, runtime settings, audit records, and compressed history of persistent domain XML definitions. VirtMgr does not maintain a second copy of live VM state.
 
 The application ships as one Go binary with the React frontend embedded through `go:embed`. It connects directly to the libvirt socket, supports native TLS or TLS termination by a reverse proxy, and runs cleanly as a systemd service.
 
@@ -56,6 +56,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Console | Browser-based noVNC console through a one-time token and server-side WebSocket proxy; the VNC port is never exposed directly |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
+| Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with retention policies |
 | Backups | Central cold-backup catalog, integrity verification, restore as a new VM, schedules, retention, pinning, and libvirt pool repositories |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; upload ISOs; protect in-use volumes |
@@ -258,12 +259,13 @@ Administrators can create users, change roles, disable accounts, inspect the aud
 - **Libvirt is authoritative.** VirtMgr does not store a second VM inventory and degrades explicitly when libvirt is unavailable.
 - **Destructive operations require confirmation.** Force off, reset, snapshot revert, volume deletion, and VM deletion use explicit dialogs; some delete flows require typing the resource name.
 - **Long-running work becomes a task.** ISO uploads, cloning, and cold backups expose progress, steps, failures, and related resources through the task center.
-- **Cold backups are not restores.** A backup contains the persistent domain XML, a SHA-256 manifest, and writable file disks, but not RAM state. Restore is not currently provided.
+- **Backups restore as new VMs.** A backup contains the persistent domain XML, a SHA-256 manifest, and writable file disks, but not RAM state. In-place restore and RAM-state restore are not provided.
 - **Disk expansion does not resize guest partitions.** VirtMgr grows the qcow2/raw virtual disk only. Linux guests may still need `growpart` plus `resize2fs`/`xfs_growfs`; Windows guests require volume expansion in Disk Management. Shrinking is not supported.
 - **CPU and memory changes respect libvirt limits.** Running domains can be adjusted within their active maximum; increasing the maximum generally requires shutting the VM down first.
 - **VNC is proxied server-side.** The browser receives a short-lived, single-use console token; the host VNC port is not exposed directly.
 - **Cloud-init content is not written to audit logs.** Auditing records only whether Cloud-init was enabled, the storage pool, and byte counts.
 - **XML edits are restricted.** Only administrators in writable mode can update the persistent definition; name and UUID are immutable, QEMU command-line namespaces are rejected, and libvirt performs validation before the definition is saved.
+- **Configuration rollback only restores XML.** Version history keeps compressed persistent definitions, not disks, snapshots, or live memory. Rollback is admin-only, checks the current SHA-256 to avoid overwriting concurrent changes, archives the current definition first, and requires a VM restart for running domains.
 
 ## API
 
@@ -275,7 +277,7 @@ Representative endpoint groups include:
 |---|---|
 | Session | `POST /api/v1/session`, `GET /api/v1/session`, `DELETE /api/v1/session` |
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
-| Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/snapshots`, `/devices`, `/actions/{action}` |
+| Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/devices`, `/actions/{action}` |
 | VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/export` |
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |

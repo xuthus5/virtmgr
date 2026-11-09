@@ -1033,3 +1033,46 @@ test("可写模式扩容 qcow2 磁盘并写入审计", async ({ page }) => {
   await expect(row).toContainText("target: vda");
   await expect(row).toContainText("capacityBytes: 107374182400");
 });
+
+test("管理员固定并回滚域 XML 版本且记录审计", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/44444444-4444-4444-8444-444444444444");
+  await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
+
+  await page.getByTestId("vm-config-versions-open").click();
+  const dialog = page.getByTestId("vm-config-versions-dialog");
+  await expect(dialog).toBeVisible();
+  const baseline = dialog.getByTestId("vm-config-version-item-1");
+  await expect(baseline).toBeVisible({ timeout: 15_000 });
+  await expect(baseline).toContainText("初始基线");
+  await baseline.click();
+
+  await expect(dialog.getByTestId("vm-config-version-xml")).toContainText("<vcpu>2</vcpu>");
+  await expect(dialog.getByTestId("vm-config-version-current-xml")).toContainText("<vcpu>3</vcpu>");
+
+  await dialog.getByTestId("vm-config-version-pin").click();
+  await expect(dialog.getByTestId("vm-config-version-notice")).toContainText("已固定");
+  await expect(dialog.getByTestId("vm-config-version-item-1")).toContainText("已固定");
+
+  await dialog.getByTestId("vm-config-version-rollback").click();
+  const confirmation = page.getByTestId("vm-config-version-rollback-dialog");
+  await expect(confirmation).toContainText("回滚持久配置到 v1");
+  await confirmation.getByTestId("vm-config-version-rollback-note").fill("playwright restore baseline");
+  await confirmation.getByTestId("vm-config-version-rollback-confirm").click();
+
+  await expect(dialog.getByTestId("vm-config-version-notice")).toContainText("已回滚到 v1，并自动创建版本 v3");
+  await expect(dialog.getByTestId("vm-config-version-current-xml")).toContainText("<vcpu>2</vcpu>");
+  await expect(dialog.getByTestId("vm-config-version-item-3")).toContainText("XML 版本回滚");
+  await expect(dialog.getByTestId("vm-config-version-rollback")).toBeDisabled();
+
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  await page.getByTestId("audit-action-filter").selectOption("vm.config.rollback");
+  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
+  const row = page.locator('[data-testid^="audit-row-"]').first();
+  await expect(row).toContainText("回滚域 XML 版本");
+  await expect(row).toContainText("成功");
+  await expect(row).toContainText("sourceVersion: 1");
+  await expect(row).toContainText("playwright restore baseline");
+});

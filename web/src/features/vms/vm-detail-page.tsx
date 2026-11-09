@@ -11,6 +11,7 @@ import {
   Cpu,
   Download,
   HardDrive,
+  History,
   LoaderCircle,
   MemoryStick,
   Monitor,
@@ -55,6 +56,8 @@ import { useSessionQuery } from "@/features/auth/use-session";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey } from "@/features/vms/use-vm-query";
+import { useVMConfigVersionsQuery } from "@/features/vms/use-vm-config-versions-query";
+import { VMConfigVersionsDialog } from "@/features/vms/vm-config-versions-dialog";
 import { downloadVMExport } from "@/features/vms/vm-export-model";
 import { canEditVMConfigXML, validateVMXMLDraft } from "@/features/vms/vm-xml-edit-model";
 import { VMBackupCard } from "@/features/vms/vm-backup-card";
@@ -140,8 +143,11 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
   const [xmlEditError, setXmlEditError] = useState("");
   const [xmlEditNotice, setXmlEditNotice] = useState("");
   const [xmlConfirmOpen, setXmlConfirmOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
   const [exportNotice, setExportNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const xmlQuery = useVMXMLQuery(uuid, xmlFormat);
+  const persistentXMLQuery = useVMXMLQuery(uuid, "config");
+  const versionsQuery = useVMConfigVersionsQuery(uuid);
   const cloneTaskQuery = useTaskQuery(cloneTaskID);
 
   const mutation = useMutation({
@@ -684,6 +690,15 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
               <CardDescription>{xmlEditing ? "编辑持久配置 XML。名称和 UUID 必须保持不变；仅更新定义，不启动虚拟机。" : "查看 libvirt 域定义。运行态包含当前运行时覆盖，持久配置为 inactive XML。"}</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="vm-config-versions-open"
+                title="查看持久域 XML 的自动归档版本"
+                onClick={() => setVersionsOpen(true)}
+              >
+                <History className="h-4 w-4" />版本历史{versionsQuery.data ? ` · ${versionsQuery.data.total}` : ""}
+              </Button>
               <select
                 aria-label="XML 类型"
                 data-testid="vm-xml-format"
@@ -762,6 +777,23 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           ) : null}
         </CardContent>
       </Card>
+
+      <VMConfigVersionsDialog
+        uuid={uuid}
+        vmName={vm.name}
+        open={versionsOpen}
+        onOpenChange={setVersionsOpen}
+        currentXml={persistentXMLQuery.data?.xml}
+        role={session.data?.user.role}
+        readOnly={readOnly}
+        onRolledBack={(version) => {
+          setXmlFormat("config");
+          setXmlEditing(false);
+          setXmlDraft("");
+          setXmlEditError("");
+          setXmlEditNotice(`持久配置已回滚到历史版本，并归档为 v${version.versionNo}；运行中的域需重启后生效。`);
+        }}
+      />
 
       {canMutate ? (
         <Card className="mt-4 border-destructive/30">

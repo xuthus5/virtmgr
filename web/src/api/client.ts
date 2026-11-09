@@ -1,4 +1,4 @@
-import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -117,6 +117,20 @@ export const api = {
   updateVMXML: (uuid: string, input: VMXMLUpdateInput) => request<VMXML>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/xml`,
     { method: "PUT", body: JSON.stringify(input) },
+  ),
+  vmConfigVersions: (uuid: string) => request<VMConfigVersionList>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/config-versions`,
+  ),
+  vmConfigVersion: (uuid: string, versionNo: number) => request<VMConfigVersionDetail>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/config-versions/${versionNo}`,
+  ),
+  protectVMConfigVersion: (uuid: string, versionNo: number, input: VMConfigVersionProtectInput) => request<VMConfigVersion>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/config-versions/${versionNo}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  ),
+  rollbackVMConfigVersion: (uuid: string, versionNo: number, input: VMConfigVersionRollbackInput) => request<VMConfigVersionDetail>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/config-versions/${versionNo}/rollback`,
+    { method: "POST", body: JSON.stringify(input) },
   ),
   exportVM: (uuid: string) => request<VMExport>(`/api/v1/vms/${encodeURIComponent(uuid)}/export`),
   vmSnapshots: (uuid: string) => request<VMSnapshotList>(`/api/v1/vms/${encodeURIComponent(uuid)}/snapshots`),

@@ -24,7 +24,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := Migrate(context.Background(), store.db); err != nil {
 		t.Fatalf("second Migrate() error = %v", err)
 	}
-	for _, table := range []string{"users", "sessions", "tasks", "audit_events", "settings", "login_attempts", "vm_templates", "snapshot_policies"} {
+	for _, table := range []string{"users", "sessions", "tasks", "audit_events", "settings", "login_attempts", "vm_templates", "snapshot_policies", "vm_config_versions"} {
 		var name string
 		if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("table %s missing: %v", table, err)

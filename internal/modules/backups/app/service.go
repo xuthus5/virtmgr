@@ -64,6 +64,10 @@ type TaskRecorder interface {
 	Fail(ctx context.Context, id string, progress int, step string, cause error) error
 }
 
+type ConfigVersionRecorder interface {
+	CaptureVM(ctx context.Context, vmUUID string, capture domain.VMConfigCapture) (domain.VMConfigVersion, error)
+}
+
 type ErrorHandler func(error)
 
 type MutationContext struct {
@@ -125,15 +129,16 @@ type ScheduleRunCommand struct {
 }
 
 type Service struct {
-	repository   Repository
-	backend      VMBackend
-	audit        AuditRecorder
-	tasks        TaskRecorder
-	readOnly     bool
-	readOnlyMode domain.ReadOnlyProvider
-	now          func() time.Time
-	onError      ErrorHandler
-	runMu        sync.Mutex
+	repository     Repository
+	backend        VMBackend
+	audit          AuditRecorder
+	tasks          TaskRecorder
+	readOnly       bool
+	readOnlyMode   domain.ReadOnlyProvider
+	now            func() time.Time
+	onError        ErrorHandler
+	configVersions ConfigVersionRecorder
+	runMu          sync.Mutex
 }
 
 type Option func(*Service)
@@ -148,6 +153,10 @@ func WithClock(now func() time.Time) Option {
 
 func WithErrorHandler(handler ErrorHandler) Option {
 	return func(service *Service) { service.onError = handler }
+}
+
+func WithConfigVersionRecorder(recorder ConfigVersionRecorder) Option {
+	return func(service *Service) { service.configVersions = recorder }
 }
 
 func New(repository Repository, backend VMBackend, audit AuditRecorder, tasks TaskRecorder, readOnly bool, options ...Option) *Service {

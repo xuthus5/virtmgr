@@ -230,6 +230,18 @@ func (s *Service) executeRestore(ctx context.Context, taskID string, item domain
 	}
 	detail["restoredVmUuid"] = vm.UUID
 	detail["restoredVmName"] = vm.Name
+	if s.configVersions != nil {
+		if _, captureErr := s.configVersions.CaptureVM(ctx, vm.UUID, domain.VMConfigCapture{
+			Source:    domain.VMConfigSourceBackupRestore,
+			Actor:     command.Request.Session.User.Username,
+			Role:      command.Request.Session.User.Role,
+			RequestID: command.Request.RequestID,
+			SourceIP:  command.Request.SourceIP,
+			Note:      "从备份恢复为新虚拟机后保存初始配置",
+		}); captureErr != nil && s.onError != nil {
+			s.onError(fmt.Errorf("capture restored VM config version: %w", captureErr))
+		}
+	}
 	if err := s.recordAudit(ctx, command.Request, "backup.restore", item.ID, "success", detail, nil); err != nil {
 		_ = s.tasks.Fail(ctx, taskID, 100, "恢复完成但审计写入失败", err)
 		return
