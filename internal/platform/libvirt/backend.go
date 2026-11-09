@@ -28,6 +28,9 @@ type Backend interface {
 	CreateVM(ctx context.Context, spec domain.VMCreateSpec) (domain.VM, error)
 	CloneVM(ctx context.Context, uuid string, spec domain.VMCloneSpec, progress VMCloneProgress) (domain.VM, error)
 	BackupVM(ctx context.Context, uuid string, spec domain.VMBackupSpec, progress VMBackupProgress) (domain.VMBackup, error)
+	VerifyVMBackup(ctx context.Context, backup domain.Backup, deep bool) (domain.BackupVerification, error)
+	RestoreVMBackup(ctx context.Context, backup domain.Backup, spec domain.VMRestoreSpec, progress VMBackupProgress) (domain.VM, error)
+	DeleteVMBackup(ctx context.Context, backup domain.Backup) error
 	DeleteVM(ctx context.Context, uuid string) error
 	PerformAction(ctx context.Context, uuid string, action domain.VMAction) error
 	ListSnapshots(ctx context.Context, uuid string) ([]domain.VMSnapshot, error)

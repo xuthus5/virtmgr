@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	backupsapp "virtmgr/internal/modules/backups/app"
 )
 
 type Repository interface {
@@ -59,6 +60,7 @@ type Service struct {
 	consoleTokens ConsoleTokenStore
 	tasks         TaskRecorder
 	metrics       MetricsProvider
+	backupService *backupsapp.Service
 }
 
 type ConsoleTokenStore interface {
@@ -89,6 +91,12 @@ func WithReadOnlyMode(mode domain.ReadOnlyProvider) Option {
 func WithMetrics(provider MetricsProvider) Option {
 	return func(service *Service) {
 		service.metrics = provider
+	}
+}
+
+func WithBackupService(service *backupsapp.Service) Option {
+	return func(current *Service) {
+		current.backupService = service
 	}
 }
 

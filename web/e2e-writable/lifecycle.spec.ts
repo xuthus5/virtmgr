@@ -1,9 +1,16 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
   await loginAs(page, "admin", "secret");
+}
+
+async function selectOptionContaining(select: Locator, text: string) {
+  const option = select.locator("option").filter({ hasText: text }).first();
+  const value = await option.getAttribute("value");
+  if (!value) throw new Error(`option containing ${text} was not found`);
+  await select.selectOption(value);
 }
 
 async function loginAs(page: Page, username: string, password: string) {
@@ -836,52 +843,136 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("成功");
 });
 
-test("可写模式创建冷备份并验证存储卷与审计", async ({ page }) => {
+test("可写模式通过备份中心完成创建、校验、恢复、调度与清理", async ({ page }) => {
+  test.setTimeout(120_000);
   await login(page);
-  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
-  await page.getByRole("link", { name: "demo-legacy-01", exact: true }).click();
+  await page.goto("/vms/44444444-4444-4444-8444-444444444444");
   await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
 
   const shutdown = page.getByTestId("vm-action-shutdown");
   if (await shutdown.isVisible()) {
     await shutdown.click();
     await expect(page.getByText("正常关机指令已提交，状态已刷新。", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("vm-action-start")).toBeEnabled();
   }
+  await expect(page.getByTestId("vm-action-start")).toBeEnabled();
 
-  const openBackup = page.getByTestId("vm-backup-open");
-  await expect(openBackup).toBeEnabled();
-  await openBackup.click();
-  await expect(page.getByTestId("vm-backup-form")).toBeVisible();
-  await page.getByLabel("备份名称", { exact: true }).fill("e2e-backup-01");
-  await page.getByLabel("目标存储池", { exact: true }).selectOption("default");
-  await page.getByTestId("vm-backup-submit").click();
+  await page.goto("/backups");
+  await expect(page).toHaveURL(/\/backups$/);
+  await expect(page.getByRole("heading", { name: "备份中心", exact: true })).toBeVisible();
+  await expect(page.getByTestId("backups-empty")).toContainText("还没有备份集");
 
-  const task = page.getByTestId("vm-backup-task");
-  await expect(task).toHaveAttribute("data-status", "succeeded", { timeout: 10_000 });
-  await expect(task).toContainText("虚拟机 demo-legacy-01 备份完成");
-  await expect(task).toContainText("100%");
-  await expect(page.getByTestId("vm-backup-notice")).toContainText("虚拟机 demo-legacy-01 备份完成");
+  await page.getByTestId("backup-create-open").click();
+  const createModal = page.getByTestId("backup-create-modal");
+  await expect(createModal).toBeVisible();
+  await selectOptionContaining(createModal.getByTestId("backup-create-vm"), "demo-legacy-01");
+  await createModal.getByTestId("backup-create-name").fill("e2e-backup-01");
+  await selectOptionContaining(createModal.getByTestId("backup-create-repository"), "default");
+  await createModal.getByRole("button", { name: "开始备份", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("创建备份已完成。", { timeout: 30_000 });
 
-  await page.getByRole("link", { name: "存储", exact: true }).click();
-  await page.getByTestId("storage-pool-row-default").click();
-  await expect(page.getByTestId("storage-volume-row-e2e-backup-01-disk-01.qcow2")).toBeVisible();
-  await expect(page.getByTestId("storage-volume-row-e2e-backup-01-domain.xml")).toBeVisible();
-  await expect(page.getByTestId("storage-volume-row-e2e-backup-01-manifest.json")).toBeVisible();
+  const backupRow = page.locator('[data-testid^="backup-row-"]').filter({ hasText: "e2e-backup-01" });
+  await expect(backupRow).toContainText("已完成");
+  await expect(backupRow).toContainText("未校验");
 
-  await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  const backupTask = page.locator('[data-testid^="task-row-"]').filter({ hasText: "备份虚拟机" }).first();
-  await expect(backupTask).toContainText("已完成");
-  await expect(backupTask).toContainText("100%");
-  await expect(backupTask).toContainText("demo-legacy-01 备份完成");
+  await page.getByRole("button", { name: "校验 e2e-backup-01", exact: true }).click();
+  const verifyModal = page.getByTestId("backup-verify-modal");
+  await expect(verifyModal).toBeVisible();
+  await verifyModal.getByRole("checkbox").check();
+  await verifyModal.getByRole("button", { name: "开始校验", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("校验备份已完成。", { timeout: 30_000 });
+  await expect(backupRow).toContainText("校验通过");
+
+  await page.getByRole("button", { name: "恢复 e2e-backup-01", exact: true }).click();
+  const restoreModal = page.getByTestId("backup-restore-modal");
+  await expect(restoreModal).toBeVisible();
+  await restoreModal.getByTestId("restore-name").fill("e2e-restored-01");
+  await selectOptionContaining(restoreModal.getByTestId("restore-pool"), "default");
+  await restoreModal.getByRole("button", { name: "预检并恢复", exact: true }).click();
+  await expect(restoreModal).toContainText("即将创建 e2e-restored-01");
+  await restoreModal.getByRole("button", { name: "确认恢复", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("恢复虚拟机已完成。", { timeout: 30_000 });
+
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await expect(page.getByRole("link", { name: "e2e-restored-01", exact: true })).toBeVisible();
+
+  await page.goto("/backups");
+  await page.getByTestId("backup-tab-schedules").click();
+  await expect(page.getByTestId("backup-schedules-empty")).toContainText("还没有定时计划");
+  await page.getByTestId("backup-schedule-create").click();
+  const scheduleModal = page.getByTestId("backup-schedule-modal");
+  await expect(scheduleModal).toBeVisible();
+  await selectOptionContaining(scheduleModal.getByTestId("backup-schedule-vm"), "demo-legacy-01");
+  await scheduleModal.getByTestId("backup-schedule-name").fill("e2e-nightly-backup");
+  await selectOptionContaining(scheduleModal.getByTestId("backup-schedule-repository"), "default");
+  await scheduleModal.getByTestId("backup-schedule-interval").fill("12");
+  await scheduleModal.getByTestId("backup-schedule-retention").fill("3");
+  await scheduleModal.getByRole("button", { name: "创建计划", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("定时计划已创建。");
+  const scheduleRow = page.locator('[data-testid^="backup-schedule-row-"]').filter({ hasText: "e2e-nightly-backup" });
+  await expect(scheduleRow).toContainText("每 12 小时");
+  await expect(scheduleRow).toContainText("已启用");
+  await scheduleRow.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("计划已暂停。");
+  await expect(scheduleRow).toContainText("已暂停");
+  await scheduleRow.getByRole("button", { name: "启用", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("计划已启用。");
+  await expect(scheduleRow).toContainText("已启用");
+
+  await scheduleRow.getByRole("button", { name: "立即执行", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("执行定时备份已完成。", { timeout: 30_000 });
+  await scheduleRow.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByTestId("backup-schedule-delete-confirm").click();
+  await expect(page.getByTestId("backup-notice")).toContainText("定时计划已删除。");
+
+  await page.getByTestId("backup-tab-backups").click();
+  await expect(backupRow).toBeVisible();
+  await page.getByRole("button", { name: "固定 e2e-backup-01", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("已固定保留");
+  await expect(page.getByRole("button", { name: "取消固定 e2e-backup-01", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "删除 e2e-backup-01", exact: true }).click();
+  const deleteModal = page.getByTestId("backup-delete-modal");
+  await expect(deleteModal).toBeVisible();
+  await deleteModal.getByTestId("backup-delete-name").fill("e2e-backup-01");
+  await deleteModal.getByTestId("backup-delete-confirm").click();
+  await expect(page.getByTestId("backup-notice")).toContainText("删除备份已完成。", { timeout: 30_000 });
+  await expect(backupRow).toHaveCount(0);
+
+  await page.getByTestId("backup-tab-repositories").click();
+  const repositoryRow = page.locator('[data-testid^="backup-repository-row-"]').filter({ hasText: "iso-store" });
+  await expect(repositoryRow).toBeVisible();
+  await repositoryRow.getByRole("button", { name: "编辑", exact: true }).click();
+  const repositoryModal = page.getByTestId("backup-repository-modal");
+  await expect(repositoryModal).toBeVisible();
+  await repositoryModal.getByTestId("backup-repository-name").fill("e2e-backup-repo");
+  await repositoryModal.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("备份存储库已更新。");
+  const updatedRepositoryRow = page.locator('[data-testid^="backup-repository-row-"]').filter({ hasText: "e2e-backup-repo" });
+  await expect(updatedRepositoryRow).toBeVisible();
+  await updatedRepositoryRow.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByTestId("backup-repository-delete-confirm").click();
+  await expect(page.getByTestId("backup-notice")).toContainText("备份存储库已删除。");
+  await expect(updatedRepositoryRow).toHaveCount(0);
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
-  await page.getByTestId("audit-action-filter").selectOption("vm.backup");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
-  const auditRow = page.locator('[data-testid^="audit-row-"]').first();
-  await expect(auditRow).toContainText("备份虚拟机");
-  await expect(auditRow).toContainText("demo-legacy-01");
-  await expect(auditRow).toContainText("成功");
+  for (const [action, label] of [
+    ["backup.create", "创建备份"],
+    ["backup.verify", "校验备份"],
+    ["backup.restore", "恢复备份"],
+    ["backup.schedule.create", "创建备份计划"],
+    ["backup.schedule.run", "立即执行备份计划"],
+    ["backup.schedule.delete", "删除备份计划"],
+    ["backup.pin", "更新备份保留"],
+    ["backup.delete", "删除备份"],
+    ["backup.repository.update", "更新备份存储库"],
+    ["backup.repository.delete", "删除备份存储库"],
+  ] as const) {
+    await page.getByTestId("audit-action-filter").selectOption(action);
+    await expect(page.getByTestId("audit-total")).toHaveText(/共 [1-9]\d* 条审计记录/);
+    const auditRow = page.locator('[data-testid^="audit-row-"]').first();
+    await expect(auditRow).toContainText(label);
+    await expect(auditRow).toContainText("成功");
+  }
 });
 
 test("可写模式调整运行中虚拟机的 CPU 和内存并写入审计", async ({ page }) => {

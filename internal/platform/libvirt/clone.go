@@ -17,6 +17,7 @@ import (
 type cloneDisk struct {
 	source string
 	format string
+	target string
 }
 
 func (c *Client) CloneVM(ctx context.Context, uuid string, spec domain.VMCloneSpec, progress VMCloneProgress) (domain.VM, error) {
@@ -220,7 +221,7 @@ func cloneDisksFromDomainXML(text string) ([]cloneDisk, error) {
 		if source == "" {
 			continue
 		}
-		result = append(result, cloneDisk{source: source, format: disk.Driver.Type})
+		result = append(result, cloneDisk{source: source, format: disk.Driver.Type, target: disk.Target.Dev})
 	}
 	return result, nil
 }

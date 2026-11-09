@@ -3,6 +3,7 @@ import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuditPage } from "@/features/audit/audit-page";
+import { BackupsPage } from "@/features/backups/backups-page";
 import { LoginPage } from "@/features/auth/login-page";
 import { NetworksPage } from "@/features/networks/networks-page";
 import { HostPage } from "@/features/host/host-page";
@@ -52,6 +53,7 @@ const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login"
 const appRoute = createRoute({ getParentRoute: () => rootRoute, id: "app", component: AppShell });
 const overviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
 const vmsRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms", component: VMsPage });
+const backupsRoute = createRoute({ getParentRoute: () => appRoute, path: "/backups", component: BackupsPage });
 const vmCreateRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/vms/new",
@@ -91,7 +93,7 @@ const vncConsoleRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   loginRoute,
   vncConsoleRoute,
-  appRoute.addChildren([overviewRoute, vmsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
+  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
 ]);
 
 export const router = createRouter({

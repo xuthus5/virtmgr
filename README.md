@@ -57,12 +57,13 @@ All screenshots use the built-in demo backend, not production host data.
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with retention policies |
+| Backups | Central cold-backup catalog, integrity verification, restore as a new VM, schedules, retention, pinning, and libvirt pool repositories |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; upload ISOs; protect in-use volumes |
 | Networking | NAT and isolated networks, bridge details, IPv4/DHCP configuration, live leases, static DHCP hosts, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
 | Observability | SSE event stream, task center with progress and failures, host and VM resource trends, structured logs, health endpoints |
 | Security | Local accounts, Argon2id passwords, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, audit trail, CSP and security headers |
-| User experience | Responsive layout, light/dark themes, keyboard-friendly global search, accessible dialogs, and explicit confirmation for destructive actions |
+| User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, accessible dialogs, and explicit confirmation for destructive actions |
 | Templates | Reusable VM specifications, firmware/network defaults, and Cloud-init defaults without instance names or disk paths |
 
 ## Architecture
@@ -276,6 +277,7 @@ Representative endpoint groups include:
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
 | Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/snapshots`, `/devices`, `/actions/{action}` |
 | VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/export` |
+| Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
 | Networking | `/api/v1/networks`, `/leases`, `/hosts`, `/actions/{action}` |
 | System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/users`, `/settings` |
@@ -332,12 +334,14 @@ scripts/                  Development and E2E helpers
 - Linux with KVM/QEMU and the libvirt Go binding is the supported runtime. Building requires CGO and libvirt development headers.
 - The current console implementation targets VNC. SPICE is not supported.
 - Container deployment is not an official deployment path yet; the supported production shape is a host binary managed by systemd.
-- Cold backup restore, VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.
+- Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
+- VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.
 - Modern Chrome, Edge, Firefox, and Safari are recommended.
 
 ## Documentation
 
 - [Architecture design](docs/architecture-design.md) — product boundaries, architecture, data model, routes, security, and deployment details (Chinese)
+- [Backup and restore design](docs/backup-design.md) — implemented cold-backup catalog, restore, scheduling, and retention model (Chinese)
 - [Release workflow](.github/workflows/release.yml) — amd64/arm64 binary build and release attachment
 - [Environment example](deploy/virtmgr.env.example) — production-oriented variable template
 - [systemd unit](deploy/virtmgr.service) — hardened service definition

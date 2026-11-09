@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	backupsapp "virtmgr/internal/modules/backups/app"
 )
 
 const backupTimeout = 6 * time.Hour
@@ -15,6 +16,17 @@ const backupTimeout = 6 * time.Hour
 var backupPoolPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
 
 func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Task, error) {
+	if s.backupService != nil {
+		return s.backupService.Create(ctx, backupsapp.CreateCommand{
+			VMUUID: strings.TrimSpace(command.UUID),
+			Spec: domain.BackupCreateSpec{
+				Name: command.Spec.Name, TargetPool: command.Spec.TargetPool,
+			},
+			Request: backupsapp.MutationContext{
+				Session: command.Request.Session, RequestID: command.Request.RequestID, SourceIP: command.Request.SourceIP,
+			},
+		})
+	}
 	command.UUID = strings.TrimSpace(command.UUID)
 	command.Spec.Name = strings.TrimSpace(command.Spec.Name)
 	command.Spec.TargetPool = strings.TrimSpace(command.Spec.TargetPool)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/version"
 )
 
 type DemoBackend struct {
@@ -25,6 +26,7 @@ type DemoBackend struct {
 	snapshots   map[string][]domain.VMSnapshot
 	pools       map[string]domain.StoragePool
 	volumes     map[string][]domain.StorageVolume
+	volumeData  map[string][]byte
 	networks    map[string]domain.VirtualNetwork
 	leases      map[string][]domain.DHCPLease
 	metricCalls map[string]uint64
@@ -37,6 +39,7 @@ func NewDemo(sinks ...EventSink) *DemoBackend {
 		snapshots:   make(map[string][]domain.VMSnapshot),
 		pools:       demoStoragePools(),
 		volumes:     demoStorageVolumes(),
+		volumeData:  make(map[string][]byte),
 		networks:    make(map[string]domain.VirtualNetwork),
 		leases:      demoNetworkLeases(),
 		metricCalls: make(map[string]uint64),
@@ -572,15 +575,15 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 			format = "qcow2"
 		}
 		artifacts = append(artifacts, demoArtifact{
-			name:          backupVolumeName(spec.Name, fmt.Sprintf("-disk-%02d%s", len(artifacts)+1, backupExtension(sourceVolume.Name, format))),
+			name:          backupVolumeName(backupPrefix(spec), fmt.Sprintf("-disk-%02d%s", len(artifacts), backupExtension(sourceVolume.Name, format))),
 			format:        format,
 			capacityBytes: sourceVolume.CapacityBytes,
 			allocation:    sourceVolume.AllocationBytes,
 			sourceVolume:  sourceVolume.Name,
 		})
 	}
-	configName := backupVolumeName(spec.Name, "-domain.xml")
-	manifestName := backupVolumeName(spec.Name, "-manifest.json")
+	configName := backupVolumeName(backupPrefix(spec), "-domain.xml")
+	manifestName := backupVolumeName(backupPrefix(spec), "-manifest.json")
 	plannedNames := []string{configName, manifestName}
 	for _, artifact := range artifacts {
 		plannedNames = append(plannedNames, artifact.name)
@@ -635,13 +638,18 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 
 	createdAt := time.Now().UTC()
 	configSum := sha256.Sum256(configBytes)
+	backupID := spec.BackupID
+	if backupID == "" {
+		backupID = spec.Name
+	}
 	manifest, err := json.MarshalIndent(backupManifest{
-		FormatVersion: domain.VMBackupFormatVersion,
+		FormatVersion: domain.VMBackupFormatVersionV2,
+		BackupID:      backupID,
 		CreatedAt:     createdAt,
-		VMUUID:        uuid,
-		VMName:        source.Name,
-		ConfigVolume:  configName,
-		ConfigSHA256:  hex.EncodeToString(configSum[:]),
+		ToolVersion:   version.Version,
+		Source:        &backupManifestSource{VMUUID: uuid, VMName: source.Name, State: source.State, Persistent: source.Persistent},
+		Config:        &backupManifestConfig{Artifact: configName, SizeBytes: uint64(len(configBytes)), SHA256: hex.EncodeToString(configSum[:])},
+		Restore:       &backupManifestRestore{DefaultTargetPool: spec.TargetPool, RequiresNewMAC: true, ContainsMemory: false},
 		Disks:         backupDisks,
 	}, "", "  ")
 	if err != nil {
@@ -655,12 +663,15 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 	})
 	created = append(created, manifestName)
 	totalBytes += uint64(len(manifest))
+	d.volumeData[spec.TargetPool+"/"+configName] = append([]byte(nil), configBytes...)
+	d.volumeData[spec.TargetPool+"/"+manifestName] = append([]byte(nil), manifest...)
 
 	committed = true
 	reportBackupProgress(progress, 100, "备份完成")
 	d.publish("vm.backup.created", "info", "vm", uuid, source.Name, "虚拟机 "+source.Name+" 备份完成")
 	return domain.VMBackup{
-		FormatVersion:  domain.VMBackupFormatVersion,
+		BackupID:       backupID,
+		FormatVersion:  domain.VMBackupFormatVersionV2,
 		CreatedAt:      createdAt,
 		VMUUID:         uuid,
 		VMName:         source.Name,
@@ -680,6 +691,182 @@ func (d *DemoBackend) demoVolumeByPathLocked(path string) (domain.StorageVolume,
 			if volume.Path == path {
 				return volume, true
 			}
+		}
+	}
+	return domain.StorageVolume{}, false
+}
+
+func (d *DemoBackend) VerifyVMBackup(_ context.Context, backup domain.Backup, deep bool) (domain.BackupVerification, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	manifestBytes, ok := d.volumeData[backup.TargetPool+"/"+backup.ManifestVolume]
+	checks := make([]domain.BackupArtifactCheck, 0, len(backup.Disks)+2)
+	checks = append(checks, domain.BackupArtifactCheck{Name: backup.ManifestVolume, Kind: "manifest", Exists: ok})
+	if !ok {
+		return domain.BackupVerification{BackupID: backup.ID, Status: domain.BackupVerifyFailed, Deep: deep, CheckedAt: time.Now().UTC(), Message: "备份清单不存在", Artifacts: checks}, nil
+	}
+	var manifest backupManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return domain.BackupVerification{BackupID: backup.ID, Status: domain.BackupVerifyFailed, Deep: deep, CheckedAt: time.Now().UTC(), Message: "备份清单无法解析", Artifacts: checks}, nil
+	}
+	normalizeBackupManifest(&manifest, backup)
+	configBytes, configOK := d.volumeData[backup.TargetPool+"/"+manifest.ConfigVolume]
+	configCheck := domain.BackupArtifactCheck{Name: manifest.ConfigVolume, Kind: "config", Exists: configOK}
+	if configOK && manifest.ConfigSHA256 != "" {
+		sum := sha256.Sum256(configBytes)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), manifest.ConfigSHA256) {
+			configCheck.Message = "配置 SHA-256 与备份清单不一致"
+		}
+	}
+	checks = append(checks, configCheck)
+	failed := !configOK || configCheck.Message != ""
+	for _, disk := range manifest.Disks {
+		volume, found := d.demoVolumeLocked(backup.TargetPool, disk.BackupVolume)
+		check := domain.BackupArtifactCheck{Name: disk.BackupVolume, Kind: "disk", Exists: found, Format: disk.Format, CapacityBytes: disk.CapacityBytes}
+		if found && deep && volume.CapacityBytes < disk.CapacityBytes {
+			check.Message = "备份磁盘容量小于清单记录"
+		}
+		if !found || check.Message != "" {
+			failed = true
+		}
+		checks = append(checks, check)
+	}
+	status := domain.BackupVerifyVerified
+	message := "备份清单、配置和磁盘产物完整"
+	if failed {
+		status = domain.BackupVerifyFailed
+		message = "备份校验失败，请查看产物检查结果"
+	}
+	return domain.BackupVerification{BackupID: backup.ID, Status: status, Deep: deep, CheckedAt: time.Now().UTC(), Message: message, Artifacts: checks}, nil
+}
+
+func (d *DemoBackend) DeleteVMBackup(_ context.Context, backup domain.Backup) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	names := make([]string, 0, len(backup.Disks)+2)
+	for _, disk := range backup.Disks {
+		names = append(names, disk.Artifact)
+	}
+	names = append(names, backup.ConfigVolume, backup.ManifestVolume)
+	d.removeDemoVolumesLocked(backup.TargetPool, names)
+	for _, name := range names {
+		delete(d.volumeData, backup.TargetPool+"/"+name)
+	}
+	d.publish("vm.backup.deleted", "warning", "vm", backup.VMUUID, backup.VMName, "虚拟机 "+backup.VMName+" 的备份已删除")
+	return nil
+}
+
+func (d *DemoBackend) RestoreVMBackup(ctx context.Context, backup domain.Backup, spec domain.VMRestoreSpec, progress VMBackupProgress) (domain.VM, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.VM{}, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	manifestBytes, ok := d.volumeData[backup.TargetPool+"/"+backup.ManifestVolume]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	var manifest backupManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return domain.VM{}, fmt.Errorf("%w: invalid backup manifest", domain.ErrInvalidInput)
+	}
+	normalizeBackupManifest(&manifest, backup)
+	configBytes, ok := d.volumeData[backup.TargetPool+"/"+manifest.ConfigVolume]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	for _, vm := range d.vms {
+		if vm.Name == spec.Name {
+			return domain.VM{}, domain.ErrConflict
+		}
+	}
+	targetPool, ok := d.pools[spec.TargetPool]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if targetPool.State != domain.StoragePoolStateActive {
+		return domain.VM{}, domain.ErrUnavailable
+	}
+	sourceDisks, err := cloneDisksFromDomainXML(string(configBytes))
+	if err != nil {
+		return domain.VM{}, err
+	}
+	if len(sourceDisks) != len(manifest.Disks) {
+		return domain.VM{}, fmt.Errorf("%w: backup disk count does not match config", domain.ErrInvalidInput)
+	}
+	replaced := make(map[string]string, len(sourceDisks))
+	created := make([]string, 0, len(sourceDisks))
+	for index, disk := range manifest.Disks {
+		reportBackupProgress(progress, 10+index*60/maxInt(1, len(manifest.Disks)), fmt.Sprintf("正在恢复演示磁盘 %d/%d", index+1, len(manifest.Disks)))
+		sourceVolume, found := d.demoVolumeLocked(backup.TargetPool, disk.BackupVolume)
+		if !found {
+			d.removeDemoVolumesLocked(spec.TargetPool, created)
+			return domain.VM{}, domain.ErrNotFound
+		}
+		targetName := cloneVolumeName(spec.Name, index, disk.BackupVolume, disk.Format)
+		if _, found := d.demoVolumeLocked(spec.TargetPool, targetName); found {
+			d.removeDemoVolumesLocked(spec.TargetPool, created)
+			return domain.VM{}, domain.ErrConflict
+		}
+		targetVolume := domain.StorageVolume{
+			Name: targetName, Path: filepath.Join(targetPool.TargetPath, targetName), Type: "file",
+			Format: disk.Format, CapacityBytes: sourceVolume.CapacityBytes, AllocationBytes: sourceVolume.AllocationBytes,
+		}
+		d.volumes[spec.TargetPool] = append(d.volumes[spec.TargetPool], targetVolume)
+		created = append(created, targetName)
+		replaced[sourceDisks[index].source] = targetVolume.Path
+	}
+	rewritten, err := rewriteRestoreDomainXML(string(configBytes), spec.Name, replaced, spec.PreservePassthrough)
+	if err != nil {
+		d.removeDemoVolumesLocked(spec.TargetPool, created)
+		return domain.VM{}, err
+	}
+	base, ok := d.vms[manifest.VMUUID]
+	if !ok {
+		base = domain.VM{OSType: "hvm", Arch: "x86_64", Machine: "q35", Firmware: domain.VMFirmwareBIOS}
+	}
+	restored := cloneVM(base)
+	restored.UUID, err = newDemoUUID()
+	if err != nil {
+		d.removeDemoVolumesLocked(spec.TargetPool, created)
+		return domain.VM{}, err
+	}
+	restored.Name = spec.Name
+	restored.State = domain.VMStateShutoff
+	restored.Autostart = spec.Autostart
+	restored.Hostname = ""
+	restored.IPAddresses = []string{}
+	restored.AgentConnected = false
+	restored.Disks = make([]domain.Disk, 0, len(sourceDisks))
+	for index, sourceDisk := range sourceDisks {
+		targetName := created[index]
+		volume, _ := d.demoVolumeLocked(spec.TargetPool, targetName)
+		restored.Disks = append(restored.Disks, domain.Disk{
+			Device: "disk", Target: sourceDisk.target, Bus: "virtio", Format: manifest.Disks[index].Format,
+			Source: volume.Path, CapacityBytes: volume.CapacityBytes, AllocationBytes: volume.AllocationBytes,
+		})
+	}
+	for index := range restored.Interfaces {
+		restored.Interfaces[index].MAC = demoMAC(len(d.vms) + index + 1)
+	}
+	if !spec.PreservePassthrough {
+		restored.Passthrough = nil
+	}
+	if spec.Start {
+		restored.State = domain.VMStateRunning
+	}
+	restored.AllowedActions = domain.AllowedVMActions(restored.State)
+	d.vms[restored.UUID] = restored
+	d.xmlConfig[restored.UUID] = rewritten
+	reportBackupProgress(progress, 100, "恢复完成")
+	d.publish("vm.backup.restored", "info", "vm", restored.UUID, restored.Name, "虚拟机 "+restored.Name+" 已从备份恢复")
+	return cloneVM(restored), nil
+}
+
+func (d *DemoBackend) demoVolumeLocked(poolName, name string) (domain.StorageVolume, bool) {
+	for _, volume := range d.volumes[poolName] {
+		if volume.Name == name {
+			return volume, true
 		}
 	}
 	return domain.StorageVolume{}, false

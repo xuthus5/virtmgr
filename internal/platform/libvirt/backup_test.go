@@ -36,13 +36,13 @@ func TestDemoBackupVMCreatesConfigManifestAndDiskVolumes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackupVM() error = %v", err)
 	}
-	if result.FormatVersion != domain.VMBackupFormatVersion || result.VMName != "demo-legacy-01" || len(result.Disks) != 1 {
+	if result.FormatVersion != domain.VMBackupFormatVersionV2 || result.VMName != "demo-legacy-01" || len(result.Disks) != 1 {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.ConfigVolume != "demo-backup-01-domain.xml" || result.ManifestVolume != "demo-backup-01-manifest.json" {
 		t.Fatalf("result volumes = %+v", result)
 	}
-	if result.Disks[0].BackupVolume != "demo-backup-01-disk-01.qcow2" || result.TotalBytes == 0 {
+	if result.Disks[0].BackupVolume != "demo-backup-01-disk-00.qcow2" || result.TotalBytes == 0 {
 		t.Fatalf("result disks = %+v total=%d", result.Disks, result.TotalBytes)
 	}
 	if len(progress) == 0 || progress[len(progress)-1] != 100 {

@@ -1,4 +1,4 @@
-import type { AuditEventFilters, AuditEventList, ConsoleTicket, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -164,6 +164,56 @@ export const api = {
     method: "POST",
     body: JSON.stringify(input),
   }),
+  backups: (filters: BackupFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.vmUuid) params.set("vmUuid", filters.vmUuid);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.repositoryId) params.set("repositoryId", filters.repositoryId);
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+    const suffix = params.toString();
+    return request<BackupList>(`/api/v1/backups${suffix ? `?${suffix}` : ""}`);
+  },
+  backup: (id: string) => request<Backup>(`/api/v1/backups/${encodeURIComponent(id)}`),
+  backupSummary: (vmUuid = "") => request<BackupSummary>(`/api/v1/backups/summary${vmUuid ? `?vmUuid=${encodeURIComponent(vmUuid)}` : ""}`),
+  createBackup: (input: BackupCreateInput) => request<Task>("/api/v1/backups", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  verifyBackup: (id: string, deep = false) => request<Task>(`/api/v1/backups/${encodeURIComponent(id)}/verify`, {
+    method: "POST",
+    body: JSON.stringify({ deep }),
+  }),
+  restoreBackup: (id: string, input: VMRestoreInput) => request<Task>(`/api/v1/backups/${encodeURIComponent(id)}/restore`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  deleteBackup: (id: string) => request<Task>(`/api/v1/backups/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  pinBackup: (id: string, input: BackupPinInput) => request<Backup>(`/api/v1/backups/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }),
+  backupRepositories: () => request<BackupRepositoryList>("/api/v1/backup-repositories"),
+  createBackupRepository: (input: BackupRepositoryInput) => request<BackupRepository>("/api/v1/backup-repositories", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  updateBackupRepository: (id: string, input: BackupRepositoryInput) => request<BackupRepository>(`/api/v1/backup-repositories/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }),
+  deleteBackupRepository: (id: string) => request<void>(`/api/v1/backup-repositories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  backupSchedules: (vmUuid = "") => request<BackupScheduleList>(`/api/v1/backup-schedules${vmUuid ? `?vmUuid=${encodeURIComponent(vmUuid)}` : ""}`),
+  createBackupSchedule: (input: BackupScheduleInput) => request<BackupSchedule>("/api/v1/backup-schedules", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  updateBackupSchedule: (id: number, input: Omit<BackupScheduleInput, "vmUuid">) => request<BackupSchedule>(`/api/v1/backup-schedules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }),
+  deleteBackupSchedule: (id: number) => request<void>(`/api/v1/backup-schedules/${id}`, { method: "DELETE" }),
+  runBackupSchedule: (id: number) => request<Task>(`/api/v1/backup-schedules/${id}/run`, { method: "POST" }),
   deleteVM: (uuid: string) => request<void>(`/api/v1/vms/${encodeURIComponent(uuid)}`, { method: "DELETE" }),
   setVMAutostart: (uuid: string, input: VMAutostartInput) => request<VM>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/autostart`,

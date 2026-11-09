@@ -25,6 +25,9 @@ const kindLabels: Record<string, string> = {
   "vm.create": "创建虚拟机",
   "vm.clone": "克隆虚拟机",
   "vm.backup": "备份虚拟机",
+  "vm.backup.verify": "校验虚拟机备份",
+  "vm.backup.restore": "从备份恢复虚拟机",
+  "vm.backup.delete": "删除虚拟机备份",
   "vm.delete": "删除虚拟机",
   "vm.snapshot.create": "创建快照",
   "vm.snapshot.revert": "回滚快照",
@@ -40,6 +43,7 @@ const kindLabels: Record<string, string> = {
 
 const targetLabels: Record<string, string> = {
   vm: "虚拟机",
+  backup: "备份",
   vm_snapshot: "快照",
   storage_volume: "存储卷",
   network: "虚拟网络",

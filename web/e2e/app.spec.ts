@@ -287,6 +287,37 @@ test("移动端导航可打开并进入虚拟机列表", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "虚拟机", exact: true })).toBeVisible();
 });
 
+test("桌面端侧边栏固定、可折叠并记忆状态", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await login(page);
+  await page.goto("/host");
+  await expect(page.getByRole("heading", { name: "物理主机", exact: true })).toBeVisible();
+
+  const sidebar = page.getByTestId("app-sidebar");
+  const header = page.getByTestId("app-header");
+  await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+  const expandedBox = await sidebar.boundingBox();
+  expect(expandedBox).not.toBeNull();
+
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const scrolledBox = await sidebar.boundingBox();
+  expect(scrolledBox).not.toBeNull();
+  expect(scrolledBox?.y).toBe(expandedBox?.y);
+  await expect(header).toBeVisible();
+  expect((await header.boundingBox())?.y).toBe(0);
+
+  await page.getByRole("button", { name: "收起侧边栏" }).click();
+  await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+  await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(expandedBox!.width);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "物理主机", exact: true })).toBeVisible();
+  await expect(page.getByTestId("app-sidebar")).toHaveAttribute("data-collapsed", "true");
+  await page.getByRole("button", { name: "展开侧边栏" }).click();
+  await expect(page.getByTestId("app-sidebar")).toHaveAttribute("data-collapsed", "false");
+});
+
 test("键盘可跳过导航并聚焦主内容", async ({ page }) => {
   await login(page);
   await page.keyboard.press("Tab");
@@ -477,6 +508,28 @@ test("只读模式禁用新建虚拟机", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await expect(page.getByRole("button", { name: "新建虚拟机", exact: true })).toBeDisabled();
+});
+
+test("只读模式展示备份中心并禁用写操作", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "备份中心", exact: true }).click();
+  await expect(page).toHaveURL(/\/backups$/);
+  await expect(page.getByRole("heading", { name: "备份中心", exact: true })).toBeVisible();
+  await expect(page.getByTestId("backup-total")).toHaveText("0");
+  await expect(page.getByTestId("backups-empty")).toContainText("还没有备份集");
+  await expect(page.getByTestId("backup-create-open")).toBeDisabled();
+  await expect(page.getByTestId("backup-create-open")).toHaveAttribute("title", /只读模式/);
+
+  await page.getByTestId("backup-tab-schedules").click();
+  await expect(page.getByTestId("backup-schedules-empty")).toContainText("还没有定时计划");
+  await expect(page.getByTestId("backup-schedule-create")).toBeDisabled();
+
+  await page.getByTestId("backup-tab-repositories").click();
+  await expect(page.getByTestId("backup-repository-create")).toBeDisabled();
+  await expect(page.getByTestId("backup-repository-create")).toHaveAttribute("title", /只读模式/);
+  const defaultRepository = page.locator('[data-testid^="backup-repository-row-"]').filter({ hasText: "default" });
+  await expect(defaultRepository).toBeVisible();
+  await expect(defaultRepository).toContainText("默认");
 });
 
 test("管理员可查看空的审计日志并筛选", async ({ page }) => {

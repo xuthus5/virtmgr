@@ -398,29 +398,21 @@ func TestVMBackupAPI(t *testing.T) {
 		t.Fatalf("backup task = %+v", task)
 	}
 
-	response, err = client.Get(server.URL + "/api/v1/storage/pools/default/volumes")
+	response, err = client.Get(server.URL + "/api/v1/backups?vmUuid=" + vmUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var volumes domain.StorageVolumeList
-	if err := json.NewDecoder(response.Body).Decode(&volumes); err != nil {
+	var backups domain.BackupList
+	if err := json.NewDecoder(response.Body).Decode(&backups); err != nil {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	for _, name := range []string{"api-backup-01-domain.xml", "api-backup-01-manifest.json", "api-backup-01-disk-01.qcow2"} {
-		found := false
-		for _, volume := range volumes.Items {
-			if volume.Name == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("backup volume %s not found in %+v", name, volumes.Items)
-		}
+	if backups.Total != 1 || len(backups.Items) != 1 || backups.Items[0].Status != domain.BackupStatusCompleted || backups.Items[0].DiskCount != 1 {
+		t.Fatalf("backup catalog = %+v", backups)
 	}
+	backup := backups.Items[0]
 
-	response, err = client.Get(server.URL + "/api/v1/audit-events?action=vm.backup&pageSize=10")
+	response, err = client.Get(server.URL + "/api/v1/audit-events?action=backup.create&pageSize=10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +421,7 @@ func TestVMBackupAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if events.Total != 1 || events.Items[0].TargetKind != "vm" || events.Items[0].TargetID != vmUUID || events.Items[0].Result != "success" {
+	if events.Total != 1 || events.Items[0].TargetKind != "backup" || events.Items[0].TargetID != backup.ID || events.Items[0].Result != "success" {
 		t.Fatalf("backup audit = %+v", events)
 	}
 	detail := events.Items[0].Detail

@@ -57,12 +57,13 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整和磁盘扩容 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 快照 | 创建、回滚、删除快照，并按保留策略配置定时快照 |
+| 备份中心 | 集中管理冷备份、完整性校验、恢复为新虚拟机、定时计划、保留清理、固定保留和 libvirt 存储库 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；上传 ISO；阻止删除仍在使用的卷 |
 | 网络 | NAT 和隔离网络、桥接口、IPv4/DHCP 配置、实时租约、静态 DHCP 主机，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
 | 可观测性 | SSE 实时事件、带进度和失败原因的任务中心、宿主机与虚拟机资源趋势、结构化日志和健康检查 |
 | 安全 | 本地账号、Argon2id 密码、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、审计、CSP 和安全响应头 |
-| 使用体验 | 响应式布局、明暗主题、键盘友好的全局搜索、可访问对话框和危险操作二次确认 |
+| 使用体验 | 响应式布局、固定且可折叠的侧边导航、明暗主题、键盘友好的全局搜索、可访问对话框和危险操作二次确认 |
 | 虚拟机模板 | 复用虚拟机规格、固件/网络默认值和 Cloud-init 默认内容，不包含实例名称和磁盘路径 |
 
 ## 架构
@@ -276,6 +277,7 @@ API 位于 `/api/v1`，使用 JSON。认证基于 Cookie，写操作还需要 `X
 | 总览与宿主机 | `/api/v1/overview`、`/api/v1/host`、`/api/v1/host/devices`、`/api/v1/host/metrics` |
 | 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/snapshots`、`/devices`、`/actions/{action}` |
 | 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/export` |
+| 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
 | 网络 | `/api/v1/networks`、`/leases`、`/hosts`、`/actions/{action}` |
 | 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/users`、`/settings` |
@@ -332,12 +334,14 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 运行环境为 Linux + KVM/QEMU + libvirt Go binding；构建需要 CGO 和 libvirt 开发头文件。
 - 当前 Web 控制台面向 VNC，不支持 SPICE。
 - 当前尚未提供官方容器化部署方式，推荐的生产形态仍是由 systemd 管理的宿主机二进制。
-- 冷备份恢复、虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理均不在当前范围内。
+- 备份仅支持持久虚拟机的冷全量备份和 `file` 后端磁盘；在线/增量备份、原地覆盖恢复、跨宿主机复制和浏览器下载备份均未实现。
+- 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。
 - 建议使用较新的 Chrome、Edge、Firefox 或 Safari。
 
 ## 文档
 
 - [架构设计](docs/architecture-design.md)——产品边界、架构、数据模型、路由、安全和部署细节
+- [备份与恢复方案](docs/backup-design.md)——已实现的冷备份目录、恢复、调度和保留策略
 - [发布流水线](.github/workflows/release.yml)——amd64/arm64 二进制构建与 Release 附件
 - [环境变量示例](deploy/virtmgr.env.example)——生产环境配置模板
 - [systemd 单元文件](deploy/virtmgr.service)——加固后的服务定义

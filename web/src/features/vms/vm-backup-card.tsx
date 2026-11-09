@@ -44,15 +44,21 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
   const taskQuery = useTaskQuery(taskID);
 
   useEffect(() => {
-    if (taskQuery.data?.status !== "succeeded") return;
-    setNotice({ tone: "success", text: `虚拟机 ${vmName} 备份完成。` });
+    const status = taskQuery.data?.status;
+    if (status !== "succeeded" && status !== "failed") return;
+    if (status === "succeeded") {
+      setNotice({ tone: "success", text: `虚拟机 ${vmName} 备份完成，可在备份中心校验或恢复。` });
+    } else {
+      setNotice({ tone: "error", text: `备份失败：${taskQuery.data?.error || taskQuery.data?.step || "请稍后重试"}` });
+    }
     void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     void queryClient.invalidateQueries({ queryKey: ["storage", "volumes"] });
+    void queryClient.invalidateQueries({ queryKey: ["backups"] });
     void queryClient.invalidateQueries({ queryKey: ["tasks"] });
-  }, [queryClient, taskQuery.data?.status, vmName]);
+  }, [queryClient, taskQuery.data?.error, taskQuery.data?.status, taskQuery.data?.step, vmName]);
 
   const mutation = useMutation({
-    mutationFn: (input: { name: string; targetPool: string }) => api.backupVM(uuid, input),
+    mutationFn: (input: { name: string; targetPool: string }) => api.createBackup({ vmUuid: uuid, ...input }),
     onSuccess: (task) => {
       setTaskID(task.id);
       setOpen(false);
@@ -114,7 +120,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
               <div className="space-y-2">
                 <Label htmlFor="vm-backup-name">备份名称</Label>
                 <Input id="vm-backup-name" data-testid="vm-backup-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="backup-20261108" autoComplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,63}" />
-                <p className="text-[11px] text-muted-foreground">将生成 &lt;名称&gt;-disk-NN、&lt;名称&gt;-domain.xml 和 &lt;名称&gt;-manifest.json。</p>
+                <p className="text-[11px] text-muted-foreground">将生成带唯一备份 ID 的清单、配置和磁盘产物，并出现在备份中心。</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="vm-backup-pool">目标存储池</Label>
@@ -153,6 +159,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
             {task.error ? <p className="text-xs text-destructive" data-testid="vm-backup-task-error">{task.error}</p> : null}
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="font-mono">{task.id}</span>
+              <Link to="/backups" className="text-primary hover:underline">打开备份中心</Link>
               <Link to="/tasks" className="text-primary hover:underline">在任务中心查看</Link>
             </div>
           </div>

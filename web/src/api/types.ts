@@ -200,6 +200,165 @@ export type VMBackup = {
   totalBytes: number;
 };
 
+export type BackupStatus = "running" | "completed" | "failed" | "interrupted" | "deleting" | "delete_failed";
+
+export type BackupVerifyStatus = "unknown" | "verified" | "failed";
+
+export type BackupDisk = {
+  sequence: number;
+  target?: string;
+  sourceVolume: string;
+  artifact: string;
+  format: string;
+  capacityBytes: number;
+  sha256?: string;
+};
+
+export type Backup = {
+  id: string;
+  vmUuid: string;
+  vmName: string;
+  repositoryId: string;
+  repositoryName?: string;
+  targetPool: string;
+  name: string;
+  status: BackupStatus;
+  formatVersion: string;
+  manifestVolume: string;
+  configVolume: string;
+  configBytes: number;
+  totalBytes: number;
+  diskCount: number;
+  pinned: boolean;
+  verifyStatus: BackupVerifyStatus;
+  verifiedAt?: string;
+  verifyMessage?: string;
+  error?: string;
+  createdBy: string;
+  createdAt: string;
+  completedAt?: string;
+  disks?: BackupDisk[];
+};
+
+export type BackupList = {
+  items: Backup[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type BackupSummary = {
+  total: number;
+  completed: number;
+  failed: number;
+  running: number;
+  pinned: number;
+  totalBytes: number;
+  lastCompletedAt?: string;
+};
+
+export type BackupFilters = {
+  vmUuid?: string;
+  status?: BackupStatus | "";
+  repositoryId?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type BackupCreateInput = {
+  vmUuid: string;
+  name: string;
+  targetPool: string;
+  repositoryId?: string;
+};
+
+export type VMRestoreInput = {
+  name: string;
+  targetPool: string;
+  autostart: boolean;
+  start: boolean;
+  preservePassthrough: boolean;
+};
+
+export type BackupPinInput = {
+  pinned: boolean;
+};
+
+export type BackupArtifactCheck = {
+  name: string;
+  kind: "manifest" | "config" | "disk";
+  exists: boolean;
+  format?: string;
+  capacityBytes?: number;
+  expectedBytes?: number;
+  message?: string;
+};
+
+export type BackupVerification = {
+  backupId: string;
+  status: BackupVerifyStatus;
+  deep: boolean;
+  checkedAt: string;
+  message: string;
+  artifacts: BackupArtifactCheck[];
+};
+
+export type BackupRepository = {
+  id: string;
+  name: string;
+  type: "libvirt-pool";
+  poolName: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BackupRepositoryList = {
+  items: BackupRepository[];
+  total: number;
+};
+
+export type BackupRepositoryInput = {
+  name: string;
+  poolName: string;
+  isDefault: boolean;
+};
+
+export type BackupSchedule = {
+  id: number;
+  vmUuid: string;
+  vmName?: string;
+  repositoryId: string;
+  repositoryName?: string;
+  targetPool: string;
+  name: string;
+  intervalHours: number;
+  retentionCount: number;
+  retentionDays: number;
+  enabled: boolean;
+  lastRunAt?: string;
+  nextRunAt: string;
+  lastBackupId?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BackupScheduleInput = {
+  vmUuid: string;
+  repositoryId: string;
+  name: string;
+  intervalHours: number;
+  retentionCount: number;
+  retentionDays: number;
+  enabled: boolean;
+};
+
+export type BackupScheduleList = {
+  items: BackupSchedule[];
+  total: number;
+};
+
 export type VM = {
   uuid: string;
   name: string;

@@ -58,6 +58,7 @@ import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey
 import { downloadVMExport } from "@/features/vms/vm-export-model";
 import { canEditVMConfigXML, validateVMXMLDraft } from "@/features/vms/vm-xml-edit-model";
 import { VMBackupCard } from "@/features/vms/vm-backup-card";
+import { VMRecentBackupsCard } from "@/features/vms/vm-recent-backups-card";
 import { VMDisksCard } from "@/features/vms/vm-disks-card";
 import { VMPassthroughCard } from "@/features/vms/vm-passthrough-card";
 import { VMResourcesCard } from "@/features/vms/vm-resources-card";
@@ -559,6 +560,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         readOnly={readOnly}
         disabledReason={backupDisabledReason}
       />
+      <VMRecentBackupsCard uuid={vm.uuid} />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <Card>

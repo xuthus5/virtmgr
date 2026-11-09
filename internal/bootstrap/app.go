@@ -15,6 +15,8 @@ import (
 	audithistoryhttp "virtmgr/internal/modules/audithistory/http"
 	authapp "virtmgr/internal/modules/auth/app"
 	authhttp "virtmgr/internal/modules/auth/http"
+	backupsapp "virtmgr/internal/modules/backups/app"
+	backupshttp "virtmgr/internal/modules/backups/http"
 	eventsapp "virtmgr/internal/modules/events/app"
 	eventshttp "virtmgr/internal/modules/events/http"
 	hostapp "virtmgr/internal/modules/host/app"
@@ -54,14 +56,15 @@ import (
 )
 
 type App struct {
-	config    config.Config
-	logger    *slog.Logger
-	handler   stdhttp.Handler
-	server    *stdhttp.Server
-	backend   libvirtbackend.Backend
-	db        interface{ Close() error }
-	store     *sqlite.Store
-	scheduler *snapshotpoliciesapp.Service
+	config          config.Config
+	logger          *slog.Logger
+	handler         stdhttp.Handler
+	server          *stdhttp.Server
+	backend         libvirtbackend.Backend
+	db              interface{ Close() error }
+	store           *sqlite.Store
+	scheduler       *snapshotpoliciesapp.Service
+	backupScheduler *backupsapp.Service
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -83,6 +86,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 	if _, err := store.MarkRunningTasksInterrupted(ctx, time.Now()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := store.MarkRunningBackupsInterrupted(ctx, time.Now()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -121,10 +128,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	eventsHandler := eventshttp.New(eventsapp.New(eventBus))
 	tasksHandler := taskshttp.New(tasksapp.New(store))
 	taskRecorder := tasksplatform.New(store)
+	backupService := backupsapp.New(store, backend, store, taskRecorder, cfg.ReadOnly,
+		backupsapp.WithReadOnlyMode(mode),
+		backupsapp.WithErrorHandler(func(err error) { logger.Error("backup_scheduler_failed", "error", err) }),
+	)
+	backupsHandler := backupshttp.New(backupService)
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService)))
 	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
@@ -152,6 +164,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		auditHistory:     auditHistoryHandler,
 		users:            usersHandler,
 		settings:         settingsHandler,
+		backups:          backupsHandler,
 		staticFS:         web.FS(),
 	})
 	server := &stdhttp.Server{
@@ -162,7 +175,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService}, nil
+	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService}, nil
 }
 
 func (a *App) Handler() stdhttp.Handler { return a.handler }
@@ -185,6 +198,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 	go a.scheduler.Run(ctx)
+	go a.backupScheduler.Run(ctx)
 	go a.cleanupExpiredSessions(ctx)
 	scheme := "http"
 	if a.config.TLSEnabled() {
@@ -238,6 +252,7 @@ type routerDependencies struct {
 	auditHistory     *audithistoryhttp.Handler
 	users            *usershttp.Handler
 	settings         *settingshttp.Handler
+	backups          *backupshttp.Handler
 	staticFS         fs.FS
 }
 
@@ -283,6 +298,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.auditHistory.Mount(protected)
 			deps.users.Mount(protected, deps.auth.RequireCSRF)
 			deps.settings.Mount(protected, deps.auth.RequireCSRF)
+			deps.backups.Mount(protected, deps.auth.RequireCSRF)
 		})
 	})
 	r.NotFound(spaHandler(deps.staticFS))

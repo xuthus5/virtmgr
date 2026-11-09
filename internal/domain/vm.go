@@ -144,9 +144,8 @@ type VMCloneSpec struct {
 	Start      bool   `json:"start"`
 }
 
-const VMBackupFormatVersion = "virtmgr.vm-backup/v1"
-
 type VMBackupSpec struct {
+	BackupID   string `json:"backupId,omitempty"`
 	Name       string `json:"name"`
 	TargetPool string `json:"targetPool"`
 }
@@ -154,11 +153,14 @@ type VMBackupSpec struct {
 type VMBackupDisk struct {
 	SourceVolume  string `json:"sourceVolume"`
 	BackupVolume  string `json:"backupVolume"`
+	Target        string `json:"target,omitempty"`
 	Format        string `json:"format"`
 	CapacityBytes uint64 `json:"capacityBytes"`
+	SHA256        string `json:"sha256,omitempty"`
 }
 
 type VMBackup struct {
+	BackupID       string         `json:"backupId"`
 	FormatVersion  string         `json:"formatVersion"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	VMUUID         string         `json:"vmUuid"`
