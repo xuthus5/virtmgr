@@ -37,6 +37,10 @@ export function VNCConsolePage({ uuid }: { uuid: string }) {
   }, [navigate, session.isError]);
 
   useEffect(() => {
+    document.title = `${vm?.name ?? "虚拟机控制台"} · VNC · VirtMgr`;
+  }, [vm?.name]);
+
+  useEffect(() => {
     if (!session.data || !vm) return;
     if (!canConnect) {
       setState("forbidden");

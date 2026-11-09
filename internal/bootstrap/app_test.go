@@ -1859,3 +1859,32 @@ func TestHealthAndReady(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurityHeaders(t *testing.T) {
+	app := newTestApp(t)
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+
+	for header, want := range map[string]string{
+		"Content-Security-Policy":      "default-src 'self'",
+		"Cross-Origin-Resource-Policy": "same-origin",
+		"Permissions-Policy":           "camera=()",
+		"X-Content-Type-Options":       "nosniff",
+		"X-Frame-Options":              "DENY",
+	} {
+		if got := recorder.Header().Get(header); !strings.Contains(got, want) {
+			t.Fatalf("%s = %q, want to contain %q", header, got, want)
+		}
+	}
+}
+
+func TestMissingStaticAssetReturnsNotFound(t *testing.T) {
+	app := newTestApp(t)
+	request := httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}

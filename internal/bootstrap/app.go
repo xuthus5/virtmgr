@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	stdhttp "net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -59,6 +60,7 @@ type App struct {
 	server    *stdhttp.Server
 	backend   libvirtbackend.Backend
 	db        interface{ Close() error }
+	store     *sqlite.Store
 	scheduler *snapshotpoliciesapp.Service
 }
 
@@ -72,6 +74,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 	store := sqlite.NewStore(db)
+	if err := store.DeleteExpiredSessions(ctx, time.Now()); err != nil {
+		logger.Warn("expired_sessions_cleanup_failed", "error", err)
+	}
 	mode, err := runtimeconfig.New(ctx, store, cfg.ReadOnly)
 	if err != nil {
 		_ = db.Close()
@@ -157,7 +162,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, scheduler: snapshotPolicyService}, nil
+	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService}, nil
 }
 
 func (a *App) Handler() stdhttp.Handler { return a.handler }
@@ -180,12 +185,28 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 	go a.scheduler.Run(ctx)
+	go a.cleanupExpiredSessions(ctx)
 	a.logger.Info("virtmgr_started", "version", version.Version, "listen", a.config.Listen, "demo", a.config.DemoMode, "read_only", a.config.ReadOnly)
 	err := a.server.ListenAndServe()
 	if errors.Is(err, stdhttp.ErrServerClosed) {
 		return nil
 	}
 	return err
+}
+
+func (a *App) cleanupExpiredSessions(ctx context.Context) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			if err := a.store.DeleteExpiredSessions(ctx, now); err != nil {
+				a.logger.Warn("expired_sessions_cleanup_failed", "error", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 type routerDependencies struct {
@@ -265,6 +286,9 @@ func securityHeaders(next stdhttp.Handler) stdhttp.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; worker-src 'self' blob:")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -299,13 +323,21 @@ func spaHandler(assets fs.FS) stdhttp.HandlerFunc {
 				info, statErr := file.Stat()
 				_ = file.Close()
 				if statErr == nil && !info.IsDir() {
+					if strings.HasPrefix(r.URL.Path, "/assets/") {
+						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					}
 					fileServer.ServeHTTP(w, r)
 					return
 				}
 			}
+			if path.Ext(clean) != "" {
+				stdhttp.NotFound(w, r)
+				return
+			}
 		}
 		clone := r.Clone(r.Context())
 		clone.URL.Path = "/"
+		w.Header().Set("Cache-Control", "no-cache")
 		fileServer.ServeHTTP(w, clone)
 	})
 }

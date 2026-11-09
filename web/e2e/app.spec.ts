@@ -20,11 +20,14 @@ test("匿名访问重定向到登录页", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "登录 VirtMgr" })).toBeVisible();
+  await expect(page.getByLabel("用户名")).toBeFocused();
+  await expect(page).toHaveTitle("登录 · VirtMgr");
 });
 
 test("本地管理员登录后展示 libvirt 总览", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("main").getByText("virtmgr-demo", { exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("总览 · VirtMgr");
   await expect(page.getByText("只读模式")).toBeVisible();
   await expect(page.getByTestId("metric-total-value")).toHaveText("4");
   await expect(page.getByTestId("metric-running-value")).toHaveText("2");
@@ -311,6 +314,7 @@ test("移动端虚拟机表格支持横向滚动和首列冻结", async ({ page 
   await page.goto("/vms");
   const tableRegion = page.getByTestId("vm-table-scroll");
   await expect(tableRegion).toBeVisible();
+  await expect(page.getByText("左右滑动查看完整表格")).toBeVisible();
   const dimensions = await tableRegion.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
   expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
   await tableRegion.focus();
@@ -338,6 +342,7 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
   await expect(page).toHaveURL(/\/vms\/22222222-2222-4222-8222-222222222222$/);
   await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("demo-db-01 · VirtMgr");
   await expect(page.getByTestId("vm-detail-vcpus")).toHaveText("8");
   await expect(page.getByTestId("vm-detail-memory")).toHaveText("16 GiB");
   await expect(page.getByTestId("vm-detail-disks")).toHaveText("1");

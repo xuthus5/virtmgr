@@ -28,7 +28,7 @@ export function OverviewPage() {
         title="总览"
         breadcrumb="总览 / 物理机"
         description={<span className="flex flex-wrap items-center gap-2"><span className="h-2 w-2 rounded-full bg-success" />{data.host.name} · libvirt {data.host.libvirtVersion}</span>}
-        actions={<Button variant="outline" onClick={() => void overview.refetch()}><RefreshCw className="h-4 w-4" />刷新</Button>}
+        actions={<Button variant="outline" onClick={() => void overview.refetch()} disabled={overview.isFetching}><RefreshCw className={overview.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />{overview.isFetching ? "刷新中" : "刷新"}</Button>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -81,7 +81,7 @@ export function OverviewPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow><TableHead>名称</TableHead><TableHead>状态</TableHead><TableHead>vCPU</TableHead><TableHead>内存</TableHead><TableHead>磁盘</TableHead><TableHead>网络</TableHead></TableRow>
             </TableHeader>

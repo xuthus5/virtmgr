@@ -224,7 +224,7 @@ export function AuditPage() {
             </div>
           ) : null}
           {events.length ? (
-            <Table>
+            <Table className="min-w-[1080px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>时间</TableHead>
@@ -243,11 +243,11 @@ export function AuditPage() {
             <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center" data-testid="audit-pagination">
               <p className="text-xs text-muted-foreground">显示 {firstItem}-{lastItem}，共 {total} 条</p>
               <div className="flex items-center gap-2 sm:ml-auto">
-                <Button variant="outline" size="sm" data-testid="audit-prev" disabled={page <= 1 || query.isFetching} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                <Button variant="outline" size="sm" data-testid="audit-prev" disabled={page <= 1 || query.isFetching} title={query.isFetching ? "正在加载审计记录" : page <= 1 ? "已经是第一页" : "查看上一页审计记录"} onClick={() => setPage((current) => Math.max(1, current - 1))}>
                   <ChevronLeft className="h-4 w-4" />上一页
                 </Button>
                 <span className="text-xs text-muted-foreground">第 {page} / {totalPages} 页</span>
-                <Button variant="outline" size="sm" data-testid="audit-next" disabled={page >= totalPages || query.isFetching} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
+                <Button variant="outline" size="sm" data-testid="audit-next" disabled={page >= totalPages || query.isFetching} title={query.isFetching ? "正在加载审计记录" : page >= totalPages ? "已经是最后一页" : "查看下一页审计记录"} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
                   下一页<ChevronRight className="h-4 w-4" />
                 </Button>
               </div>

@@ -156,16 +156,16 @@ export function TasksPage() {
               <p className="mt-1 text-xs text-muted-foreground">长任务创建后会在这里显示进度和结果。</p>
             </div>
           ) : null}
-          {tasks.length ? <Table>
+          {tasks.length ? <Table className="min-w-[960px]">
             <TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead>目标</TableHead><TableHead>进度</TableHead><TableHead>操作者</TableHead><TableHead>更新时间</TableHead></TableRow></TableHeader>
             <TableBody>{tasks.map((task) => <TaskRow key={task.id} task={task} />)}</TableBody>
           </Table> : null}
           {query.data ? <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center" data-testid="tasks-pagination">
             <p className="text-xs text-muted-foreground">显示 {firstItem}-{lastItem}，共 {total} 条</p>
             <div className="flex items-center gap-2 sm:ml-auto">
-              <Button variant="outline" size="sm" data-testid="tasks-prev" disabled={page <= 1 || query.isFetching} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" />上一页</Button>
+              <Button variant="outline" size="sm" data-testid="tasks-prev" disabled={page <= 1 || query.isFetching} title={query.isFetching ? "正在加载任务列表" : page <= 1 ? "已经是第一页" : "查看上一页任务"} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" />上一页</Button>
               <span className="text-xs text-muted-foreground">第 {page} / {totalPages} 页</span>
-              <Button variant="outline" size="sm" data-testid="tasks-next" disabled={page >= totalPages || query.isFetching} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>下一页<ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" size="sm" data-testid="tasks-next" disabled={page >= totalPages || query.isFetching} title={query.isFetching ? "正在加载任务列表" : page >= totalPages ? "已经是最后一页" : "查看下一页任务"} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>下一页<ChevronRight className="h-4 w-4" /></Button>
             </div>
           </div> : null}
         </CardContent>

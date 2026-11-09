@@ -1,13 +1,20 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-export function PageHeader({ title, description, breadcrumb, actions, className }: {
+export function PageHeader({ title, documentTitle, description, breadcrumb, actions, className }: {
   title: ReactNode;
+  documentTitle?: string;
   description?: ReactNode;
   breadcrumb?: ReactNode;
   actions?: ReactNode;
   className?: string;
 }) {
+  const resolvedTitle = typeof title === "string" ? title : documentTitle;
+
+  useEffect(() => {
+    document.title = resolvedTitle ? `${resolvedTitle} · VirtMgr` : "VirtMgr";
+  }, [resolvedTitle]);
+
   return (
     <div className={cn("mb-5 flex flex-col gap-3", className)}>
       {breadcrumb ? <div className="text-xs text-muted-foreground">{breadcrumb}</div> : null}

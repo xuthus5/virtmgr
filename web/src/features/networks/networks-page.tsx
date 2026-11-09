@@ -457,7 +457,7 @@ export function NetworksPage() {
             </CardHeader>
             <CardContent className="p-0">
               {networks.length ? (
-                <Table>
+                <Table className="min-w-[1080px]">
                   <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>模式</TableHead><TableHead>状态</TableHead><TableHead>桥接</TableHead><TableHead>地址 / DHCP</TableHead><TableHead>自动启动</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {networks.map((network) => {
@@ -623,7 +623,7 @@ export function NetworksPage() {
                   </div>
                 ) : null}
                 {leasesQuery.data && leases.length > 0 ? (
-                  <Table>
+                  <Table className="min-w-[880px]">
                     <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>MAC</TableHead><TableHead>接口</TableHead><TableHead>客户端标识</TableHead><TableHead>到期时间</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {leases.map((lease, index) => (
@@ -701,7 +701,7 @@ export function NetworksPage() {
                 ) : null}
                 <div className="overflow-hidden rounded-md border">
                   {hosts.length ? (
-                    <Table>
+                    <Table className="min-w-[620px]">
                       <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>MAC 地址</TableHead><TableHead className="w-20 text-right">操作</TableHead></TableRow></TableHeader>
                       <TableBody>
                         {hosts.map((host) => (

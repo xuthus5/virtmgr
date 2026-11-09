@@ -22,6 +22,10 @@ export function LoginPage() {
     if (session.data) void navigate({ to: "/", replace: true });
   }, [navigate, session.data]);
 
+  useEffect(() => {
+    document.title = "登录 · VirtMgr";
+  }, []);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -71,11 +75,11 @@ export function LoginPage() {
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
                 <Label htmlFor="username">用户名</Label>
-                <Input id="username" name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
+                <Input id="username" name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required autoFocus />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">密码</Label>
-                <Input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required autoFocus />
+                <Input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
               </div>
               {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</p> : null}
               <Button type="submit" className="w-full" disabled={submitting}>

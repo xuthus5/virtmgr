@@ -109,11 +109,11 @@ export function VMPassthroughCard({ vm, canMutate, disabledReason }: {
                 {available.map((device) => <option key={device.name} value={device.name}>{hostDeviceLabel(device)}</option>)}
               </select>
             </div>
-            <Button type="submit" size="sm" data-testid="vm-passthrough-attach" disabled={!selected || attachMutation.isPending}>
+            <Button type="submit" size="sm" data-testid="vm-passthrough-attach" disabled={!selected || attachMutation.isPending} title={!selected ? "请先选择可直通的主机设备" : attachMutation.isPending ? "正在直通设备" : "将所选设备直通到虚拟机"}>
               {attachMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CircuitBoard className="h-4 w-4" />}
               {attachMutation.isPending ? "正在直通..." : "直通设备"}
             </Button>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="刷新主机设备" data-testid="vm-passthrough-refresh" disabled={devicesQuery.isFetching} onClick={() => void devicesQuery.refetch()}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="刷新主机设备" title={devicesQuery.isFetching ? "正在刷新主机设备" : "刷新主机设备列表"} data-testid="vm-passthrough-refresh" disabled={devicesQuery.isFetching} onClick={() => void devicesQuery.refetch()}>
               <RefreshCw className={devicesQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             </Button>
           </form>
@@ -133,7 +133,7 @@ export function VMPassthroughCard({ vm, canMutate, disabledReason }: {
 
         {attached.length ? (
           <div className="rounded-lg border">
-            <Table>
+            <Table className="min-w-[880px]">
               <TableHeader><TableRow><TableHead>类型</TableHead><TableHead>设备</TableHead><TableHead>厂商 / 产品 ID</TableHead><TableHead>地址</TableHead><TableHead>驱动</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
               <TableBody>
                 {attached.map((device) => (

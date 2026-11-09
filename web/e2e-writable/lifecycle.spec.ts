@@ -840,6 +840,7 @@ test("可写模式创建冷备份并验证存储卷与审计", async ({ page }) 
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-legacy-01", exact: true }).click();
+  await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
 
   const shutdown = page.getByTestId("vm-action-shutdown");
   if (await shutdown.isVisible()) {

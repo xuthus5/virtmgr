@@ -255,7 +255,7 @@ export function VMSnapshotPoliciesCard({ uuid, canMutate, disabledReason }: {
             <p className="p-5 text-sm text-muted-foreground" data-testid="vm-snapshot-policy-empty">暂无快照策略。创建策略后由服务端每分钟检查到期任务。</p>
           ) : null}
           {policies.length ? (
-            <Table>
+            <Table className="min-w-[960px]">
               <TableHeader><TableRow><TableHead>策略</TableHead><TableHead>间隔</TableHead><TableHead>保留</TableHead><TableHead>状态</TableHead><TableHead>最近执行</TableHead><TableHead>下次执行</TableHead><TableHead>最近快照</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
               <TableBody>
                 {policies.map((policy) => (

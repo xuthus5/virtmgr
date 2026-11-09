@@ -192,7 +192,7 @@ export function VMSnapshotsCard({ uuid, canMutate, disabledReason }: {
           {snapshotsQuery.isError ? <ErrorState message={snapshotsQuery.error instanceof Error ? snapshotsQuery.error.message : "无法读取虚拟机快照"} onRetry={() => void snapshotsQuery.refetch()} className="m-4" /> : null}
           {snapshotsQuery.data && snapshots.length === 0 ? <p className="p-5 text-sm text-muted-foreground" data-testid="vm-snapshot-empty">暂无快照。创建快照后可按时间线查看和回滚。</p> : null}
           {snapshots.length ? (
-            <Table>
+            <Table className="min-w-[800px]">
               <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>创建时间</TableHead><TableHead>快照状态</TableHead><TableHead>当前</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
               <TableBody>
                 {snapshots.map((snapshot) => (

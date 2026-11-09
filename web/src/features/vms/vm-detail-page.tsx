@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,7 +31,6 @@ import { ApiError, api } from "@/api/client";
 import type { TaskStatus, VMAction, VMXMLFormat } from "@/api/types";
 import { DetailItem } from "@/components/data/detail-item";
 import { MetricCard } from "@/components/data/metric-card";
-import { XMLCodeEditor } from "@/components/code/xml-code-editor";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
@@ -75,6 +74,10 @@ type ActionMeta = {
   destructive?: boolean;
   confirm?: boolean;
 };
+
+const XMLCodeEditor = lazy(() =>
+  import("@/components/code/xml-code-editor").then((module) => ({ default: module.XMLCodeEditor })),
+);
 
 const actionOrder: VMAction[] = ["start", "shutdown", "reboot", "reset", "pause", "resume", "destroy"];
 
@@ -342,6 +345,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
     <>
       <PageHeader
         title={<span data-testid="vm-detail-name">{vm.name}</span>}
+        documentTitle={vm.name}
         breadcrumb={<span className="inline-flex items-center gap-1.5"><Link to="/vms" className="inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-3 w-3" />虚拟机</Link><span>/</span><span className="font-mono">{vm.uuid.slice(0, 8)}</span></span>}
         description={<span className="font-mono text-xs">{vm.uuid}</span>}
         actions={<div className="flex items-center gap-2">
@@ -730,24 +734,28 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           {xmlQuery.isError ? <ErrorState message={xmlQuery.error instanceof Error ? xmlQuery.error.message : "无法读取域 XML"} onRetry={() => void xmlQuery.refetch()} className="m-4" /> : null}
           {xmlQuery.data && xmlEditing ? (
             <div className="h-[32rem] overflow-hidden">
-              <XMLCodeEditor
-                value={xmlDraft}
-                onChange={(value) => { setXmlDraft(value); setXmlEditError(""); }}
-                ariaLabel="域 XML 编辑器"
-                testId="vm-xml-editor"
-                className="h-full"
-              />
+              <Suspense fallback={<LoadingState label="正在加载 XML 编辑器" />}>
+                <XMLCodeEditor
+                  value={xmlDraft}
+                  onChange={(value) => { setXmlDraft(value); setXmlEditError(""); }}
+                  ariaLabel="域 XML 编辑器"
+                  testId="vm-xml-editor"
+                  className="h-full"
+                />
+              </Suspense>
             </div>
           ) : xmlQuery.data ? (
             <div className="h-[32rem] overflow-hidden">
-              <XMLCodeEditor
-                value={xmlQuery.data.xml}
-                readOnly
-                ariaLabel="域 XML 只读内容"
-                testId="vm-xml-content"
-                format={xmlQuery.data.format}
-                className="h-full"
-              />
+              <Suspense fallback={<LoadingState label="正在加载 XML 编辑器" />}>
+                <XMLCodeEditor
+                  value={xmlQuery.data.xml}
+                  readOnly
+                  ariaLabel="域 XML 只读内容"
+                  testId="vm-xml-content"
+                  format={xmlQuery.data.format}
+                  className="h-full"
+                />
+              </Suspense>
             </div>
           ) : null}
         </CardContent>
@@ -847,7 +855,7 @@ function ResourceTable({ title, description, empty, headers, rows }: {
       <CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader>
       <CardContent className="p-0">
         {rows.length ? (
-          <Table>
+          <Table className="min-w-[760px]">
             <TableHeader><TableRow>{headers.map((header) => <TableHead key={header}>{header}</TableHead>)}</TableRow></TableHeader>
             <TableBody>
               {Array.from({ length: rows.length / headers.length }, (_, rowIndex) => (

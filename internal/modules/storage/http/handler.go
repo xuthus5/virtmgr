@@ -4,6 +4,7 @@ import (
 	"net"
 	stdhttp "net/http"
 	"strings"
+	"time"
 
 	"virtmgr/internal/domain"
 	storageapp "virtmgr/internal/modules/storage/app"
@@ -142,6 +143,7 @@ func (h *Handler) UploadVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, domain.ErrUnauthorized)
 		return
 	}
+	_ = stdhttp.NewResponseController(w).SetReadDeadline(time.Time{})
 	volume, err := h.service.UploadVolume(r.Context(), storageapp.UploadVolumeCommand{
 		Pool: chi.URLParam(r, "pool"),
 		Name: r.URL.Query().Get("name"),

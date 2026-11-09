@@ -182,6 +182,7 @@ export function VMsPage() {
                   variant="outline"
                   data-testid="vm-batch-submit"
                   disabled={!selected.size || batchMutation.isPending}
+                  title={!selected.size ? "请先勾选至少一台虚拟机" : undefined}
                   onClick={requestBatch}
                 >
                   {batchMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -226,7 +227,7 @@ export function VMsPage() {
                   <TableRow>
                     <TableHead className="sticky left-0 z-20 min-w-52 bg-card">
                       <span className="flex items-center gap-2">
-                        {canOperate ? <input type="checkbox" aria-label="选择全部虚拟机" data-testid="vm-select-all" checked={allVisibleSelected} onChange={toggleAll} disabled={!items.length} className="h-4 w-4 accent-primary" /> : null}
+                        {canOperate ? <input type="checkbox" aria-label="选择全部虚拟机" data-testid="vm-select-all" checked={allVisibleSelected} onChange={toggleAll} disabled={!items.length} className="h-5 w-5 accent-primary" /> : null}
                         名称
                       </span>
                     </TableHead>
@@ -238,7 +239,7 @@ export function VMsPage() {
                     <TableRow key={vm.uuid} className="group">
                       <TableCell className="sticky left-0 z-10 min-w-52 bg-card group-hover:bg-muted/35" data-testid={`vm-name-cell-${vm.uuid}`}>
                         <div className="flex items-start gap-2">
-                          {canOperate ? <input type="checkbox" aria-label={`选择 ${vm.name}`} data-testid={`vm-select-${vm.uuid}`} checked={selected.has(vm.uuid)} onChange={() => toggleSelected(vm.uuid)} className="mt-0.5 h-4 w-4 shrink-0 accent-primary" /> : null}
+                          {canOperate ? <input type="checkbox" aria-label={`选择 ${vm.name}`} data-testid={`vm-select-${vm.uuid}`} checked={selected.has(vm.uuid)} onChange={() => toggleSelected(vm.uuid)} className="mt-0.5 h-5 w-5 shrink-0 accent-primary" /> : null}
                           <div className="min-w-0">
                             <Link to="/vms/$uuid" params={{ uuid: vm.uuid }} className="font-medium text-primary hover:underline">{vm.name}</Link>
                             <p className="truncate font-mono text-[10px] text-muted-foreground">{vm.uuid}</p>

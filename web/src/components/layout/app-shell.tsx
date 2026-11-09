@@ -177,6 +177,7 @@ export function AppShell() {
                 <Link
                   key={item.href}
                   to={item.href}
+                  aria-current={active ? "page" : undefined}
                   onClick={() => closeMobileNavigation(false)}
                   className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                 >

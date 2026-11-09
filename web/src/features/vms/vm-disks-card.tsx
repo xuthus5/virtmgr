@@ -85,7 +85,7 @@ export function VMDisksCard({ vm, role, readOnly }: {
       </CardHeader>
       <CardContent className="space-y-3 p-0">
         {vm.disks.length ? (
-          <Table>
+          <Table className="min-w-[1080px]">
             <TableHeader>
               <TableRow>
                 <TableHead>目标</TableHead>

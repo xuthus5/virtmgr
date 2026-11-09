@@ -215,7 +215,7 @@ export function StoragePoolsCard({
         ) : null}
         {actionError ? <p role="alert" className="m-4 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertTriangle className="h-3.5 w-3.5" />{actionError}</p> : null}
         <CardContent className="p-0">
-          <Table>
+          <Table className="min-w-[960px]">
             <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>状态</TableHead><TableHead>目标路径</TableHead><TableHead>卷</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
             <TableBody>
               {pools.map((pool) => {

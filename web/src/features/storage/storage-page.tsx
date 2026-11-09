@@ -335,7 +335,7 @@ export function StoragePage() {
                       <span>{formatBytes(selected.allocationBytes)} / {formatBytes(selected.capacityBytes)}</span>
                     </div>
                     {volumesQuery.data.items.length ? (
-                      <Table>
+                      <Table className="min-w-[960px]">
                         <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>格式</TableHead><TableHead>容量</TableHead><TableHead>已分配</TableHead><TableHead>路径</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
                         <TableBody>
                           {volumesQuery.data.items.map((volume) => (
@@ -349,14 +349,14 @@ export function StoragePage() {
                                 <Button
                                   type="button"
                                   variant="ghost"
-                                  size="icon-sm"
+                                  size="sm"
                                   data-testid={`delete-volume-${volume.name}`}
                                   aria-label={`删除存储卷 ${volume.name}`}
                                   title={canManage ? "删除未被虚拟机占用的存储卷" : createDisabledReason}
                                   disabled={!canManage || !selectedActive || deleteMutation.isPending}
                                   onClick={() => openDelete(volume)}
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-3.5 w-3.5" />删除
                                 </Button>
                               </TableCell>
                             </TableRow>

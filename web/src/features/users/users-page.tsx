@@ -177,7 +177,7 @@ export function UsersPage() {
           {usersQuery.isLoading ? <LoadingState label="正在读取本地用户" /> : null}
           {usersQuery.isError ? <ErrorState message={usersQuery.error instanceof Error ? usersQuery.error.message : "无法读取本地用户"} onRetry={() => void usersQuery.refetch()} className="m-4" /> : null}
           {usersQuery.data ? (
-            <Table>
+            <Table className="min-w-[760px]">
               <TableHeader><TableRow><TableHead>用户名</TableHead><TableHead>角色</TableHead><TableHead>状态</TableHead><TableHead>创建时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
               <TableBody>
                 {users.map((user) => {

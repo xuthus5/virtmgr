@@ -8,9 +8,35 @@ type TableProps = React.TableHTMLAttributes<HTMLTableElement> & {
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
   ({ className, containerProps, ...props }, ref) => {
     const { className: containerClassName, ...restContainerProps } = containerProps ?? {};
+    const containerRef = React.useRef<HTMLDivElement>(null);
+    const [scrollable, setScrollable] = React.useState(false);
+
+    React.useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      const update = () => setScrollable(container.scrollWidth > container.clientWidth + 1);
+      update();
+      const observer = new ResizeObserver(update);
+      observer.observe(container);
+      if (container.firstElementChild) observer.observe(container.firstElementChild);
+      window.addEventListener("resize", update);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("resize", update);
+      };
+    }, []);
+
     return (
-      <div {...restContainerProps} className={cn("w-full overflow-auto", containerClassName)}>
-        <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
+      <div className="min-w-0">
+        {scrollable ? <p className="px-3 pb-2 text-right text-[10px] text-muted-foreground lg:hidden" aria-hidden="true">左右滑动查看完整表格</p> : null}
+        <div
+          {...restContainerProps}
+          ref={containerRef}
+          data-table-scrollable={scrollable ? "true" : undefined}
+          className={cn("w-full overflow-auto", containerClassName)}
+        >
+          <table ref={ref} className={cn("w-full min-w-[640px] caption-bottom text-sm", className)} {...props} />
+        </div>
       </div>
     );
   },

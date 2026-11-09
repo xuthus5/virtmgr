@@ -1,9 +1,9 @@
-import { Link, Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { Link, Outlet, createRootRoute, createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-router";
+import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuditPage } from "@/features/audit/audit-page";
 import { LoginPage } from "@/features/auth/login-page";
-import { VNCConsolePage } from "@/features/console/vnc-console-page";
 import { NetworksPage } from "@/features/networks/networks-page";
 import { HostPage } from "@/features/host/host-page";
 import { EventsPage } from "@/features/events/events-page";
@@ -13,13 +13,26 @@ import { SettingsPage } from "@/features/settings/settings-page";
 import { TasksPage } from "@/features/tasks/tasks-page";
 import { TemplatesPage } from "@/features/templates/templates-page";
 import { VMCreatePage } from "@/features/vms/vm-create-page";
-import { VMDetailPage } from "@/features/vms/vm-detail-page";
 import { VMsPage } from "@/features/vms/vms-page";
 import { UsersPage } from "@/features/users/users-page";
 
 function RootComponent() {
   return <Outlet />;
 }
+
+function RoutePendingComponent() {
+  return (
+    <div className="grid min-h-64 place-items-center px-6 py-12" role="status" aria-live="polite">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircle className="h-4 w-4 animate-spin" />
+        正在加载页面…
+      </div>
+    </div>
+  );
+}
+
+const LazyVNCConsolePage = lazyRouteComponent(() => import("@/features/console/vnc-console-page"), "VNCConsolePage");
+const LazyVMDetailPage = lazyRouteComponent(() => import("@/features/vms/vm-detail-page"), "VMDetailPage");
 
 const rootRoute = createRootRoute({
   component: RootComponent,
@@ -62,7 +75,7 @@ const vmDetailRoute = createRoute({
   path: "/vms/$uuid",
   component: function VMDetailRouteComponent() {
     const { uuid } = vmDetailRoute.useParams();
-    return <VMDetailPage uuid={uuid} />;
+    return <LazyVMDetailPage uuid={uuid} />;
   },
 });
 
@@ -71,7 +84,7 @@ const vncConsoleRoute = createRoute({
   path: "/console/vms/$uuid",
   component: function VNCConsoleRouteComponent() {
     const { uuid } = vncConsoleRoute.useParams();
-    return <VNCConsolePage uuid={uuid} />;
+    return <LazyVNCConsolePage uuid={uuid} />;
   },
 });
 
@@ -81,7 +94,13 @@ export const routeTree = rootRoute.addChildren([
   appRoute.addChildren([overviewRoute, vmsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
 ]);
 
-export const router = createRouter({ routeTree, defaultPreload: "intent" });
+export const router = createRouter({
+  routeTree,
+  defaultPreload: "intent",
+  defaultPendingComponent: RoutePendingComponent,
+  defaultPendingMs: 120,
+  defaultPendingMinMs: 240,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

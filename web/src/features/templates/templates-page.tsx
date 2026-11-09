@@ -267,7 +267,7 @@ export function TemplatesPage() {
           ) : null}
           {templates.length ? (
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[1080px]">
                 <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>规格</TableHead><TableHead>固件</TableHead><TableHead>网络 / 磁盘</TableHead><TableHead>Cloud-init</TableHead><TableHead>启动策略</TableHead><TableHead>更新时间</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {templates.map((template) => (

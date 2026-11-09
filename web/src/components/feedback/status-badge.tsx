@@ -20,6 +20,7 @@ function variant(state: VMState): "success" | "warning" | "destructive" | "secon
     case "paused":
     case "suspended":
     case "shutting-down":
+    case "blocked":
       return "warning";
     case "crashed":
       return "destructive";

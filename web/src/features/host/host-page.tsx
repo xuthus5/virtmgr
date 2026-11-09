@@ -109,7 +109,7 @@ export function HostPage() {
         <Card>
           <CardHeader><CardTitle>存储池</CardTitle><CardDescription>池状态、目标路径和容量使用情况。</CardDescription></CardHeader>
           <CardContent className="p-0">
-            {data.storagePools.length ? <Table>
+            {data.storagePools.length ? <Table className="min-w-[720px]">
               <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>状态</TableHead><TableHead>类型</TableHead><TableHead>容量</TableHead><TableHead>使用率</TableHead></TableRow></TableHeader>
               <TableBody>{data.storagePools.map((pool) => (
                 <TableRow key={pool.name} data-testid={`host-pool-row-${pool.name}`}>
@@ -127,7 +127,7 @@ export function HostPage() {
         <Card>
           <CardHeader><CardTitle>虚拟网络</CardTitle><CardDescription>网络模式、桥接口和激活状态。</CardDescription></CardHeader>
           <CardContent className="p-0">
-            {data.networks.length ? <Table>
+            {data.networks.length ? <Table className="min-w-[760px]">
               <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>状态</TableHead><TableHead>模式</TableHead><TableHead>桥接口</TableHead><TableHead>地址</TableHead></TableRow></TableHeader>
               <TableBody>{data.networks.map((network) => (
                 <TableRow key={network.name} data-testid={`host-network-row-${network.name}`}>
@@ -146,7 +146,7 @@ export function HostPage() {
       <Card className="mt-4">
         <CardHeader><CardTitle>虚拟机资源分配</CardTitle><CardDescription>按虚拟机展示当前配置的 vCPU 与内存。</CardDescription></CardHeader>
         <CardContent className="p-0">
-          {data.vms.length ? <Table>
+          {data.vms.length ? <Table className="min-w-[760px]">
             <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>状态</TableHead><TableHead>UUID</TableHead><TableHead>vCPU</TableHead><TableHead>内存</TableHead></TableRow></TableHeader>
             <TableBody>{data.vms.map((vm) => (
               <TableRow key={vm.uuid} data-testid={`host-vm-row-${vm.name}`}>
@@ -177,7 +177,7 @@ export function HostPage() {
               <span>{devicesQuery.error instanceof Error ? devicesQuery.error.message : "无法读取主机设备"}</span>
               <Button variant="outline" size="sm" onClick={() => void devicesQuery.refetch()}>重试</Button>
             </div>
-          ) : devicesQuery.data?.items.length ? <Table>
+          ) : devicesQuery.data?.items.length ? <Table className="min-w-[1080px]">
             <TableHeader><TableRow><TableHead>类型</TableHead><TableHead>设备</TableHead><TableHead>地址</TableHead><TableHead>厂商 / 型号</TableHead><TableHead>驱动</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
             <TableBody>{devicesQuery.data.items.map((device) => (
               <TableRow key={device.name} data-testid={`host-device-row-${device.name}`}>
