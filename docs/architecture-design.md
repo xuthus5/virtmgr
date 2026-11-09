@@ -68,7 +68,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
 - 任务中心基础：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端每 5 秒刷新，展示进度、步骤、失败原因和关联虚拟机。ISO 上传已作为第一个真实生产者，在流式读取时更新任务进度。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
-- VNC 控制台：Operator/Admin 可打开独立全屏 noVNC 页面；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD`，并在打开时记录审计。
+- 控制台：Operator/Admin 可在虚拟机详情内嵌或独立窗口中打开 noVNC 与 xterm.js；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD` 或 console stream，并在打开时记录审计。
 - 域 XML：`GET /api/v1/vms/{uuid}/xml?format=live|config` 默认 live，使用 `DOMAIN_XML_INACTIVE` 读取 config；Admin 可通过 `PUT /api/v1/vms/{uuid}/xml` 在可写模式编辑持久配置，服务端锁定名称/UUID、拒绝 QEMU hook 命名空间，并以 `DOMAIN_DEFINE_VALIDATE` 校验后定义，审计不保存 XML 正文。
 - 虚拟机配置导出：`GET /api/v1/vms/{uuid}/export` 返回稳定版本化的 JSON 包，包含虚拟机详情、持久配置 XML、活动域 live XML、快照和磁盘/网络元数据；只读能力不受 Viewer 或全局只读模式限制，但记录 `vm.export` 审计，不包含磁盘镜像数据。
 - Playwright 使用只读和可写两套严格串行配置；可写场景只连接有状态 demo 后端，不对真实虚拟机执行写操作。
@@ -716,7 +716,10 @@ type PassthroughDevice = {
 | `POST` | `/vms/{uuid}/clone` | 克隆关机/异常停止的持久域为异步任务，返回 `202` 和任务对象（已实现） |
 | `POST` | `/vms/{uuid}/backups` | 冷备份关机/异常停止的持久域到活跃存储池，返回 `202` 和 `vm.backup` 任务（已实现，需 CSRF） |
 | `DELETE` | `/vms/{uuid}?disks=keep|delete` | 删除域和可选磁盘 |
-| `POST` | `/vms/{uuid}/console-token` | 申请一次性控制台令牌 |
+| `POST` | `/vms/{uuid}/console-token` | 申请一次性控制台令牌，`kind` 为 `vnc` 或 `serial` |
+| `GET` | `/vms/{uuid}/console?token=...` | 升级为 VNC WebSocket 并桥接 libvirt graphics FD |
+| `GET` | `/vms/{uuid}/serial-console?token=...` | 升级为串口 WebSocket 并桥接 libvirt console stream |
+| `POST` | `/vms/{uuid}/console/send-key` | 向运行中的域发送 Ctrl+Alt+Del、Backspace 或 F1-F12 组合键（需 CSRF） |
 
 动作接口必须由后端基于当前状态返回 409 `VM_STATE_CONFLICT`，而不是只靠前端隐藏按钮。
 
@@ -970,7 +973,7 @@ UUID · 4 vCPU · 8 GiB · 192.168.122.31 · 运行 3 天 4 小时
 Tab 内容：
 
 - **概览**：状态、IP、规格、运行时长、CPU/内存/网络趋势、最近事件。
-- **控制台**：打开独立窗口；嵌入式预览只提示连接状态和“打开控制台”按钮，避免页面滚动干扰 canvas。
+- **控制台**：详情页内嵌 noVNC 或 xterm.js 视图，可在图形/串口间切换；支持组合键、缩放、断开重连、全屏、展开到独立页面和分离窗口。
 - **硬件**：vCPU、内存、CPU 模式、固件、机器类型、启动顺序、Guest Agent、设备。
 - **磁盘**：target、bus、format、容量、allocation、存储池路径、是否可启动；支持热插拔的后续扩展。
 - **网络**：网卡型号、MAC、虚拟网络/桥、IP、DHCP lease。
@@ -982,11 +985,11 @@ Tab 内容：
 
 `/console/vms/$uuid` 使用最小化黑色界面：
 
-- 顶部 40px：VM 名称、连接状态、发送 Ctrl+Alt+Del、全屏、重连、关闭。
-- 中间为 noVNC canvas，自动适应窗口。
-- 串口控制台使用 xterm.js。
+- 顶部工具栏：VM 名称、连接状态、图形/串口切换、组合键、缩放模式、断开/重连、全屏、展开与分离窗口。
+- 图形控制台使用 noVNC canvas，支持自适应、原始大小和远端调整三种缩放模式。
+- 串口控制台使用 xterm.js，支持多 PTY 设备选择、终端自适应和键盘输入。
 - 断线时保留提示和重连按钮，不直接关闭窗口。
-- 控制台令牌一次性、短时效、绑定 VM 和用户会话。
+- 控制台令牌一次性、短时效、绑定 VM、用户、控制台类型和串口设备；同一串口设备只允许一个活动会话。
 
 ### 7.7 存储、网络、物理主机
 
@@ -1176,7 +1179,7 @@ WantedBy=multi-user.target
 - 总览、VM 列表、VM 详情、生命周期动作。
 - 创建 VM（ISO/空白磁盘）、磁盘与网络摘要。
 - 存储池/卷只读、网络只读、事件流、任务中心基础。
-- VNC 控制台和一次性 token。
+- 图形/串口控制台和一次性 token。
 
 验收：可在浏览器完成创建、启动、关机、重启、暂停、强制下电、删除和打开控制台；所有写操作有审计。
 
@@ -1235,7 +1238,7 @@ WantedBy=multi-user.target
 - [x] VM 列表、详情、状态筛选和全局搜索可用。
 - [ ] 所有生命周期动作受服务端状态机和权限控制，并写入审计。
 - [ ] 创建 VM 流程可生成可用域 XML，任务可追踪。
-- [x] VNC 控制台可通过一次性 token 打开，断开后可重新申请 token 重连。
+- [x] VNC 与串口控制台可通过一次性 token 打开，支持组合键、断开重连、全屏和分离窗口。
 - [x] 存储池、卷、网络、DHCP lease 和事件可查看。
 - [x] 明暗主题、桌面/移动布局与键盘操作通过可访问性检查。
 - [ ] libvirt 不可用时 `/readyz` 失败，页面展示可恢复错误而不是空白。

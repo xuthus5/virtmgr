@@ -62,6 +62,8 @@ type handlerRepository struct {
 	revertedSnapshot string
 	deletedSnapshot  string
 	openedConsole    uint
+	openedSerial     string
+	sentKeys         []uint
 }
 
 type testConsoleConn struct{ *strings.Reader }
@@ -303,6 +305,19 @@ func (f *handlerRepository) OpenConsole(_ context.Context, _ string, graphicsInd
 		return nil, f.snapshotErr
 	}
 	return testConsoleConn{Reader: strings.NewReader("RFB 003.003\n")}, nil
+}
+
+func (f *handlerRepository) OpenSerialConsole(_ context.Context, _ string, device string) (io.ReadWriteCloser, error) {
+	f.openedSerial = device
+	if f.snapshotErr != nil {
+		return nil, f.snapshotErr
+	}
+	return testConsoleConn{Reader: strings.NewReader("demo login: ")}, nil
+}
+
+func (f *handlerRepository) SendConsoleKey(_ context.Context, _ string, keycodes []uint) error {
+	f.sentKeys = append([]uint(nil), keycodes...)
+	return f.actionErr
 }
 
 func newHandlerRouter(repository *handlerRepository, session *domain.Session, csrfOK bool) *chi.Mux {

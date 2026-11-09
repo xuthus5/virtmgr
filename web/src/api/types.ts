@@ -380,11 +380,19 @@ export type VM = {
   disks: Disk[];
   interfaces: NetworkInterface[];
   graphics: Graphics[];
+  serials?: SerialConsole[];
   passthrough: PassthroughDevice[];
   ipAddresses: string[];
   hostname?: string;
   agentConnected: boolean;
   allowedActions: VMAction[];
+};
+
+export type SerialConsole = {
+  device?: string;
+  label: string;
+  targetPort: number;
+  targetType?: string;
 };
 
 export type VMXMLFormat = "live" | "config";
@@ -465,6 +473,35 @@ export type ConsoleTicket = {
   token: string;
   expiresAt: string;
   path: string;
+  kind: ConsoleKind;
+  device?: string;
+};
+
+export type ConsoleKind = "vnc" | "serial";
+
+export type ConsoleTokenInput = {
+  kind: ConsoleKind;
+  device?: string;
+};
+
+export type ConsoleKeyAction =
+  | "ctrl-alt-del"
+  | "ctrl-alt-backspace"
+  | "ctrl-alt-f1"
+  | "ctrl-alt-f2"
+  | "ctrl-alt-f3"
+  | "ctrl-alt-f4"
+  | "ctrl-alt-f5"
+  | "ctrl-alt-f6"
+  | "ctrl-alt-f7"
+  | "ctrl-alt-f8"
+  | "ctrl-alt-f9"
+  | "ctrl-alt-f10"
+  | "ctrl-alt-f11"
+  | "ctrl-alt-f12";
+
+export type SendConsoleKeyInput = {
+  key: ConsoleKeyAction;
 };
 
 export type VMSnapshot = {

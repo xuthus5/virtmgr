@@ -434,6 +434,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/vms/{uuid}/snapshots", h.ListSnapshots)
 	r.Get("/vms/{uuid}/metrics", h.Metrics)
 	r.Get("/vms/{uuid}/console", h.OpenConsole)
+	r.Get("/vms/{uuid}/serial-console", h.OpenSerialConsole)
 	r.Get("/vms/{uuid}", h.Get)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
@@ -453,6 +454,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/snapshots/{snapshot}/revert", h.RevertSnapshot)
 		mutating.Delete("/vms/{uuid}/snapshots/{snapshot}", h.DeleteSnapshot)
 		mutating.Post("/vms/{uuid}/console-token", h.IssueConsoleToken)
+		mutating.Post("/vms/{uuid}/console/send-key", h.SendConsoleKey)
 	})
 }
 

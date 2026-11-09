@@ -385,6 +385,7 @@ func domainFromLibvirt(dom *libvirt.Domain) (domain.VM, error) {
 		Disks:          details.Disks,
 		Interfaces:     details.Interfaces,
 		Graphics:       details.Graphics,
+		Serials:        details.Serials,
 		Passthrough:    details.Passthrough,
 		IPAddresses:    []string{},
 		AllowedActions: allowedActions(state),

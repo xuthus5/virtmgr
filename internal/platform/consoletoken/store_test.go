@@ -13,11 +13,11 @@ func TestIssueAndConsumeOnce(t *testing.T) {
 	store := New(30 * time.Second)
 	store.now = func() time.Time { return now }
 
-	grant, err := store.Issue("vm-a", 7)
+	grant, err := store.Issue("vm-a", 7, domain.ConsoleKindSerial, "serial0")
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	if grant.Token == "" || grant.VMUUID != "vm-a" || grant.UserID != 7 || !grant.ExpiresAt.Equal(now.Add(30*time.Second)) {
+	if grant.Token == "" || grant.VMUUID != "vm-a" || grant.UserID != 7 || grant.Kind != domain.ConsoleKindSerial || grant.Device != "serial0" || !grant.ExpiresAt.Equal(now.Add(30*time.Second)) {
 		t.Fatalf("grant = %+v", grant)
 	}
 	consumed, err := store.Consume(grant.Token)
@@ -33,7 +33,7 @@ func TestConsumeRejectsExpiredAndUnknownTokens(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	store := New(time.Minute)
 	store.now = func() time.Time { return now }
-	grant, err := store.Issue("vm-a", 1)
+	grant, err := store.Issue("vm-a", 1, domain.ConsoleKindVNC, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +50,12 @@ func TestIssueRemovesExpiredGrants(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	store := New(time.Second)
 	store.now = func() time.Time { return now }
-	first, err := store.Issue("vm-a", 1)
+	first, err := store.Issue("vm-a", 1, domain.ConsoleKindVNC, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Second)
-	if _, err := store.Issue("vm-b", 2); err != nil {
+	if _, err := store.Issue("vm-b", 2, domain.ConsoleKindVNC, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := store.grants[first.Token]; ok {

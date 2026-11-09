@@ -24,15 +24,20 @@ func New(ttl time.Duration) *Store {
 	return &Store{ttl: ttl, now: time.Now, grants: make(map[string]domain.ConsoleToken)}
 }
 
-func (s *Store) Issue(vmUUID string, userID int64) (domain.ConsoleToken, error) {
+func (s *Store) Issue(vmUUID string, userID int64, kind domain.ConsoleKind, device string) (domain.ConsoleToken, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return domain.ConsoleToken{}, fmt.Errorf("generate console token: %w", err)
+	}
+	if kind == "" {
+		kind = domain.ConsoleKindVNC
 	}
 	grant := domain.ConsoleToken{
 		Token:     base64.RawURLEncoding.EncodeToString(buf),
 		VMUUID:    vmUUID,
 		UserID:    userID,
+		Kind:      kind,
+		Device:    device,
 		ExpiresAt: s.now().Add(s.ttl),
 	}
 	s.mu.Lock()

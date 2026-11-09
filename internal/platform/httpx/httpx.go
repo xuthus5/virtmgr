@@ -61,9 +61,11 @@ func mapError(err error) (int, string, string) {
 	case errors.Is(err, domain.ErrSnapshotRisky):
 		return stdhttp.StatusConflict, "SNAPSHOT_REVERT_RISKY", "回滚该快照可能丢失当前状态，请先关闭虚拟机后重试"
 	case errors.Is(err, domain.ErrConsoleUnavailable):
-		return stdhttp.StatusConflict, "CONSOLE_UNAVAILABLE", "当前虚拟机没有可用的 VNC 控制台"
+		return stdhttp.StatusConflict, "CONSOLE_UNAVAILABLE", "当前虚拟机没有可用的控制台"
 	case errors.Is(err, domain.ErrConsoleToken):
 		return stdhttp.StatusUnauthorized, "CONSOLE_TOKEN_INVALID", "控制台凭证无效或已过期，请重新打开控制台"
+	case errors.Is(err, domain.ErrConsoleBusy):
+		return stdhttp.StatusConflict, "CONSOLE_BUSY", "该串口控制台正在被其他会话使用，请先断开已有会话"
 	case errors.Is(err, domain.ErrNetworkActive):
 		return stdhttp.StatusConflict, "NETWORK_ACTIVE", "网络正在运行，请先停止网络再修改配置"
 	case errors.Is(err, domain.ErrNetworkUnsupported):

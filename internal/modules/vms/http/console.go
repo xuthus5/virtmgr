@@ -30,7 +30,23 @@ var consoleUpgrader = websocket.Upgrader{
 	},
 }
 
+type sendConsoleKeyInput struct {
+	Key string `json:"key"`
+}
+
+type consoleTokenInput struct {
+	Kind   string `json:"kind"`
+	Device string `json:"device,omitempty"`
+}
+
 func (h *Handler) IssueConsoleToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input consoleTokenInput
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+	}
 	session, ok := authctx.Session(r.Context())
 	if !ok {
 		httpx.Error(w, r, domain.ErrUnauthorized)
@@ -38,6 +54,8 @@ func (h *Handler) IssueConsoleToken(w stdhttp.ResponseWriter, r *stdhttp.Request
 	}
 	ticket, err := h.service.IssueConsoleToken(r.Context(), vmsapp.ConsoleTokenCommand{
 		UUID:    chi.URLParam(r, "uuid"),
+		Kind:    input.Kind,
+		Device:  input.Device,
 		Request: mutationContext(r, session),
 	})
 	if err != nil {
@@ -72,6 +90,55 @@ func (h *Handler) OpenConsole(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	bridgeConsole(connection, ws)
+}
+
+func (h *Handler) OpenSerialConsole(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	connection, err := h.service.OpenSerialConsole(r.Context(), vmsapp.ConsoleOpenCommand{
+		UUID:  chi.URLParam(r, "uuid"),
+		Token: r.URL.Query().Get("token"),
+		Request: vmsapp.MutationContext{
+			Session:   session,
+			RequestID: middleware.GetReqID(r.Context()),
+			SourceIP:  sourceIP(r),
+		},
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	ws, err := consoleUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		_ = connection.Close()
+		return
+	}
+	bridgeConsole(connection, ws)
+}
+
+func (h *Handler) SendConsoleKey(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input sendConsoleKeyInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.service.SendConsoleKey(r.Context(), vmsapp.SendConsoleKeyCommand{
+		UUID:    chi.URLParam(r, "uuid"),
+		Key:     input.Key,
+		Request: mutationContext(r, session),
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func bridgeConsole(connection io.ReadWriteCloser, ws *websocket.Conn) {

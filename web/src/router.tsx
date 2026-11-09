@@ -84,9 +84,18 @@ const vmDetailRoute = createRoute({
 const vncConsoleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/console/vms/$uuid",
+  validateSearch: (search: Record<string, unknown>): { kind?: "vnc" | "serial"; detached?: boolean } => {
+    const kind = search.kind === "serial" ? "serial" : search.kind === "vnc" ? "vnc" : undefined;
+    const detached = search.detached === true || search.detached === "1";
+    return {
+      ...(kind ? { kind } : {}),
+      ...(detached ? { detached: true } : {}),
+    };
+  },
   component: function VNCConsoleRouteComponent() {
     const { uuid } = vncConsoleRoute.useParams();
-    return <LazyVNCConsolePage uuid={uuid} />;
+    const { kind, detached } = vncConsoleRoute.useSearch();
+    return <LazyVNCConsolePage uuid={uuid} initialKind={kind} detached={detached} />;
   },
 });
 

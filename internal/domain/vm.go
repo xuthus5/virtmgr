@@ -219,6 +219,13 @@ type Graphics struct {
 	Port   int    `json:"port,omitempty"`
 }
 
+type SerialConsole struct {
+	Device     string `json:"device,omitempty"`
+	Label      string `json:"label"`
+	TargetPort int    `json:"targetPort"`
+	TargetType string `json:"targetType,omitempty"`
+}
+
 type PassthroughDevice struct {
 	Name      string `json:"name"`
 	Type      string `json:"type"`
@@ -251,6 +258,7 @@ type VM struct {
 	Disks          []Disk              `json:"disks"`
 	Interfaces     []NetworkInterface  `json:"interfaces"`
 	Graphics       []Graphics          `json:"graphics"`
+	Serials        []SerialConsole     `json:"serials"`
 	Passthrough    []PassthroughDevice `json:"passthrough"`
 	IPAddresses    []string            `json:"ipAddresses"`
 	Hostname       string              `json:"hostname,omitempty"`

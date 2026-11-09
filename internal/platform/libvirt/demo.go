@@ -1637,6 +1637,7 @@ func demoVMs() []domain.VM {
 			Disks:       []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-web-01.qcow2", CapacityBytes: 20 * 1024 * 1024 * 1024, AllocationBytes: 8 * 1024 * 1024 * 1024}},
 			Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:01", Source: "default", Model: "virtio"}},
 			Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5901}},
+			Serials:     demoSerialConsoles(),
 			IPAddresses: []string{"192.168.122.101"}, Hostname: "demo-web-01", AgentConnected: true,
 			AllowedActions: domain.AllowedVMActions(domain.VMStateRunning),
 		},
@@ -1647,6 +1648,7 @@ func demoVMs() []domain.VM {
 			Disks:       []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-db-01.qcow2", CapacityBytes: 80 * 1024 * 1024 * 1024, AllocationBytes: 42 * 1024 * 1024 * 1024}},
 			Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:02", Source: "default", Model: "virtio"}},
 			Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5902}},
+			Serials:     demoSerialConsoles(),
 			IPAddresses: []string{"192.168.122.102"}, Hostname: "demo-db-01", AgentConnected: true,
 			AllowedActions: domain.AllowedVMActions(domain.VMStateRunning),
 		},
@@ -1657,6 +1659,7 @@ func demoVMs() []domain.VM {
 			Disks:          []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-build-01.qcow2", CapacityBytes: 30 * 1024 * 1024 * 1024, AllocationBytes: 12 * 1024 * 1024 * 1024}},
 			Interfaces:     []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:03", Source: "default", Model: "virtio"}},
 			Graphics:       []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5903}},
+			Serials:        demoSerialConsoles(),
 			IPAddresses:    []string{},
 			AllowedActions: domain.AllowedVMActions(domain.VMStatePaused),
 		},
@@ -1667,8 +1670,13 @@ func demoVMs() []domain.VM {
 			Disks:          []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-legacy-01.qcow2", CapacityBytes: 20 * 1024 * 1024 * 1024, AllocationBytes: 30 * 1024 * 1024 * 1024}},
 			Interfaces:     []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:04", Source: "default", Model: "virtio"}},
 			Graphics:       []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5904}},
+			Serials:        demoSerialConsoles(),
 			IPAddresses:    []string{},
 			AllowedActions: domain.AllowedVMActions(domain.VMStateShutoff),
 		},
 	}
+}
+
+func demoSerialConsoles() []domain.SerialConsole {
+	return []domain.SerialConsole{{Device: "serial0", Label: "Serial 1", TargetPort: 0, TargetType: "serial"}}
 }

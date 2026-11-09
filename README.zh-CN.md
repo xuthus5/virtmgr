@@ -1,7 +1,7 @@
 <div align="center">
   <h1>VirtMgr</h1>
   <p><strong>面向 KVM/libvirt 虚拟机的轻量级 Web 管理控制台。</strong></p>
-  <p>VirtMgr 在单个自托管 Web 应用中提供宿主机健康度、虚拟机生命周期、存储、网络、快照、Web VNC、审计日志和长任务管理能力。</p>
+  <p>VirtMgr 在单个自托管 Web 应用中提供宿主机健康度、虚拟机生命周期、存储、网络、快照、图形与串口控制台、审计日志和长任务管理能力。</p>
   <p>
     <a href="#项目截图">项目截图</a> ·
     <a href="#功能一览">功能一览</a> ·
@@ -53,7 +53,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 虚拟机 | 搜索和筛选域；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
 | 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、网络选择、ISO、自动启动和可选 Cloud-init seed ISO |
 | 虚拟机详情 | 硬件摘要、CPU/内存/网络实时趋势、磁盘、网卡、Guest Agent 信息、快照和域 XML |
-| Web 控制台 | 通过一次性 token 和服务端 WebSocket 代理打开 noVNC 控制台，浏览器不直连宿主机 VNC 端口 |
+| Web 控制台 | 页面内嵌或独立窗口打开 noVNC / xterm.js 控制台，支持图形与串口切换、Cockpit 风格组合键、缩放、断开重连、全屏和分离窗口；会话均通过一次性 token 与服务端 WebSocket 代理 |
 | 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整和磁盘扩容 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
@@ -244,7 +244,7 @@ VIRTMGR_COOKIE_SECURE=true
 
 VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中仅保存 token 哈希，浏览器只持有 `HttpOnly`、`SameSite=Strict` 的会话 Cookie。所有写请求还必须在 `X-CSRF-Token` 请求头中携带当前会话的 CSRF token。
 
-| 角色 | 读取 | 虚拟机生命周期与创建/克隆/备份 | 快照、存储、网络、模板 | VNC 控制台 | 编辑域 XML | 用户、设置、审计 |
+| 角色 | 读取 | 虚拟机生命周期与创建/克隆/备份 | 快照、存储、网络、模板 | 图形/串口控制台 | 编辑域 XML | 用户、设置、审计 |
 |---|---:|---:|---:|---:|---:|---:|
 | `viewer` | 是 | 否 | 否 | 否 | 否 | 否 |
 | `operator` | 是 | 是 | 是 | 是 | 否 | 否 |
@@ -262,7 +262,7 @@ VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中
 - **备份以新虚拟机方式恢复。** 备份包含持久域 XML、SHA-256 manifest 和可写文件磁盘，不包含内存状态；不支持原地覆盖恢复或内存状态恢复。
 - **磁盘扩容不等于扩展客户机分区。** VirtMgr 只扩展 qcow2/raw 虚拟磁盘。Linux 客户机通常还需执行 `growpart` 和 `resize2fs`/`xfs_growfs`；Windows 客户机需在磁盘管理中扩展卷。不支持缩容。
 - **CPU 与内存调整受 libvirt 上限约束。** 运行中的虚拟机只能在其活动最大值内热调整；提高最大值通常需要先关机。
-- **VNC 由服务端代理。** 浏览器只获得短时、一次性的控制台 token，宿主机 VNC 端口不会直接暴露。
+- **控制台由服务端代理。** VNC 与串口会话均使用短时、一次性 token，宿主机 VNC 端口不会直接暴露。控制台支持组合键、重连、全屏和独立窗口。
 - **Cloud-init 内容不写入审计。** 审计仅记录是否启用、存储池和字节数，不保存用户数据正文。
 - **XML 编辑受到严格限制。** 只有可写模式下的管理员才能更新持久配置；名称和 UUID 不可变，QEMU commandline 命名空间会被拒绝，保存前由 libvirt 完成语义校验。
 - **配置回滚只恢复 XML。** 版本历史保存压缩后的持久定义，不包含磁盘、快照或运行内存。回滚仅限管理员，会校验当前 SHA-256 以避免覆盖并发修改，先自动归档当前配置；运行中的虚拟机需重启后生效。
@@ -278,7 +278,7 @@ API 位于 `/api/v1`，使用 JSON。认证基于 Cookie，写操作还需要 `X
 | 会话 | `POST /api/v1/session`、`GET /api/v1/session`、`DELETE /api/v1/session` |
 | 总览与宿主机 | `/api/v1/overview`、`/api/v1/host`、`/api/v1/host/devices`、`/api/v1/host/metrics` |
 | 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/devices`、`/actions/{action}` |
-| 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/export` |
+| 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/console/send-key`、`/console`、`/serial-console`、`/export` |
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
 | 网络 | `/api/v1/networks`、`/leases`、`/hosts`、`/actions/{action}` |
@@ -334,7 +334,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 
 - 一个 VirtMgr 实例管理一个 libvirt 端点。跨宿主机调度、迁移和多集群清单尚未实现。
 - 运行环境为 Linux + KVM/QEMU + libvirt Go binding；构建需要 CGO 和 libvirt 开发头文件。
-- 当前 Web 控制台面向 VNC，不支持 SPICE。
+- 图形控制台当前仅支持 VNC，不支持 SPICE。串口控制台支持 libvirt PTY 设备，同一串口设备同时只允许一个交互会话。
 - 当前尚未提供官方容器化部署方式，推荐的生产形态仍是由 systemd 管理的宿主机二进制。
 - 备份仅支持持久虚拟机的冷全量备份和 `file` 后端磁盘；在线/增量备份、原地覆盖恢复、跨宿主机复制和浏览器下载备份均未实现。
 - 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。

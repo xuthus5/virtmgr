@@ -180,6 +180,14 @@ func (f fakeVMRepository) OpenConsole(context.Context, string, uint) (io.ReadWri
 	return nil, f.err
 }
 
+func (f fakeVMRepository) OpenSerialConsole(context.Context, string, string) (io.ReadWriteCloser, error) {
+	return nil, f.err
+}
+
+func (f fakeVMRepository) SendConsoleKey(context.Context, string, []uint) error {
+	return f.err
+}
+
 type fakeAuditRecorder struct {
 	events []domain.AuditEvent
 	err    error

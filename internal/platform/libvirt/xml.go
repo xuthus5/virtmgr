@@ -25,6 +25,17 @@ type domainHostDevSource struct {
 	} `xml:"product"`
 }
 
+type domainSerialXML struct {
+	Type   string `xml:"type,attr"`
+	Target struct {
+		Type string `xml:"type,attr"`
+		Port int    `xml:"port,attr"`
+	} `xml:"target"`
+	Alias struct {
+		Name string `xml:"name,attr"`
+	} `xml:"alias"`
+}
+
 type domainXML struct {
 	OS struct {
 		Type struct {
@@ -89,6 +100,8 @@ type domainXML struct {
 			Port   int    `xml:"port,attr"`
 			Listen string `xml:"listen,attr"`
 		} `xml:"graphics"`
+		Serials     []domainSerialXML `xml:"serial"`
+		Consoles    []domainSerialXML `xml:"console"`
 		HostDevices []struct {
 			Mode   string              `xml:"mode,attr"`
 			Type   string              `xml:"type,attr"`
@@ -107,6 +120,7 @@ type domainDetails struct {
 	Disks       []domain.Disk
 	Interfaces  []domain.NetworkInterface
 	Graphics    []domain.Graphics
+	Serials     []domain.SerialConsole
 	Passthrough []domain.PassthroughDevice
 }
 
@@ -163,6 +177,7 @@ func parseDomainXML(text string) (domainDetails, error) {
 			Port:   graphics.Port,
 		})
 	}
+	details.Serials = serialConsolesFromXML(parsed.Devices.Consoles, parsed.Devices.Serials)
 	details.Passthrough = make([]domain.PassthroughDevice, 0, len(parsed.Devices.HostDevices))
 	for _, hostdev := range parsed.Devices.HostDevices {
 		device, ok := passthroughFromHostDevXML(hostdev.Mode, hostdev.Type, hostdev.Source)
@@ -171,6 +186,51 @@ func parseDomainXML(text string) (domainDetails, error) {
 		}
 	}
 	return details, nil
+}
+
+func serialConsolesFromXML(consoles, serials []domainSerialXML) []domain.SerialConsole {
+	devices := make([]domain.SerialConsole, 0, len(consoles)+len(serials))
+	aliasesByPort := make(map[int]string, len(serials))
+	for _, serial := range serials {
+		if strings.EqualFold(strings.TrimSpace(serial.Type), "pty") && strings.TrimSpace(serial.Alias.Name) != "" {
+			aliasesByPort[serial.Target.Port] = strings.TrimSpace(serial.Alias.Name)
+		}
+	}
+	seen := make(map[string]struct{}, len(consoles)+len(serials))
+	appendDevice := func(device domainSerialXML) {
+		if !strings.EqualFold(strings.TrimSpace(device.Type), "pty") {
+			return
+		}
+		alias := strings.TrimSpace(device.Alias.Name)
+		if alias == "" {
+			alias = aliasesByPort[device.Target.Port]
+		}
+		key := alias
+		if key == "" {
+			key = fmt.Sprintf("%s:%d", strings.TrimSpace(device.Target.Type), device.Target.Port)
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		labelIndex := device.Target.Port + 1
+		if labelIndex < 1 {
+			labelIndex = len(devices) + 1
+		}
+		devices = append(devices, domain.SerialConsole{
+			Device:     alias,
+			Label:      fmt.Sprintf("Serial %d", labelIndex),
+			TargetPort: device.Target.Port,
+			TargetType: strings.TrimSpace(device.Target.Type),
+		})
+	}
+	for _, console := range consoles {
+		appendDevice(console)
+	}
+	for _, serial := range serials {
+		appendDevice(serial)
+	}
+	return devices
 }
 
 func firmwareFromDomainXML(firmware, loaderType, loaderSecure, nvramTemplate, nvramPath string) (domain.VMFirmware, bool) {

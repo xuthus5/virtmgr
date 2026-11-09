@@ -14,7 +14,6 @@ import {
   History,
   LoaderCircle,
   MemoryStick,
-  Monitor,
   MonitorPlay,
   Network,
   Pause,
@@ -53,6 +52,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
+import { VMConsoleCard } from "@/features/console/vm-console-card";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey } from "@/features/vms/use-vm-query";
@@ -330,14 +330,18 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           : "";
   const allowedActions = actionOrder.filter((action) => vm.allowedActions.includes(action));
   const dialogCopy = confirmCopy(confirmation);
-  const consoleReady = canMutate && ["running", "blocked", "paused"].includes(vm.state) && vm.graphics.some((graphics) => graphics.type.toLowerCase() === "vnc");
+  const hasConsole = vm.graphics.some((graphics) => graphics.type.toLowerCase() === "vnc") || Boolean(vm.serials?.length);
+  const consoleStateReady = ["running", "blocked", "paused"].includes(vm.state);
+  const consoleReady = canMutate && consoleStateReady && hasConsole;
   const consoleReason = readOnly
     ? "只读模式下不能打开可交互控制台"
     : viewer
       ? "当前账号没有控制台权限"
-      : !vm.graphics.some((graphics) => graphics.type.toLowerCase() === "vnc")
-        ? "当前虚拟机没有 VNC 图形设备"
-        : "请先启动虚拟机";
+      : !hasConsole
+        ? "当前虚拟机没有配置图形或串口控制台"
+        : !consoleStateReady
+          ? "请先启动虚拟机"
+          : "";
   const autostartDisabledReason = readOnly
     ? "系统当前处于只读模式"
     : viewer
@@ -446,6 +450,15 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           ) : null}
         </CardContent>
       </Card>
+
+      <VMConsoleCard
+        uuid={uuid}
+        graphics={vm.graphics}
+        serials={vm.serials}
+        state={vm.state}
+        canConnect={canMutate}
+        disabledReason={consoleReason}
+      />
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="vCPU" value={vm.vcpus} hint={`上限 ${vm.maxVcpus || vm.vcpus} vCPU`} icon={Cpu} tone="primary" testId="vm-detail-vcpus" />
@@ -568,7 +581,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
       />
       <VMRecentBackupsCard uuid={vm.uuid} />
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="mt-4">
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
@@ -645,19 +658,6 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>图形控制台</CardTitle>
-            <CardDescription>由 libvirt 域 XML 暴露的控制台端点。</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {vm.graphics.length ? vm.graphics.map((graphics, index) => (
-              <DetailItem key={`${graphics.type}-${index}`} label={graphics.type.toUpperCase()}>
-                <span className="inline-flex items-center gap-1.5 font-mono text-xs"><Monitor className="h-3.5 w-3.5" />{graphics.listen || "*"}:{graphics.port || "-"}</span>
-              </DetailItem>
-            )) : <p className="text-sm text-muted-foreground">当前虚拟机未配置图形控制台。</p>}
-          </CardContent>
-        </Card>
       </div>
 
       <VMDisksCard vm={vm} role={session.data?.user.role} readOnly={readOnly} />

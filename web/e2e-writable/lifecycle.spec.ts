@@ -102,6 +102,57 @@ test("移动端 VNC 控制台可连接且头部自适应", async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
+test("虚拟机详情内嵌控制台支持发送按键、断开和重连", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  const panel = page.getByTestId("vm-console-panel");
+  await expect(panel).toHaveAttribute("data-kind", "vnc");
+  await expect(panel).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+  await expect(page.getByTestId("vm-console-vnc-screen").locator("canvas")).toBeVisible();
+
+  await page.getByTestId("vm-console-send-key").selectOption("ctrl-alt-del");
+  await expect(page.getByText("已发送 Ctrl + Alt + Del", { exact: true })).toBeVisible();
+
+  await page.getByTestId("vm-console-disconnect").click();
+  await expect(panel).toHaveAttribute("data-state", "disconnected");
+  await expect(page.getByTestId("vm-console-message")).toContainText("控制台连接已断开");
+
+  await page.getByTestId("vm-console-connect").click();
+  await expect(panel).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+});
+
+test("虚拟机详情内嵌串口控制台可连接并收发数据", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await page.getByTestId("console-kind-serial").click();
+  const panel = page.getByTestId("vm-console-panel");
+  await expect(panel).toHaveAttribute("data-kind", "serial");
+  await expect(panel).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+  const terminal = page.getByTestId("vm-console-serial-screen").locator(".xterm");
+  await expect(terminal).toBeVisible();
+  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("VirtMgr demo serial console");
+  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("login:");
+
+  await page.getByTestId("vm-console-serial-screen").locator("textarea").focus();
+  await page.keyboard.type("e2e-serial");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("[demo] e2e-serial");
+});
+
+test("图形控制台可分离到独立窗口", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await expect(page.getByTestId("vm-console-panel")).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "分离", exact: true }).click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/\/console\/vms\/22222222-2222-4222-8222-222222222222\?kind=vnc&detached=true$/);
+  await expect(popup.getByTestId("vnc-console-title")).toHaveText("demo-db-01");
+  await expect(popup.getByTestId("vnc-console-status")).toHaveText("已连接", { timeout: 15_000 });
+  await popup.close();
+});
+
 test("可写模式创建并删除虚拟机", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();

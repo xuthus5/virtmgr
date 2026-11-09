@@ -18,6 +18,7 @@ var (
 	ErrSnapshotRisky      = errors.New("snapshot revert is risky")
 	ErrConsoleUnavailable = errors.New("console unavailable")
 	ErrConsoleToken       = errors.New("console token invalid")
+	ErrConsoleBusy        = errors.New("console session busy")
 	ErrNetworkActive      = errors.New("network active")
 	ErrNetworkUnsupported = errors.New("network update unsupported")
 	ErrCSRF               = errors.New("csrf validation failed")

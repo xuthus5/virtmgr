@@ -2,6 +2,8 @@ package libvirtbackend
 
 import (
 	"testing"
+
+	"virtmgr/internal/domain"
 )
 
 const sampleDomainXML = `<domain type='kvm'>
@@ -26,6 +28,14 @@ const sampleDomainXML = `<domain type='kvm'>
       <source network='default'/>
       <model type='virtio'/>
     </interface>
+    <serial type='pty'>
+      <target type='isa-serial' port='0'/>
+      <alias name='serial0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+      <alias name='serial0'/>
+    </console>
     <graphics type='vnc' port='5901' listen='127.0.0.1'/>
   </devices>
 </domain>`
@@ -63,8 +73,56 @@ func TestParseDomainXML(t *testing.T) {
 	if len(details.Graphics) != 1 || details.Graphics[0].Port != 5901 {
 		t.Fatalf("graphics = %+v", details.Graphics)
 	}
+	if len(details.Serials) != 1 || details.Serials[0].Device != "serial0" || details.Serials[0].Label != "Serial 1" {
+		t.Fatalf("serials = %+v", details.Serials)
+	}
 	if details.Firmware != "bios" || details.SecureBoot {
 		t.Fatalf("firmware = %q secureBoot=%v", details.Firmware, details.SecureBoot)
+	}
+}
+
+func TestParseDomainXMLSerialConsoleFallbacks(t *testing.T) {
+	tests := []struct {
+		name string
+		xml  string
+		want []domain.SerialConsole
+	}{
+		{
+			name: "serial without console",
+			xml:  `<domain><devices><serial type='pty'><target type='isa-serial' port='1'/><alias name='serial1'/></serial></devices></domain>`,
+			want: []domain.SerialConsole{{Device: "serial1", Label: "Serial 2", TargetPort: 1, TargetType: "isa-serial"}},
+		},
+		{
+			name: "console inherits serial alias",
+			xml:  `<domain><devices><serial type='pty'><target type='isa-serial' port='0'/><alias name='serial0'/></serial><console type='pty'><target type='serial' port='0'/></console></devices></domain>`,
+			want: []domain.SerialConsole{{Device: "serial0", Label: "Serial 1", TargetPort: 0, TargetType: "serial"}},
+		},
+		{
+			name: "duplicate console and serial are collapsed",
+			xml:  `<domain><devices><console type='pty'><target type='serial' port='0'/><alias name='serial0'/></console><serial type='pty'><target type='isa-serial' port='0'/><alias name='serial0'/></serial></devices></domain>`,
+			want: []domain.SerialConsole{{Device: "serial0", Label: "Serial 1", TargetPort: 0, TargetType: "serial"}},
+		},
+		{
+			name: "non pty console is ignored",
+			xml:  `<domain><devices><console type='vc'><target type='serial' port='0'/></console></devices></domain>`,
+			want: nil,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			details, err := parseDomainXML(test.xml)
+			if err != nil {
+				t.Fatalf("parseDomainXML() error = %v", err)
+			}
+			if len(details.Serials) != len(test.want) {
+				t.Fatalf("serials = %+v", details.Serials)
+			}
+			for index := range test.want {
+				if details.Serials[index] != test.want[index] {
+					t.Fatalf("serials[%d] = %+v, want %+v", index, details.Serials[index], test.want[index])
+				}
+			}
+		})
 	}
 }
 

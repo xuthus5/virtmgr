@@ -1,7 +1,7 @@
 <div align="center">
   <h1>VirtMgr</h1>
   <p><strong>A lightweight web console for managing KVM/libvirt virtual machines.</strong></p>
-  <p>VirtMgr exposes host health, virtual machine lifecycle operations, storage, networking, snapshots, VNC consoles, audit logs, and long-running tasks from a single self-hosted web application.</p>
+  <p>VirtMgr exposes host health, virtual machine lifecycle operations, storage, networking, snapshots, graphical and serial consoles, audit logs, and long-running tasks from a single self-hosted web application.</p>
   <p>
     <a href="#screenshots">Screenshots</a> ·
     <a href="#feature-overview">Features</a> ·
@@ -53,7 +53,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Virtual machines | Search and filter domains; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
 | VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, network selection, ISO, autostart, and optional Cloud-init seed ISO |
 | VM details | Hardware summary, live CPU/memory/network trends, disks, NICs, Guest Agent information, snapshots, and domain XML |
-| Console | Browser-based noVNC console through a one-time token and server-side WebSocket proxy; the VNC port is never exposed directly |
+| Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
@@ -262,7 +262,7 @@ Administrators can create users, change roles, disable accounts, inspect the aud
 - **Backups restore as new VMs.** A backup contains the persistent domain XML, a SHA-256 manifest, and writable file disks, but not RAM state. In-place restore and RAM-state restore are not provided.
 - **Disk expansion does not resize guest partitions.** VirtMgr grows the qcow2/raw virtual disk only. Linux guests may still need `growpart` plus `resize2fs`/`xfs_growfs`; Windows guests require volume expansion in Disk Management. Shrinking is not supported.
 - **CPU and memory changes respect libvirt limits.** Running domains can be adjusted within their active maximum; increasing the maximum generally requires shutting the VM down first.
-- **VNC is proxied server-side.** The browser receives a short-lived, single-use console token; the host VNC port is not exposed directly.
+- **Consoles are proxied server-side.** VNC and serial sessions use short-lived, single-use tokens; the host VNC port is never exposed directly. The console view supports keyboard shortcuts, reconnect, fullscreen, and a detachable window.
 - **Cloud-init content is not written to audit logs.** Auditing records only whether Cloud-init was enabled, the storage pool, and byte counts.
 - **XML edits are restricted.** Only administrators in writable mode can update the persistent definition; name and UUID are immutable, QEMU command-line namespaces are rejected, and libvirt performs validation before the definition is saved.
 - **Configuration rollback only restores XML.** Version history keeps compressed persistent definitions, not disks, snapshots, or live memory. Rollback is admin-only, checks the current SHA-256 to avoid overwriting concurrent changes, archives the current definition first, and requires a VM restart for running domains.
@@ -278,7 +278,7 @@ Representative endpoint groups include:
 | Session | `POST /api/v1/session`, `GET /api/v1/session`, `DELETE /api/v1/session` |
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
 | Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/devices`, `/actions/{action}` |
-| VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/export` |
+| VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/console/send-key`, `/console`, `/serial-console`, `/export` |
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
 | Networking | `/api/v1/networks`, `/leases`, `/hosts`, `/actions/{action}` |
@@ -334,7 +334,7 @@ scripts/                  Development and E2E helpers
 
 - One VirtMgr instance manages one libvirt endpoint. Cross-host scheduling, migration, and multi-cluster inventory are not implemented.
 - Linux with KVM/QEMU and the libvirt Go binding is the supported runtime. Building requires CGO and libvirt development headers.
-- The current console implementation targets VNC. SPICE is not supported.
+- Graphical consoles currently support VNC only; SPICE is not supported. Serial consoles support libvirt PTY devices, with one active browser session per serial device.
 - Container deployment is not an official deployment path yet; the supported production shape is a host binary managed by systemd.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
 - VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.

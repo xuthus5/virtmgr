@@ -383,7 +383,10 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
   await expect(page.getByText("/var/lib/libvirt/images/demo-db-01.qcow2", { exact: true })).toBeVisible();
-  await expect(page.getByText("VNC", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("vm-console-card")).toBeVisible();
+  await expect(page.getByTestId("console-kind-vnc")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("vm-console-message")).toContainText("只读模式下不能打开可交互控制台");
+  await page.getByText("连接信息", { exact: true }).click();
   await expect(page.getByText("127.0.0.1:5902", { exact: true })).toBeVisible();
 });
 
@@ -481,6 +484,8 @@ test("只读模式禁用虚拟机生命周期操作", async ({ page }) => {
   await expect(page.getByTestId("vm-read-only-notice")).toContainText("只读模式已开启");
   await expect(page.getByTestId("vm-action-start")).toBeDisabled();
   await expect(page.getByTestId("vm-console-open")).toBeDisabled();
+  await expect(page.getByTestId("vm-console-connect")).toBeDisabled();
+  await expect(page.getByTestId("vm-console-message")).toContainText("只读模式下不能打开可交互控制台");
   await expect(page.getByTestId("vm-snapshots-card")).toBeVisible();
   await expect(page.getByTestId("vm-snapshot-create-toggle")).toBeDisabled();
   await expect(page.getByTestId("vm-snapshot-empty")).toContainText("暂无快照");

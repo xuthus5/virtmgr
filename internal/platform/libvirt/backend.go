@@ -38,6 +38,8 @@ type Backend interface {
 	RevertSnapshot(ctx context.Context, uuid, name string) error
 	DeleteSnapshot(ctx context.Context, uuid, name string) error
 	OpenConsole(ctx context.Context, uuid string, graphicsIndex uint) (io.ReadWriteCloser, error)
+	OpenSerialConsole(ctx context.Context, uuid, device string) (io.ReadWriteCloser, error)
+	SendConsoleKey(ctx context.Context, uuid string, keycodes []uint) error
 	ListStoragePools(ctx context.Context) ([]domain.StoragePool, error)
 	GetStoragePool(ctx context.Context, name string) (domain.StoragePool, error)
 	CreateStoragePool(ctx context.Context, spec domain.StoragePoolCreateSpec) (domain.StoragePool, error)

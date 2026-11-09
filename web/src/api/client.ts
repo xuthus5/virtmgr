@@ -1,4 +1,4 @@
-import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -162,9 +162,13 @@ export const api = {
     `/api/v1/snapshot-policies/${id}/run`,
     { method: "POST" },
   ),
-  issueConsoleToken: (uuid: string) => request<ConsoleTicket>(
+  issueConsoleToken: (uuid: string, input: ConsoleTokenInput = { kind: "vnc" }) => request<ConsoleTicket>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/console-token`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  sendConsoleKey: (uuid: string, input: SendConsoleKeyInput) => request<void>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/console/send-key`,
+    { method: "POST", body: JSON.stringify(input) },
   ),
   createVM: (input: VMCreateInput) => request<VM>("/api/v1/vms", {
     method: "POST",

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -35,6 +36,8 @@ type Repository interface {
 	RevertSnapshot(ctx context.Context, uuid, name string) error
 	DeleteSnapshot(ctx context.Context, uuid, name string) error
 	OpenConsole(ctx context.Context, uuid string, graphicsIndex uint) (io.ReadWriteCloser, error)
+	OpenSerialConsole(ctx context.Context, uuid, device string) (io.ReadWriteCloser, error)
+	SendConsoleKey(ctx context.Context, uuid string, keycodes []uint) error
 }
 
 type AuditRecorder interface {
@@ -66,10 +69,12 @@ type Service struct {
 	metrics        MetricsProvider
 	backupService  *backupsapp.Service
 	configVersions ConfigVersionRecorder
+	serialMu       sync.Mutex
+	serialSessions map[string]struct{}
 }
 
 type ConsoleTokenStore interface {
-	Issue(vmUUID string, userID int64) (domain.ConsoleToken, error)
+	Issue(vmUUID string, userID int64, kind domain.ConsoleKind, device string) (domain.ConsoleToken, error)
 	Consume(token string) (domain.ConsoleToken, error)
 }
 
