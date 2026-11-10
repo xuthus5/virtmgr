@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
+import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
+import { cloudInitValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
 import { initialTemplateForm, formToTemplateInput, templateToForm, type TemplateFormState } from "@/features/templates/template-form";
 import { templatesQueryKey, useTemplatesQuery } from "@/features/templates/use-templates-query";
 
@@ -120,6 +122,11 @@ export function TemplatesPage() {
     if (!canManage) return;
     setFormError("");
     setSuccessMessage("");
+    const cloudInitError = form.cloudInit ? cloudInitValidationError(form.cloudInitUserData) : "";
+    if (cloudInitError) {
+      setFormError(cloudInitError);
+      return;
+    }
     const input = formToTemplateInput(form);
     if (editingID) updateMutation.mutate({ id: editingID, input });
     else createMutation.mutate(input);
@@ -208,7 +215,18 @@ export function TemplatesPage() {
                   <span><span className="block font-medium">安全启动 (Secure Boot)</span><span className="mt-0.5 block text-xs text-muted-foreground">仅 UEFI 固件可用。</span></span>
                 </label>
                 <label className="flex items-start gap-3 text-sm">
-                  <input aria-label="模板启用 Cloud-init" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.cloudInit} onChange={(event) => updateField("cloudInit", event.target.checked)} disabled={!canManage} />
+                  <input
+                    aria-label="模板启用 Cloud-init"
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={form.cloudInit}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      updateField("cloudInit", enabled);
+                      if (enabled && !form.cloudInitUserData.trim()) updateField("cloudInitUserData", defaultCloudInitUserData());
+                    }}
+                    disabled={!canManage}
+                  />
                   <span><span className="block font-medium">启用 Cloud-init</span><span className="mt-0.5 block text-xs text-muted-foreground">保存为新建虚拟机的默认 seed 内容。</span></span>
                 </label>
                 <label className="flex items-start gap-3 text-sm">
@@ -222,19 +240,13 @@ export function TemplatesPage() {
               </div>
 
               {form.cloudInit ? (
-                <div className="space-y-2">
-                  <Label htmlFor="template-cloud-init">Cloud-init 用户数据</Label>
-                  <textarea
-                    id="template-cloud-init"
-                    value={form.cloudInitUserData}
-                    onChange={(event) => updateField("cloudInitUserData", event.target.value)}
-                    required
-                    rows={7}
-                    spellCheck={false}
-                    disabled={!canManage}
-                    className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                  />
-                </div>
+                <CloudInitEditor
+                  key={`template-cloud-init-${editingID ?? "new"}`}
+                  prefix="template-cloud-init"
+                  value={form.cloudInitUserData}
+                  onChange={(value) => updateField("cloudInitUserData", value)}
+                  disabled={!canManage}
+                />
               ) : null}
 
               {formError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{formError}</p> : null}

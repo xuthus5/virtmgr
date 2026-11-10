@@ -5,6 +5,7 @@ import { EditorState } from "@codemirror/state";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import { xml } from "@codemirror/lang-xml";
+import { yaml } from "@codemirror/lang-yaml";
 import { useTheme } from "@/lib/theme";
 
 type XMLCodeEditorProps = {
@@ -14,6 +15,7 @@ type XMLCodeEditorProps = {
   ariaLabel: string;
   testId: string;
   format?: string;
+  language?: "xml" | "yaml";
   className?: string;
 };
 
@@ -84,7 +86,7 @@ function editorTheme(dark: boolean) {
   }, { dark });
 }
 
-export function XMLCodeEditor({ value, onChange, readOnly = false, ariaLabel, testId, format, className }: XMLCodeEditorProps) {
+export function XMLCodeEditor({ value, onChange, readOnly = false, ariaLabel, testId, format, language = "xml", className }: XMLCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -101,7 +103,7 @@ export function XMLCodeEditor({ value, onChange, readOnly = false, ariaLabel, te
         doc: value,
         extensions: [
           basicSetup,
-          xml(),
+          language === "yaml" ? yaml() : xml(),
           EditorView.lineWrapping,
           syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle, { fallback: true }),
           editorTheme(theme === "dark"),
@@ -128,7 +130,7 @@ export function XMLCodeEditor({ value, onChange, readOnly = false, ariaLabel, te
       view.destroy();
       viewRef.current = null;
     };
-  }, [ariaLabel, format, readOnly, testId, theme]);
+  }, [ariaLabel, format, language, readOnly, testId, theme]);
 
   useEffect(() => {
     const view = viewRef.current;

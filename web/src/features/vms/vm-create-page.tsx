@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSessionQuery } from "@/features/auth/use-session";
+import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
+import { cloudInitValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
@@ -158,6 +160,11 @@ export function VMCreatePage() {
     event.preventDefault();
     if (!canCreate) return;
     setError("");
+    const cloudInitError = form.cloudInit ? cloudInitValidationError(form.cloudInitUserData) : "";
+    if (cloudInitError) {
+      setError(cloudInitError);
+      return;
+    }
     mutation.mutate({
       name: form.name.trim(),
       vcpus: Number(form.vcpus),
@@ -323,7 +330,7 @@ export function VMCreatePage() {
                       ...current,
                       cloudInit: event.target.checked,
                       cloudInitUserData: event.target.checked && !current.cloudInitUserData.trim()
-                        ? '#cloud-config\nruncmd:\n  - echo "VirtMgr cloud-init ready" > /var/log/virtmgr-cloud-init.log\n'
+                        ? defaultCloudInitUserData()
                         : current.cloudInitUserData,
                     }))}
                     disabled={!canCreate}
@@ -334,21 +341,9 @@ export function VMCreatePage() {
                   </span>
                 </label>
                 {form.cloudInit ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="vm-cloud-init-user-data">Cloud-init 用户数据</Label>
-                    <textarea
-                      id="vm-cloud-init-user-data"
-                      value={form.cloudInitUserData}
-                      onChange={(event) => update("cloudInitUserData", event.target.value)}
-                      required
-                      disabled={!canCreate}
-                      rows={8}
-                      spellCheck={false}
-                      className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                    />
-                    <p className="text-xs text-muted-foreground">seed ISO 将写入存储池 <span className="font-medium text-foreground">{diskPool || "-"}</span>；审计只记录启用状态和字节数，不保存用户数据内容。</p>
-                  </div>
+                  <CloudInitEditor prefix="vm-cloud-init" value={form.cloudInitUserData} onChange={(value) => update("cloudInitUserData", value)} disabled={!canCreate} />
                 ) : null}
+                {form.cloudInit ? <p className="text-xs text-muted-foreground">seed ISO 将写入存储池 <span className="font-medium text-foreground">{diskPool || "-"}</span>；审计只记录启用状态和字节数，不保存用户数据内容。</p> : null}
               </div>
             </CardContent>
           </Card>

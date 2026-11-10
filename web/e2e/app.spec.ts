@@ -645,6 +645,8 @@ test("只读模式展示虚拟机模板并支持预填新建表单", async ({ pa
   await expect(page.getByLabel("固件", { exact: true })).toHaveValue("uefi");
   await expect(page.getByLabel("安全启动 (Secure Boot)", { exact: true })).toBeChecked();
   await expect(page.getByLabel("启用 Cloud-init", { exact: true })).toBeChecked();
-  await expect(page.getByLabel("Cloud-init 用户数据", { exact: true })).toHaveValue(/#cloud-config/);
+  await expect(page.getByTestId("vm-cloud-init-editor")).toBeVisible();
+  await expect(page.getByTestId("vm-cloud-init-preview")).toContainText("#cloud-config");
+  await expect(page.getByTestId("vm-cloud-init-mode-source")).toBeDisabled();
   await expect(page.getByRole("button", { name: "创建虚拟机", exact: true })).toBeDisabled();
 });

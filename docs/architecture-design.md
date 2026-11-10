@@ -49,7 +49,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 物理主机页读取宿主机、存储池、虚拟网络和虚拟机分配汇总，并展示异常提醒与容量使用率。
 - 物理主机设备：`GET /host/devices` 读取 libvirt 节点设备，解析 PCI、USB、网络、块设备和 DRM 能力；主机页展示设备地址、厂商/型号、驱动和在线状态。
 - 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件与安全启动状态进入创建审计，并从运行态域 XML 回读。
-- Cloud-init：创建时可选提供 NoCloud `user-data` 与目标活跃存储池。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
+- Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
 - 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径和启动策略。新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
@@ -745,7 +745,7 @@ type PassthroughDevice = {
 | `PATCH` | `/templates/{id}` | 更新模板，需 CSRF |
 | `DELETE` | `/templates/{id}` | 删除模板，需 CSRF |
 
-模板字段包括名称、描述、vCPU、内存、磁盘格式、网络、ISO 路径、固件、Secure Boot、Cloud-init 开关与 user-data、autostart 和创建后启动。名称大小写不敏感唯一；Cloud-init 最多 64 KiB，审计只记录启用状态与字节数，不记录正文。模板不保存实例名称或磁盘路径，避免误用为实例状态来源。前端 `/templates` 提供 CRUD，并用 `/vms/new?template={id}` 预填创建表单。
+模板字段包括名称、描述、vCPU、内存、磁盘格式、网络、ISO 路径、固件、Secure Boot、Cloud-init 开关与 user-data、autostart 和创建后启动。Cloud-init 编辑器支持可视化字段与 YAML 源码双向切换：可视化修改生成标准 user-data，源码中的高级字段在仅查看时保持不变，切换回可视化修改前会提示可能被覆盖的字段。名称大小写不敏感唯一；Cloud-init 最多 64 KiB，提交前校验 YAML 语法和可视化用户名，审计只记录启用状态与字节数，不记录正文。模板不保存实例名称或磁盘路径，避免误用为实例状态来源。前端 `/templates` 提供 CRUD，并用 `/vms/new?template={id}` 预填创建表单。
 
 ### 5.5 存储与网络
 
@@ -1001,7 +1001,7 @@ Tab 内容：
 
 ### 7.8 虚拟机模板页
 
-模板页沿用 dosh 的卡片与紧凑表格布局：顶部说明模板用途，表格展示名称、规格、固件、网络/磁盘、Cloud-init、启动策略和更新时间；新建/编辑表单在页面内展开，删除需要输入模板名称确认。用户可从行内“使用模板”进入 `/vms/new?template={id}`，新建页顶部模板选择器会预填规格、固件、网络、Cloud-init 和启动策略，但保留名称与磁盘路径供操作者填写。
+模板页沿用 dosh 的卡片与紧凑表格布局：顶部说明模板用途，表格展示名称、规格、固件、网络/磁盘、Cloud-init、启动策略和更新时间；新建/编辑表单在页面内展开，Cloud-init 区域采用左侧可视化字段、右侧实时 YAML 预览的响应式双栏布局，源码模式使用 CodeMirror YAML 高亮。删除需要输入模板名称确认。用户可从行内“使用模板”进入 `/vms/new?template={id}`，新建页顶部模板选择器会预填规格、固件、网络、Cloud-init 和启动策略，但保留名称与磁盘路径供操作者填写。
 
 ## 8. 视觉与主题
 

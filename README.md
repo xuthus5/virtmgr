@@ -51,7 +51,7 @@ All screenshots use the built-in demo backend, not production host data.
 |---|---|
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
-| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, network selection, ISO, autostart, and optional Cloud-init seed ISO |
+| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, network selection, ISO, autostart, and optional interactive Cloud-init builder with live YAML preview and source editing |
 | VM details | Hardware summary, live CPU/memory/network trends, disks, NICs, Guest Agent information, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
@@ -65,7 +65,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Observability | SSE event stream, task center with progress and failures, host and VM resource trends, structured logs, health endpoints |
 | Security | Local accounts, Argon2id passwords, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, audit trail, CSP and security headers |
 | User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, accessible dialogs, and explicit confirmation for destructive actions |
-| Templates | Reusable VM specifications, firmware/network defaults, and Cloud-init defaults without instance names or disk paths |
+| Templates | Reusable VM specifications, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
 
 ## Architecture
 
