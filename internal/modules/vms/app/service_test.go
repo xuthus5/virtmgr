@@ -874,6 +874,22 @@ func TestCloneVMStartsTaskAndAudits(t *testing.T) {
 }
 
 func TestCloneVMRejectsInvalidSourceAndMarksTaskFailure(t *testing.T) {
+	t.Run("invalid target pool", func(t *testing.T) {
+		repository := &recordingRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{persistentVM()}}}
+		audit := &fakeAuditRecorder{}
+		taskRecorder := newFakeTaskRecorder()
+		service := New(repository, audit, false, WithTaskRecorder(taskRecorder))
+		_, err := service.Clone(context.Background(), CloneCommand{
+			UUID: "uuid-a", Spec: domain.VMCloneSpec{Name: "api-clone", TargetPool: "bad/pool"}, Request: MutationContext{Session: operatorSession()},
+		})
+		if !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("Clone() error = %v", err)
+		}
+		if taskRecorder.startedKind != "" || repository.clonedUUID != "" || len(audit.events) != 1 || audit.events[0].Result != "failure" {
+			t.Fatalf("unexpected side effects: task=%+v repo=%+v audit=%+v", taskRecorder, repository, audit.events)
+		}
+	})
+
 	t.Run("running source", func(t *testing.T) {
 		repository := &recordingRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{persistentVM()}}}
 		audit := &fakeAuditRecorder{}

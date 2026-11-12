@@ -85,6 +85,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	if err := store.DeleteExpiredSessions(ctx, time.Now()); err != nil {
 		logger.Warn("expired_sessions_cleanup_failed", "error", err)
 	}
+	if err := store.DeleteLoginAttemptsBefore(ctx, time.Now().Add(-24*time.Hour)); err != nil {
+		logger.Warn("login_attempts_cleanup_failed", "error", err)
+	}
 	mode, err := runtimeconfig.New(ctx, store, cfg.ReadOnly)
 	if err != nil {
 		_ = db.Close()
@@ -238,6 +241,9 @@ func (a *App) cleanupExpiredSessions(ctx context.Context) {
 			if err := a.store.DeleteExpiredSessions(ctx, now); err != nil {
 				a.logger.Warn("expired_sessions_cleanup_failed", "error", err)
 			}
+			if err := a.store.DeleteLoginAttemptsBefore(ctx, now.Add(-24*time.Hour)); err != nil {
+				a.logger.Warn("login_attempts_cleanup_failed", "error", err)
+			}
 		case <-ctx.Done():
 			return
 		}
@@ -324,9 +330,9 @@ type routerDependencies struct {
 func buildRouter(deps routerDependencies) stdhttp.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(httpx.RealIP(deps.cfg.TrustedProxies))
 	r.Use(middleware.Recoverer)
-	r.Use(securityHeaders)
+	r.Use(securityHeaders(deps.cfg.TLSEnabled() || deps.cfg.CookieSecure))
 	r.Use(requestLogger(deps.logger))
 
 	r.Get("/healthz", func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
@@ -371,17 +377,22 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 	return r
 }
 
-func securityHeaders(next stdhttp.Handler) stdhttp.Handler {
-	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://cloudflareinsights.com ws: wss:; worker-src 'self' blob:")
-		next.ServeHTTP(w, r)
-	})
+func securityHeaders(hstsEnabled bool) func(stdhttp.Handler) stdhttp.Handler {
+	return func(next stdhttp.Handler) stdhttp.Handler {
+		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "same-origin")
+			w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+			w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://cloudflareinsights.com ws: wss:; worker-src 'self' blob:")
+			if hstsEnabled {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func requestLogger(logger *slog.Logger) func(stdhttp.Handler) stdhttp.Handler {

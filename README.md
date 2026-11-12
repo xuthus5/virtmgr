@@ -15,7 +15,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache License 2.0" /></a>
     <a href="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml/badge.svg" alt="Release workflow" /></a>
     <a href="https://github.com/xuthus5/virtmgr/releases/latest"><img src="https://img.shields.io/github/v/release/xuthus5/virtmgr" alt="Latest release" /></a>
-    <img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go" alt="Go 1.26+" />
+    <img src="https://img.shields.io/badge/Go-1.27.4%2B-00ADD8?logo=go" alt="Go 1.27.4+" />
     <img src="https://img.shields.io/badge/React-19-149ECA?logo=react" alt="React 19" />
   </p>
   <img src="docs/images/overview.png" alt="VirtMgr overview dashboard" />
@@ -91,7 +91,7 @@ See [docs/architecture-design.md](docs/architecture-design.md) for the detailed 
 ### Prerequisites
 
 - Linux host with KVM/QEMU and libvirt
-- Go `1.26+`
+- Go `1.27.4+` (includes the standard-library `net/http` security fixes)
 - Node.js `24+` and npm
 - A C compiler, `pkg-config`, and libvirt development headers because the libvirt Go binding uses CGO
 - A Unix socket reachable through `qemu:///system`, normally `/var/run/libvirt/libvirt-sock`
@@ -179,6 +179,8 @@ VIRTMGR_SESSION_TTL=8h
 VIRTMGR_COOKIE_SECURE=false
 VIRTMGR_READ_ONLY=true
 VIRTMGR_DEMO_MODE=false
+# Optional: only addresses/CIDRs of reverse proxies that may set X-Forwarded-*.
+VIRTMGR_TRUSTED_PROXIES=
 ```
 
 `VIRTMGR_ADMIN_PASSWORD` is only used when the database has no users. After the first successful start, remove the plaintext password from the environment file. Keep the file readable only by root and the `virtmgr` group.
@@ -217,7 +219,7 @@ Both TLS files must be configured together. Restrict the private key to the serv
 
 **TLS termination by nginx, Caddy, or a tunnel**
 
-Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve WebSocket upgrades for the VNC console, and set `VIRTMGR_COOKIE_SECURE=true` whenever the browser accesses the service over HTTPS.
+Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve WebSocket upgrades for the VNC console, and set `VIRTMGR_COOKIE_SECURE=true` whenever the browser accesses the service over HTTPS. Set `VIRTMGR_TRUSTED_PROXIES` to the reverse proxy address or CIDR (for example `127.0.0.1/32` or `10.0.0.0/8`) before relying on `X-Forwarded-For` or `X-Real-IP`; untrusted clients cannot override the recorded source address. HTTPS deployments also receive `Strict-Transport-Security: max-age=31536000`.
 
 Do not expose a writable VirtMgr instance directly to the public internet without TLS, a firewall, and a strong administrator password.
 
@@ -235,6 +237,7 @@ Do not expose a writable VirtMgr instance directly to the public internet withou
 | `VIRTMGR_ADMIN_PASSWORD` | unset | Initial administrator password; required only for the first start |
 | `VIRTMGR_SESSION_TTL` | `8h` | Login session lifetime; must be a positive Go duration |
 | `VIRTMGR_COOKIE_SECURE` | `false` | Mark the session cookie as `Secure`; enable it for HTTPS deployments |
+| `VIRTMGR_TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to supply `X-Forwarded-For` and `X-Real-IP` |
 | `VIRTMGR_READ_ONLY` | `true` | Initial global write-protection state |
 | `VIRTMGR_DEMO_MODE` | `false` | Use the demo backend for UI development; never enable this in production |
 
@@ -242,7 +245,7 @@ Changes to the database, libvirt connection, or TLS paths require a service rest
 
 ## Authentication and permissions
 
-VirtMgr uses local accounts. Passwords are hashed with Argon2id, sessions are stored as hashes in SQLite, and the browser receives only an `HttpOnly` and `SameSite=Strict` session cookie. Every state-changing API request requires the session's CSRF token in `X-CSRF-Token`.
+VirtMgr uses local accounts. Passwords are hashed with Argon2id, sessions are stored as hashes in SQLite, and the browser receives only an `HttpOnly` and `SameSite=Strict` session cookie. Every state-changing API request requires the session's CSRF token in `X-CSRF-Token`. Failed logins are rate-limited per username and source address and return `429 TOO_MANY_ATTEMPTS`; unknown and disabled accounts use the same password-hashing cost to reduce account-enumeration signals.
 
 | Role | Read access | VM lifecycle and create/clone/backup | Snapshots, storage, networks, templates | VNC console | Edit domain XML | Users, settings, audit |
 |---|---:|---:|---:|---:|---:|---:|

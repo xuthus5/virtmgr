@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("VIRTMGR_LISTEN", "")
@@ -66,5 +69,51 @@ func TestLoadRejectsPartialTLSConfig(t *testing.T) {
 	t.Setenv("VIRTMGR_TLS_KEY_FILE", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want error for partial TLS configuration")
+	}
+}
+
+func TestLoadRejectsInvalidBooleanValues(t *testing.T) {
+	for _, key := range []string{"VIRTMGR_COOKIE_SECURE", "VIRTMGR_READ_ONLY", "VIRTMGR_DEMO_MODE"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "definitely-not-a-bool")
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil for invalid %s", key)
+			}
+		})
+	}
+}
+
+func TestLoadParsesTrustedProxies(t *testing.T) {
+	t.Setenv("VIRTMGR_TRUSTED_PROXIES", "127.0.0.1, 10.0.0.0/8, ::1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for _, want := range []netip.Prefix{
+		netip.MustParsePrefix("127.0.0.1/32"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("::1/128"),
+	} {
+		found := false
+		for _, prefix := range cfg.TrustedProxies {
+			if prefix == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("TrustedProxies = %v, missing %s", cfg.TrustedProxies, want)
+		}
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxies(t *testing.T) {
+	for _, value := range []string{"not-an-ip", "10.0.0.0/99", "127.0.0.1,,10.0.0.1"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("VIRTMGR_TRUSTED_PROXIES", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil for %q", value)
+			}
+		})
 	}
 }

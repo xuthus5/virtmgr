@@ -1,10 +1,8 @@
 package configversionshttp
 
 import (
-	"net"
 	stdhttp "net/http"
 	"strconv"
-	"strings"
 
 	"virtmgr/internal/domain"
 	configversionsapp "virtmgr/internal/modules/configversions/app"
@@ -136,14 +134,6 @@ func mutationContext(r *stdhttp.Request, session domain.Session) configversionsa
 	return configversionsapp.MutationContext{
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

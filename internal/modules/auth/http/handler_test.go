@@ -43,6 +43,7 @@ func TestLoginGetLogout(t *testing.T) {
 
 	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "secret"})
 	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewReader(loginBody))
+	loginRequest.RemoteAddr = "192.0.2.40:1234"
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginRecorder := httptest.NewRecorder()
 	router.ServeHTTP(loginRecorder, loginRequest)
@@ -121,6 +122,30 @@ func TestLoginRejectsBadPassword(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestLoginRateLimitReturnsTooManyRequests(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	router := chi.NewRouter()
+	router.Route("/api/v1", handler.Mount)
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "wrong"})
+	for attempt := 0; attempt < 5; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewReader(body))
+		request.RemoteAddr = "192.0.2.50:1234"
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d", attempt+1, recorder.Code)
+		}
+	}
+	body, _ = json.Marshal(map[string]string{"username": "admin", "password": "secret"})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewReader(body))
+	request.RemoteAddr = "192.0.2.50:1234"
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

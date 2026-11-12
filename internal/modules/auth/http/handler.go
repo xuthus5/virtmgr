@@ -72,7 +72,7 @@ func (h *Handler) Login(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	result, err := h.service.Login(r.Context(), request.Username, request.Password)
+	result, err := h.service.Login(r.Context(), request.Username, request.Password, httpx.SourceIP(r))
 	if err != nil {
 		httpx.Error(w, r, err)
 		return

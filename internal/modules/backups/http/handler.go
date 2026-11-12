@@ -1,7 +1,6 @@
 package http
 
 import (
-	"net"
 	stdhttp "net/http"
 	"strconv"
 	"strings"
@@ -375,13 +374,5 @@ func parseID(r *stdhttp.Request) (int64, error) {
 }
 
 func mutationContext(r *stdhttp.Request, session domain.Session) backupsapp.MutationContext {
-	return backupsapp.MutationContext{Session: session, RequestID: middleware.GetReqID(r.Context()), SourceIP: sourceIP(r)}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
+	return backupsapp.MutationContext{Session: session, RequestID: middleware.GetReqID(r.Context()), SourceIP: httpx.SourceIP(r)}
 }

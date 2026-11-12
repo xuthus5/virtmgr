@@ -2,6 +2,8 @@ import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, Back
 
 let csrfToken = "";
 
+export const unauthorizedEvent = "virtmgr:unauthorized";
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -29,6 +31,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       message = body.error?.message ?? message;
     } catch {
       // Keep the status-based fallback when the response is not JSON.
+    }
+    if (response.status === 401 && path !== "/api/v1/session") {
+      csrfToken = "";
+      if (typeof window !== "undefined") window.dispatchEvent(new Event(unauthorizedEvent));
     }
     throw new ApiError(response.status, code, message);
   }

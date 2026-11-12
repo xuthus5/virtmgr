@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
-import { api } from "@/api/client";
+import { ApiError, api, unauthorizedEvent } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { LoadingState } from "@/components/feedback/states";
+import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { useOverviewQuery } from "@/features/overview/use-overview-query";
 import { GlobalSearch } from "@/features/search/global-search";
@@ -44,8 +44,19 @@ export function AppShell() {
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
-    if (session.isError) void navigate({ to: "/login", replace: true });
-  }, [navigate, session.isError]);
+    if (session.isError && session.error instanceof ApiError && session.error.status === 401) {
+      void navigate({ to: "/login", replace: true });
+    }
+  }, [navigate, session.error, session.isError]);
+
+  useEffect(() => {
+    function onUnauthorized() {
+      queryClient.clear();
+      void navigate({ to: "/login", replace: true });
+    }
+    window.addEventListener(unauthorizedEvent, onUnauthorized);
+    return () => window.removeEventListener(unauthorizedEvent, onUnauthorized);
+  }, [navigate, queryClient]);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1024px)");
@@ -118,6 +129,17 @@ export function AppShell() {
   }
 
   if (session.isLoading) return <LoadingState label="正在验证会话" className="min-h-screen" />;
+  if (session.isError) {
+    return (
+      <div className="grid min-h-screen place-items-center p-6">
+        <ErrorState
+          className="w-full max-w-md"
+          message={session.error instanceof Error ? session.error.message : "无法验证当前会话"}
+          onRetry={() => void session.refetch()}
+        />
+      </div>
+    );
+  }
   if (!session.data) return <LoadingState label="正在跳转登录" className="min-h-screen" />;
 
   const hostOnline = !overview.isError;

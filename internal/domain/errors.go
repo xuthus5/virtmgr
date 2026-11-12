@@ -4,6 +4,7 @@ import "errors"
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrTooManyAttempts    = errors.New("too many login attempts")
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrForbidden          = errors.New("forbidden")
 	ErrNotFound           = errors.New("not found")

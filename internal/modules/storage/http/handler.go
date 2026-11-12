@@ -1,9 +1,7 @@
 package storagehttp
 
 import (
-	"net"
 	stdhttp "net/http"
-	"strings"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -127,7 +125,7 @@ func (h *Handler) CreateVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Request: storageapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	})
 	if err != nil {
@@ -152,7 +150,7 @@ func (h *Handler) UploadVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Request: storageapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	})
 	if err != nil {
@@ -174,7 +172,7 @@ func (h *Handler) DeleteVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Request: storageapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	}); err != nil {
 		httpx.Error(w, r, err)
@@ -202,14 +200,6 @@ func mutationContext(r *stdhttp.Request, session domain.Session) storageapp.Muta
 	return storageapp.MutationContext{
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

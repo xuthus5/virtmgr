@@ -1,10 +1,8 @@
 package networkshttp
 
 import (
-	"net"
 	stdhttp "net/http"
 	"net/url"
-	"strings"
 
 	"virtmgr/internal/domain"
 	networksapp "virtmgr/internal/modules/networks/app"
@@ -188,14 +186,6 @@ func mutationContext(r *stdhttp.Request, session domain.Session) networksapp.Mut
 	return networksapp.MutationContext{
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

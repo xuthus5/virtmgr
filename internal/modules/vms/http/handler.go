@@ -1,7 +1,6 @@
 package vmshttp
 
 import (
-	"net"
 	stdhttp "net/http"
 	"strings"
 
@@ -327,7 +326,7 @@ func (h *Handler) Action(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Action:    action,
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -352,7 +351,7 @@ func (h *Handler) BatchAction(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		UUIDs:     spec.UUIDs,
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -479,14 +478,6 @@ func mutationContext(r *stdhttp.Request, session domain.Session) vmsapp.Mutation
 	return vmsapp.MutationContext{
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

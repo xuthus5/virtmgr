@@ -208,6 +208,7 @@ var (
 	snapshotPattern           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 	networkPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 	cloudInitPoolPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
+	storagePoolNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
 	hostDeviceNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	diskTargetPattern         = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
 	maxMemoryMiB              = uint64(1024 * 1024)

@@ -15,7 +15,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache License 2.0" /></a>
     <a href="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml/badge.svg" alt="Release workflow" /></a>
     <a href="https://github.com/xuthus5/virtmgr/releases/latest"><img src="https://img.shields.io/github/v/release/xuthus5/virtmgr" alt="Latest release" /></a>
-    <img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go" alt="Go 1.26+" />
+    <img src="https://img.shields.io/badge/Go-1.27.4%2B-00ADD8?logo=go" alt="Go 1.27.4+" />
     <img src="https://img.shields.io/badge/React-19-149ECA?logo=react" alt="React 19" />
   </p>
   <img src="docs/images/overview.png" alt="VirtMgr 总览页面" />
@@ -91,7 +91,7 @@ Go HTTP 服务与领域模块
 ### 前置条件
 
 - 已启用 KVM/QEMU 和 libvirt 的 Linux 宿主机
-- Go `1.26+`
+- Go `1.27.4+`（包含标准库 `net/http` 的安全修复）
 - Node.js `24+` 和 npm
 - C 编译器、`pkg-config` 和 libvirt 开发头文件，因为 libvirt Go binding 使用 CGO
 - 可通过 `qemu:///system` 访问 libvirt Socket，通常为 `/var/run/libvirt/libvirt-sock`
@@ -179,6 +179,8 @@ VIRTMGR_SESSION_TTL=8h
 VIRTMGR_COOKIE_SECURE=false
 VIRTMGR_READ_ONLY=true
 VIRTMGR_DEMO_MODE=false
+# 可选：仅这些反向代理地址/CIDR 可设置 X-Forwarded-* 请求头
+VIRTMGR_TRUSTED_PROXIES=
 ```
 
 `VIRTMGR_ADMIN_PASSWORD` 仅在数据库中没有任何用户时使用。首次成功启动后，应从环境文件中移除明文密码。环境文件应只允许 root 和 `virtmgr` 组读取。
@@ -217,7 +219,7 @@ VIRTMGR_COOKIE_SECURE=true
 
 **由 nginx、Caddy 或隧道终止 TLS**
 
-让 VirtMgr 继续监听 `127.0.0.1:8443`，反向代理全部应用路径，并为 Web VNC 保留 WebSocket Upgrade；浏览器通过 HTTPS 访问时，应设置 `VIRTMGR_COOKIE_SECURE=true`。
+让 VirtMgr 继续监听 `127.0.0.1:8443`，反向代理全部应用路径，并为 Web VNC 保留 WebSocket Upgrade；浏览器通过 HTTPS 访问时，应设置 `VIRTMGR_COOKIE_SECURE=true`。依赖 `X-Forwarded-For` 或 `X-Real-IP` 前，必须将反向代理地址或 CIDR 配置到 `VIRTMGR_TRUSTED_PROXIES`（例如 `127.0.0.1/32` 或 `10.0.0.0/8`）；不受信客户端无法伪造审计与限流使用的来源地址。HTTPS 部署的响应还会包含 `Strict-Transport-Security: max-age=31536000`。
 
 不要在没有 TLS、防火墙和强管理员密码的情况下，将可写模式的 VirtMgr 直接暴露到公网。
 
@@ -235,6 +237,7 @@ VIRTMGR_COOKIE_SECURE=true
 | `VIRTMGR_ADMIN_PASSWORD` | 未设置 | 初始管理员密码，仅在首次启动时需要 |
 | `VIRTMGR_SESSION_TTL` | `8h` | 登录会话有效期，必须为正的 Go Duration |
 | `VIRTMGR_COOKIE_SECURE` | `false` | 将会话 Cookie 标记为 `Secure`；HTTPS 部署应开启 |
+| `VIRTMGR_TRUSTED_PROXIES` | 空 | 允许提供 `X-Forwarded-For` 和 `X-Real-IP` 的反向代理 IP/CIDR，逗号分隔 |
 | `VIRTMGR_READ_ONLY` | `true` | 初始全局只读状态 |
 | `VIRTMGR_DEMO_MODE` | `false` | 使用 demo 后端，仅用于界面开发，生产环境禁止开启 |
 
@@ -242,7 +245,7 @@ VIRTMGR_COOKIE_SECURE=true
 
 ## 认证与权限
 
-VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中仅保存 token 哈希，浏览器只持有 `HttpOnly`、`SameSite=Strict` 的会话 Cookie。所有写请求还必须在 `X-CSRF-Token` 请求头中携带当前会话的 CSRF token。
+VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中仅保存 token 哈希，浏览器只持有 `HttpOnly`、`SameSite=Strict` 的会话 Cookie。所有写请求还必须在 `X-CSRF-Token` 请求头中携带当前会话的 CSRF token。失败登录会按用户名和来源地址持久化限流，超限返回 `429 TOO_MANY_ATTEMPTS`；未知用户和禁用账号也执行相同成本的密码哈希，以降低账号枚举信号。
 
 | 角色 | 读取 | 虚拟机生命周期与创建/克隆/备份 | 快照、存储、网络、模板 | 图形/串口控制台 | 编辑域 XML | 用户、设置、审计 |
 |---|---:|---:|---:|---:|---:|---:|

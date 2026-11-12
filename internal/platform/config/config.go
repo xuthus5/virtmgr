@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -9,18 +10,19 @@ import (
 )
 
 type Config struct {
-	Listen        string
-	TLSCertFile   string
-	TLSKeyFile    string
-	LibvirtURI    string
-	DatabasePath  string
-	HostName      string
-	SessionTTL    time.Duration
-	CookieSecure  bool
-	AdminUsername string
-	AdminPassword string
-	ReadOnly      bool
-	DemoMode      bool
+	Listen         string
+	TLSCertFile    string
+	TLSKeyFile     string
+	LibvirtURI     string
+	DatabasePath   string
+	HostName       string
+	SessionTTL     time.Duration
+	CookieSecure   bool
+	AdminUsername  string
+	AdminPassword  string
+	ReadOnly       bool
+	DemoMode       bool
+	TrustedProxies []netip.Prefix
 }
 
 func Load() (Config, error) {
@@ -28,18 +30,35 @@ func Load() (Config, error) {
 	if err != nil {
 		hostname = "libvirt-host"
 	}
+	cookieSecure, err := envBool("VIRTMGR_COOKIE_SECURE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	readOnly, err := envBool("VIRTMGR_READ_ONLY", true)
+	if err != nil {
+		return Config{}, err
+	}
+	demoMode, err := envBool("VIRTMGR_DEMO_MODE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	trustedProxies, err := envPrefixes("VIRTMGR_TRUSTED_PROXIES")
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
-		Listen:        env("VIRTMGR_LISTEN", "127.0.0.1:8443"),
-		TLSCertFile:   env("VIRTMGR_TLS_CERT_FILE", ""),
-		TLSKeyFile:    env("VIRTMGR_TLS_KEY_FILE", ""),
-		LibvirtURI:    env("VIRTMGR_LIBVIRT_URI", "qemu:///system"),
-		DatabasePath:  env("VIRTMGR_DATABASE_PATH", "/var/lib/virtmgr/virtmgr.db"),
-		HostName:      env("VIRTMGR_HOST_NAME", hostname),
-		AdminUsername: env("VIRTMGR_ADMIN_USERNAME", "admin"),
-		AdminPassword: os.Getenv("VIRTMGR_ADMIN_PASSWORD"),
-		CookieSecure:  envBool("VIRTMGR_COOKIE_SECURE", false),
-		ReadOnly:      envBool("VIRTMGR_READ_ONLY", true),
-		DemoMode:      envBool("VIRTMGR_DEMO_MODE", false),
+		Listen:         env("VIRTMGR_LISTEN", "127.0.0.1:8443"),
+		TLSCertFile:    env("VIRTMGR_TLS_CERT_FILE", ""),
+		TLSKeyFile:     env("VIRTMGR_TLS_KEY_FILE", ""),
+		LibvirtURI:     env("VIRTMGR_LIBVIRT_URI", "qemu:///system"),
+		DatabasePath:   env("VIRTMGR_DATABASE_PATH", "/var/lib/virtmgr/virtmgr.db"),
+		HostName:       env("VIRTMGR_HOST_NAME", hostname),
+		AdminUsername:  env("VIRTMGR_ADMIN_USERNAME", "admin"),
+		AdminPassword:  os.Getenv("VIRTMGR_ADMIN_PASSWORD"),
+		CookieSecure:   cookieSecure,
+		ReadOnly:       readOnly,
+		DemoMode:       demoMode,
+		TrustedProxies: trustedProxies,
 	}
 	ttl, err := time.ParseDuration(env("VIRTMGR_SESSION_TTL", "8h"))
 	if err != nil || ttl <= 0 {
@@ -72,14 +91,51 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func envBool(key string, fallback bool) bool {
+func envBool(key string, fallback bool) (bool, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
-		return fallback
+		return false, fmt.Errorf("%s must be true or false: %w", key, err)
 	}
-	return parsed
+	return parsed, nil
+}
+
+func envPrefixes(key string) ([]netip.Prefix, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			return nil, fmt.Errorf("%s contains an empty entry", key)
+		}
+		prefix, err := parsePrefix(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%s entry %q: %w", key, entry, err)
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
+}
+
+func parsePrefix(value string) (netip.Prefix, error) {
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	address = address.Unmap()
+	return netip.PrefixFrom(address, address.BitLen()), nil
 }

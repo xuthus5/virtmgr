@@ -1,10 +1,8 @@
 package usershttp
 
 import (
-	"net"
 	stdhttp "net/http"
 	"strconv"
-	"strings"
 
 	"virtmgr/internal/domain"
 	usersapp "virtmgr/internal/modules/users/app"
@@ -114,14 +112,6 @@ func mutationContext(r *stdhttp.Request, session domain.Session) usersapp.Mutati
 	return usersapp.MutationContext{
 		Session:   session,
 		RequestID: middleware.GetReqID(r.Context()),
-		SourceIP:  sourceIP(r),
+		SourceIP:  httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

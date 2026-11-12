@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	stdhttp "net/http"
+	"net/netip"
+	"strings"
 
 	"virtmgr/internal/domain"
 
@@ -34,7 +37,94 @@ func DecodeJSON(r *stdhttp.Request, value any) error {
 	if err := decoder.Decode(value); err != nil {
 		return errors.Join(domain.ErrInvalidInput, err)
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return errors.Join(domain.ErrInvalidInput, err)
+	}
 	return nil
+}
+
+func SourceIP(r *stdhttp.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func RealIP(trustedProxies []netip.Prefix) func(stdhttp.Handler) stdhttp.Handler {
+	return func(next stdhttp.Handler) stdhttp.Handler {
+		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if len(trustedProxies) == 0 || !trustedPeer(r.RemoteAddr, trustedProxies) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			client, ok := forwardedClientIP(r, trustedProxies)
+			if ok {
+				r.RemoteAddr = net.JoinHostPort(client.String(), "0")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func trustedPeer(remoteAddr string, trustedProxies []netip.Prefix) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return false
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	address = address.Unmap()
+	for _, prefix := range trustedProxies {
+		if prefixContains(prefix, address) {
+			return true
+		}
+	}
+	return false
+}
+
+func forwardedClientIP(r *stdhttp.Request, trustedProxies []netip.Prefix) (netip.Addr, bool) {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		hops := strings.Split(forwarded, ",")
+		for index := len(hops) - 1; index >= 0; index-- {
+			address, err := netip.ParseAddr(strings.TrimSpace(hops[index]))
+			if err != nil {
+				return netip.Addr{}, false
+			}
+			address = address.Unmap()
+			if index == 0 || !prefixContainsAny(trustedProxies, address) {
+				return address, true
+			}
+		}
+	}
+	realIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
+	if realIP == "" {
+		return netip.Addr{}, false
+	}
+	address, err := netip.ParseAddr(realIP)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return address.Unmap(), true
+}
+
+func prefixContainsAny(prefixes []netip.Prefix, address netip.Addr) bool {
+	for _, prefix := range prefixes {
+		if prefixContains(prefix, address) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixContains(prefix netip.Prefix, address netip.Addr) bool {
+	return prefix.IsValid() && address.IsValid() && prefix.Addr().Is4() == address.Is4() && prefix.Contains(address)
 }
 
 func Error(w stdhttp.ResponseWriter, r *stdhttp.Request, err error) {
@@ -46,6 +136,8 @@ func mapError(err error) (int, string, string) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidCredentials), errors.Is(err, domain.ErrUnauthorized):
 		return stdhttp.StatusUnauthorized, "UNAUTHORIZED", "用户名或密码错误"
+	case errors.Is(err, domain.ErrTooManyAttempts):
+		return stdhttp.StatusTooManyRequests, "TOO_MANY_ATTEMPTS", "登录尝试过于频繁，请稍后再试"
 	case errors.Is(err, domain.ErrForbidden):
 		return stdhttp.StatusForbidden, "FORBIDDEN", "没有执行该操作的权限"
 	case errors.Is(err, domain.ErrReadOnly):

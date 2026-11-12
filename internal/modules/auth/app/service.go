@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,7 +24,18 @@ type SessionRepository interface {
 	CreateSession(ctx context.Context, tokenHash, csrfToken string, userID int64, expiresAt time.Time) error
 	SessionByTokenHash(ctx context.Context, tokenHash string) (domain.Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+	RecordLoginAttempt(ctx context.Context, username, sourceIP string, success bool, attemptedAt time.Time) error
+	CountRecentFailedLoginAttempts(ctx context.Context, username, sourceIP string, since time.Time) (int, error)
+	CountRecentFailedLoginAttemptsByUsername(ctx context.Context, username string, since time.Time) (int, error)
+	ClearFailedLoginAttempts(ctx context.Context, username string) error
+	DeleteLoginAttemptsBefore(ctx context.Context, before time.Time) error
 }
+
+const (
+	loginFailureWindow       = 15 * time.Minute
+	loginFailureLimitPerPeer = 5
+	loginFailureLimitPerUser = 20
+)
 
 type Service struct {
 	users    UserRepository
@@ -64,14 +76,43 @@ func (s *Service) EnsureAdmin(ctx context.Context, username, password string) er
 	return err
 }
 
-func (s *Service) Login(ctx context.Context, username, password string) (LoginResult, error) {
+func (s *Service) Login(ctx context.Context, username, password, sourceIP string) (LoginResult, error) {
 	username = strings.TrimSpace(username)
+	sourceIP = strings.TrimSpace(sourceIP)
 	if username == "" || password == "" {
 		return LoginResult{}, domain.ErrInvalidCredentials
 	}
+	now := s.now()
+	since := now.Add(-loginFailureWindow)
+	peerFailures, err := s.sessions.CountRecentFailedLoginAttempts(ctx, username, sourceIP, since)
+	if err != nil {
+		return LoginResult{}, fmt.Errorf("count recent login failures: %w", err)
+	}
+	if peerFailures >= loginFailureLimitPerPeer {
+		return LoginResult{}, domain.ErrTooManyAttempts
+	}
+	userFailures, err := s.sessions.CountRecentFailedLoginAttemptsByUsername(ctx, username, since)
+	if err != nil {
+		return LoginResult{}, fmt.Errorf("count recent account login failures: %w", err)
+	}
+	if userFailures >= loginFailureLimitPerUser {
+		return LoginResult{}, domain.ErrTooManyAttempts
+	}
+
 	user, err := s.users.UserByUsername(ctx, username)
-	if err != nil || user.Disabled || !VerifyPassword(user.PasswordHash, password) {
-		return LoginResult{}, domain.ErrInvalidCredentials
+	passwordOK := false
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		// Hash a throwaway value with the same Argon2id cost as a real account so
+		// unknown usernames cannot be distinguished by response timing.
+		_, _ = HashPassword(password)
+	case err != nil:
+		return LoginResult{}, fmt.Errorf("lookup login user: %w", err)
+	default:
+		passwordOK = VerifyPassword(user.PasswordHash, password)
+	}
+	if err != nil || user.Disabled || !passwordOK {
+		return LoginResult{}, s.rejectLogin(ctx, username, sourceIP, now)
 	}
 	token, err := randomToken()
 	if err != nil {
@@ -81,7 +122,13 @@ func (s *Service) Login(ctx context.Context, username, password string) (LoginRe
 	if err != nil {
 		return LoginResult{}, err
 	}
-	expiresAt := s.now().Add(s.ttl)
+	if err := s.sessions.ClearFailedLoginAttempts(ctx, username); err != nil {
+		return LoginResult{}, fmt.Errorf("clear login failures: %w", err)
+	}
+	if err := s.sessions.RecordLoginAttempt(ctx, username, sourceIP, true, now); err != nil {
+		return LoginResult{}, fmt.Errorf("record successful login: %w", err)
+	}
+	expiresAt := now.Add(s.ttl)
 	if err := s.sessions.CreateSession(ctx, HashToken(token), csrf, user.ID, expiresAt); err != nil {
 		return LoginResult{}, err
 	}
@@ -94,6 +141,17 @@ func (s *Service) Login(ctx context.Context, username, password string) (LoginRe
 			ExpiresAt: expiresAt,
 		},
 	}, nil
+}
+
+func (s *Service) rejectLogin(ctx context.Context, username, sourceIP string, attemptedAt time.Time) error {
+	if err := s.sessions.RecordLoginAttempt(ctx, username, sourceIP, false, attemptedAt); err != nil {
+		return fmt.Errorf("record failed login: %w", err)
+	}
+	return domain.ErrInvalidCredentials
+}
+
+func (s *Service) CleanupLoginAttempts(ctx context.Context, before time.Time) error {
+	return s.sessions.DeleteLoginAttemptsBefore(ctx, before)
 }
 
 func (s *Service) Authenticate(ctx context.Context, token string) (domain.Session, error) {

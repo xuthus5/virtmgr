@@ -1,10 +1,8 @@
 package snapshotpolicieshttp
 
 import (
-	"net"
 	stdhttp "net/http"
 	"strconv"
-	"strings"
 
 	"virtmgr/internal/domain"
 	snapshotpoliciesapp "virtmgr/internal/modules/snapshotpolicies/app"
@@ -137,14 +135,6 @@ func parseID(r *stdhttp.Request) (int64, error) {
 
 func mutationContext(r *stdhttp.Request, session domain.Session) snapshotpoliciesapp.MutationContext {
 	return snapshotpoliciesapp.MutationContext{
-		Session: session, RequestID: middleware.GetReqID(r.Context()), SourceIP: sourceIP(r),
+		Session: session, RequestID: middleware.GetReqID(r.Context()), SourceIP: httpx.SourceIP(r),
 	}
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

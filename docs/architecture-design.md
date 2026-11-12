@@ -1104,7 +1104,9 @@ Tab 内容：
 - 会话 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`，空闲/绝对超时与 dosh 保持一致。
 - 写请求校验 CSRF token；全局只读模式直接拒绝所有写操作。
 - 控制台使用一次性 token，不在 URL 中暴露长期会话 Cookie。
-- 反向代理部署时校验 `X-Forwarded-*` 仅在可信代理配置下生效。
+- 失败登录按用户名和来源地址持久化限流：15 分钟内同一用户名/IP 失败 5 次或同一用户名跨来源失败 20 次后返回 `429 TOO_MANY_ATTEMPTS`，成功登录清除失败计数；未知用户和禁用账号执行相同 Argon2id 成本以降低账号枚举信号。
+- 反向代理部署时，只有 `VIRTMGR_TRUSTED_PROXIES` 列出的 IP/CIDR 才能提供 `X-Forwarded-For` / `X-Real-IP`；直连客户端伪造这些请求头不会影响审计或限流来源地址。
+- 原生 TLS 或 `VIRTMGR_COOKIE_SECURE=true` 的部署会返回 `Strict-Transport-Security: max-age=31536000`，其余响应头包含 CSP、`X-Content-Type-Options`、`X-Frame-Options`、Referrer Policy 和 Permissions Policy。
 
 ### 9.3 审计
 
@@ -1158,6 +1160,8 @@ SupplementaryGroups=libvirt
 ExecStart=/usr/local/bin/virtmgr
 Environment=VIRTMGR_LISTEN=:8443
 Environment=VIRTMGR_LIBVIRT_URI=qemu:///system
+Environment=VIRTMGR_TRUSTED_PROXIES=127.0.0.1/32
+Environment=VIRTMGR_COOKIE_SECURE=true
 Restart=on-failure
 
 [Install]

@@ -28,7 +28,7 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 	if command.UUID == "" || !vmNamePattern.MatchString(command.Spec.Name) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, domain.ErrInvalidInput)
 	}
-	if command.Spec.TargetPool != "" && !networkPattern.MatchString(command.Spec.TargetPool) {
+	if command.Spec.TargetPool != "" && !storagePoolNamePattern.MatchString(command.Spec.TargetPool) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, domain.ErrInvalidInput)
 	}
 	source, err := s.repository.GetVM(ctx, command.UUID)

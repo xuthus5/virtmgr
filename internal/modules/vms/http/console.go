@@ -77,7 +77,7 @@ func (h *Handler) OpenConsole(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Request: vmsapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	})
 	if err != nil {
@@ -104,7 +104,7 @@ func (h *Handler) OpenSerialConsole(w stdhttp.ResponseWriter, r *stdhttp.Request
 		Request: vmsapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	})
 	if err != nil {

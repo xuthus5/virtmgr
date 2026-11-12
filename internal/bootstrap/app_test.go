@@ -1877,6 +1877,27 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAddsHSTSOnlyForHTTPSDeployments(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		want    string
+	}{
+		{name: "enabled", enabled: true, want: "max-age=31536000"},
+		{name: "disabled", enabled: false, want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			securityHeaders(test.enabled)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+			if got := recorder.Header().Get("Strict-Transport-Security"); got != test.want {
+				t.Fatalf("Strict-Transport-Security = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMissingStaticAssetReturnsNotFound(t *testing.T) {
 	app := newTestApp(t)
 	request := httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)

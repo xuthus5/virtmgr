@@ -1,11 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/api/client";
+import { api, unauthorizedEvent } from "@/api/client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("api client", () => {
+  it("emits an unauthorized event when a protected request loses its session", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      error: { code: "UNAUTHORIZED", message: "用户名或密码错误" },
+    }), { status: 401, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+
+    await expect(api.overview()).rejects.toMatchObject({ status: 401, code: "UNAUTHORIZED" });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect((dispatch.mock.calls[0][0] as Event).type).toBe(unauthorizedEvent);
+  });
+
+  it("does not emit the global unauthorized event for the session endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      error: { code: "UNAUTHORIZED", message: "用户名或密码错误" },
+    }), { status: 401, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const dispatch = vi.spyOn(window, "dispatchEvent");
+
+    await expect(api.session()).rejects.toMatchObject({ status: 401 });
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("stores the session CSRF token and sends it on VM actions", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

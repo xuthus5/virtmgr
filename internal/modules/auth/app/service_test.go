@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,6 +33,14 @@ func (m *memoryUserRepository) UserByUsername(_ context.Context, username string
 type memorySessionRepository struct {
 	sessions map[string]domain.Session
 	users    *memoryUserRepository
+	attempts []memoryLoginAttempt
+}
+
+type memoryLoginAttempt struct {
+	username    string
+	sourceIP    string
+	success     bool
+	attemptedAt time.Time
 }
 
 func (m *memorySessionRepository) CreateSession(_ context.Context, tokenHash, csrfToken string, userID int64, expiresAt time.Time) error {
@@ -54,6 +63,48 @@ func (m *memorySessionRepository) SessionByTokenHash(_ context.Context, tokenHas
 }
 func (m *memorySessionRepository) DeleteSession(_ context.Context, tokenHash string) error {
 	delete(m.sessions, tokenHash)
+	return nil
+}
+func (m *memorySessionRepository) RecordLoginAttempt(_ context.Context, username, sourceIP string, success bool, attemptedAt time.Time) error {
+	m.attempts = append(m.attempts, memoryLoginAttempt{username: username, sourceIP: sourceIP, success: success, attemptedAt: attemptedAt})
+	return nil
+}
+func (m *memorySessionRepository) CountRecentFailedLoginAttempts(_ context.Context, username, sourceIP string, since time.Time) (int, error) {
+	count := 0
+	for _, attempt := range m.attempts {
+		if !attempt.success && attempt.username == username && attempt.sourceIP == sourceIP && !attempt.attemptedAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+func (m *memorySessionRepository) CountRecentFailedLoginAttemptsByUsername(_ context.Context, username string, since time.Time) (int, error) {
+	count := 0
+	for _, attempt := range m.attempts {
+		if !attempt.success && attempt.username == username && !attempt.attemptedAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+func (m *memorySessionRepository) ClearFailedLoginAttempts(_ context.Context, username string) error {
+	filtered := m.attempts[:0]
+	for _, attempt := range m.attempts {
+		if attempt.username != username || attempt.success {
+			filtered = append(filtered, attempt)
+		}
+	}
+	m.attempts = filtered
+	return nil
+}
+func (m *memorySessionRepository) DeleteLoginAttemptsBefore(_ context.Context, before time.Time) error {
+	filtered := m.attempts[:0]
+	for _, attempt := range m.attempts {
+		if !attempt.attemptedAt.Before(before) {
+			filtered = append(filtered, attempt)
+		}
+	}
+	m.attempts = filtered
 	return nil
 }
 
@@ -92,7 +143,7 @@ func TestLoginAuthenticateLogout(t *testing.T) {
 	if err := service.EnsureAdmin(context.Background(), "admin", "secret"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Login(context.Background(), "admin", "secret")
+	result, err := service.Login(context.Background(), "admin", "secret", "192.0.2.10")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -119,8 +170,54 @@ func TestLoginRejectsBadPassword(t *testing.T) {
 	if err := service.EnsureAdmin(context.Background(), "admin", "secret"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Login(context.Background(), "admin", "wrong"); !errors.Is(err, domain.ErrInvalidCredentials) {
+	if _, err := service.Login(context.Background(), "admin", "wrong", "192.0.2.10"); !errors.Is(err, domain.ErrInvalidCredentials) {
 		t.Fatalf("Login() error = %v", err)
+	}
+}
+
+func TestLoginRateLimitsFailuresPerSourceAndAccount(t *testing.T) {
+	service, _, _ := newTestService(t)
+	if err := service.EnsureAdmin(context.Background(), "admin", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < loginFailureLimitPerPeer; attempt++ {
+		if _, err := service.Login(context.Background(), "admin", "wrong", "192.0.2.20"); !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Fatalf("attempt %d error = %v", attempt+1, err)
+		}
+	}
+	if _, err := service.Login(context.Background(), "admin", "secret", "192.0.2.20"); !errors.Is(err, domain.ErrTooManyAttempts) {
+		t.Fatalf("rate-limited login error = %v", err)
+	}
+	if _, err := service.Login(context.Background(), "admin", "secret", "192.0.2.21"); err != nil {
+		t.Fatalf("login from another source error = %v", err)
+	}
+
+	for attempt := 0; attempt < loginFailureLimitPerUser; attempt++ {
+		sourceIP := "198.51.100." + strconv.Itoa(attempt)
+		if _, err := service.Login(context.Background(), "admin", "wrong", sourceIP); !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Fatalf("account attempt %d error = %v", attempt+1, err)
+		}
+	}
+	if _, err := service.Login(context.Background(), "admin", "secret", "203.0.113.1"); !errors.Is(err, domain.ErrTooManyAttempts) {
+		t.Fatalf("account-wide rate-limited login error = %v", err)
+	}
+}
+
+func TestLoginSuccessClearsFailures(t *testing.T) {
+	service, _, _ := newTestService(t)
+	if err := service.EnsureAdmin(context.Background(), "admin", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < loginFailureLimitPerPeer-1; attempt++ {
+		_, _ = service.Login(context.Background(), "admin", "wrong", "192.0.2.30")
+	}
+	if _, err := service.Login(context.Background(), "admin", "secret", "192.0.2.30"); err != nil {
+		t.Fatalf("successful login error = %v", err)
+	}
+	for attempt := 0; attempt < loginFailureLimitPerPeer-1; attempt++ {
+		if _, err := service.Login(context.Background(), "admin", "wrong", "192.0.2.30"); !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Fatalf("post-success attempt %d error = %v", attempt+1, err)
+		}
 	}
 }
 

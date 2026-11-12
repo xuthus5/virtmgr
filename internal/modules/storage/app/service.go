@@ -110,7 +110,7 @@ type UploadVolumeCommand struct {
 
 var (
 	poolNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
-	volumeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$`)
+	volumeNamePattern = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f]{1,127}$`)
 	volumeFormats     = map[string]string{"qcow2": ".qcow2", "raw": ".raw"}
 	minVolumeBytes    = uint64(1 << 20)
 	maxVolumeBytes    = uint64(16 << 40)
@@ -213,7 +213,7 @@ func (s *Service) DeletePool(ctx context.Context, command DeletePoolCommand) err
 
 func (s *Service) ListVolumes(ctx context.Context, poolName string) (domain.StorageVolumeList, error) {
 	poolName = strings.TrimSpace(poolName)
-	if poolName == "" {
+	if !poolNamePattern.MatchString(poolName) {
 		return domain.StorageVolumeList{}, domain.ErrInvalidInput
 	}
 	volumes, err := s.repository.ListStorageVolumes(ctx, poolName)
@@ -235,7 +235,7 @@ func (s *Service) CreateVolume(ctx context.Context, command CreateVolumeCommand)
 	if s.isReadOnly() {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+command.Spec.Name, storageVolumeSpecDetail(command.Spec), domain.ErrReadOnly)
 	}
-	if command.Pool == "" {
+	if !poolNamePattern.MatchString(command.Pool) {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", "/"+command.Spec.Name, storageVolumeSpecDetail(command.Spec), domain.ErrInvalidInput)
 	}
 	spec, err := normalizeVolumeCreateSpec(command.Spec)
@@ -267,7 +267,7 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 	if s.isReadOnly() {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrReadOnly)
 	}
-	if command.Pool == "" || !volumeNamePattern.MatchString(command.Name) || command.Name == "." || command.Name == ".." || !strings.HasSuffix(strings.ToLower(command.Name), ".iso") {
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) || !strings.HasSuffix(strings.ToLower(command.Name), ".iso") {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
 	if command.Body == nil || command.Size <= 0 {
@@ -328,7 +328,7 @@ func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand)
 	if s.isReadOnly() {
 		return s.mutationFailure(ctx, command.Request, "storage.volume.delete", command.Pool+"/"+command.Name, detail, domain.ErrReadOnly)
 	}
-	if command.Pool == "" || !volumeNamePattern.MatchString(command.Name) || command.Name == "." || command.Name == ".." {
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) {
 		return s.mutationFailure(ctx, command.Request, "storage.volume.delete", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
 	if err := s.repository.DeleteStorageVolume(ctx, command.Pool, command.Name); err != nil {
@@ -350,7 +350,7 @@ func normalizeVolumeCreateSpec(spec domain.StorageVolumeCreateSpec) (domain.Stor
 	if !ok {
 		return domain.StorageVolumeCreateSpec{}, fmt.Errorf("%w: volume format must be qcow2 or raw", domain.ErrInvalidInput)
 	}
-	if !volumeNamePattern.MatchString(spec.Name) || spec.Name == "." || spec.Name == ".." {
+	if !validVolumeName(spec.Name) {
 		return domain.StorageVolumeCreateSpec{}, fmt.Errorf("%w: invalid storage volume name", domain.ErrInvalidInput)
 	}
 	if !strings.HasSuffix(strings.ToLower(spec.Name), extension) {
@@ -360,6 +360,10 @@ func normalizeVolumeCreateSpec(spec domain.StorageVolumeCreateSpec) (domain.Stor
 		return domain.StorageVolumeCreateSpec{}, fmt.Errorf("%w: capacity must be between %d and %d bytes", domain.ErrInvalidInput, minVolumeBytes, maxVolumeBytes)
 	}
 	return spec, nil
+}
+
+func validVolumeName(name string) bool {
+	return name != "." && name != ".." && volumeNamePattern.MatchString(name)
 }
 
 func normalizeStoragePoolCreateSpec(spec domain.StoragePoolCreateSpec) (domain.StoragePoolCreateSpec, error) {

@@ -1,9 +1,7 @@
 package settingshttp
 
 import (
-	"net"
 	stdhttp "net/http"
-	"strings"
 
 	"virtmgr/internal/domain"
 	settingsapp "virtmgr/internal/modules/settings/app"
@@ -56,7 +54,7 @@ func (h *Handler) Update(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Request: settingsapp.MutationContext{
 			Session:   session,
 			RequestID: middleware.GetReqID(r.Context()),
-			SourceIP:  sourceIP(r),
+			SourceIP:  httpx.SourceIP(r),
 		},
 	})
 	if err != nil {
@@ -64,12 +62,4 @@ func (h *Handler) Update(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, result)
-}
-
-func sourceIP(r *stdhttp.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err != nil {
-		return strings.TrimSpace(r.RemoteAddr)
-	}
-	return host
 }

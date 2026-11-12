@@ -186,3 +186,54 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) error 
 	}
 	return nil
 }
+
+func (s *Store) RecordLoginAttempt(ctx context.Context, username, sourceIP string, success bool, attemptedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO login_attempts(username, source_ip, attempted_at, success) VALUES (?, ?, ?, ?)`,
+		username, sourceIP, attemptedAt.UTC().Unix(), boolInt(success),
+	)
+	if err != nil {
+		return fmt.Errorf("record login attempt: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) CountRecentFailedLoginAttempts(ctx context.Context, username, sourceIP string, since time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM login_attempts
+		WHERE username = ? AND source_ip = ? AND success = 0 AND attempted_at >= ?`,
+		username, sourceIP, since.UTC().Unix(),
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count recent failed login attempts: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Store) CountRecentFailedLoginAttemptsByUsername(ctx context.Context, username string, since time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM login_attempts
+		WHERE username = ? AND success = 0 AND attempted_at >= ?`,
+		username, since.UTC().Unix(),
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count recent failed account login attempts: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Store) ClearFailedLoginAttempts(ctx context.Context, username string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE username = ? AND success = 0`, username); err != nil {
+		return fmt.Errorf("clear failed login attempts: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DeleteLoginAttemptsBefore(ctx context.Context, before time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE attempted_at < ?`, before.UTC().Unix()); err != nil {
+		return fmt.Errorf("delete old login attempts: %w", err)
+	}
+	return nil
+}

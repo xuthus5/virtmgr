@@ -156,6 +156,9 @@ func TestListVolumesSortsAndValidates(t *testing.T) {
 	if _, err := service.ListVolumes(context.Background(), " "); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("empty pool error = %v", err)
 	}
+	if _, err := service.ListVolumes(context.Background(), "../default"); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("invalid pool error = %v", err)
+	}
 }
 
 func TestStorageErrorsPropagate(t *testing.T) {
@@ -231,6 +234,21 @@ func TestCreateVolumeRejectsInvalidSpecs(t *testing.T) {
 				t.Fatalf("audit events = %+v", audit.events)
 			}
 		})
+	}
+}
+
+func TestCreateVolumeRejectsInvalidPoolName(t *testing.T) {
+	repository := &fakeRepository{}
+	_, err := New(repository, nil, false).CreateVolume(context.Background(), CreateVolumeCommand{
+		Pool:    "../default",
+		Spec:    domain.StorageVolumeCreateSpec{Name: "data-01.qcow2", Format: "qcow2", CapacityBytes: 1 << 30},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("CreateVolume() error = %v", err)
+	}
+	if repository.createdPool != "" {
+		t.Fatal("invalid pool reached repository")
 	}
 }
 
@@ -311,6 +329,21 @@ func TestUploadVolumeStreamsAndAudits(t *testing.T) {
 	}
 }
 
+func TestUploadVolumeAllowsSafeSpacesInName(t *testing.T) {
+	repository := &fakeRepository{}
+	size := int64(minVolumeBytes)
+	result, err := New(repository, nil, false).UploadVolume(context.Background(), UploadVolumeCommand{
+		Pool: "iso-store", Name: "Ubuntu 24.04 installer.iso", Size: size, Body: bytes.NewReader(make([]byte, size)),
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if err != nil {
+		t.Fatalf("UploadVolume() error = %v", err)
+	}
+	if repository.uploadSpec.Name != "Ubuntu 24.04 installer.iso" || result.Name != "Ubuntu 24.04 installer.iso" {
+		t.Fatalf("upload spec=%+v result=%+v", repository.uploadSpec, result)
+	}
+}
+
 func TestUploadVolumeRejectsInvalidRequests(t *testing.T) {
 	validBody := func() io.Reader { return bytes.NewReader(make([]byte, minVolumeBytes)) }
 	for _, test := range []struct {
@@ -323,6 +356,7 @@ func TestUploadVolumeRejectsInvalidRequests(t *testing.T) {
 		{name: "read only", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: int64(minVolumeBytes), Body: validBody(), Request: MutationContext{Session: operatorSession()}}, readOnly: true, want: domain.ErrReadOnly},
 		{name: "not iso", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.img", Size: int64(minVolumeBytes), Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "path traversal", command: UploadVolumeCommand{Pool: "iso-store", Name: "../install.iso", Size: int64(minVolumeBytes), Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
+		{name: "invalid pool", command: UploadVolumeCommand{Pool: "../iso-store", Name: "install.iso", Size: int64(minVolumeBytes), Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "missing pool", command: UploadVolumeCommand{Name: "install.iso", Size: int64(minVolumeBytes), Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "missing body", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: int64(minVolumeBytes), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "missing size", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
@@ -394,6 +428,7 @@ func TestDeleteVolumeRejectsInvalidRequests(t *testing.T) {
 		{name: "viewer", command: DeleteVolumeCommand{Pool: "default", Name: "data.qcow2"}, want: domain.ErrForbidden},
 		{name: "read only", command: DeleteVolumeCommand{Pool: "default", Name: "data.qcow2", Request: MutationContext{Session: operatorSession()}}, readOnly: true, want: domain.ErrReadOnly},
 		{name: "path traversal", command: DeleteVolumeCommand{Pool: "default", Name: "../data.qcow2", Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
+		{name: "invalid pool", command: DeleteVolumeCommand{Pool: "../default", Name: "data.qcow2", Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "empty pool", command: DeleteVolumeCommand{Name: "data.qcow2", Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
