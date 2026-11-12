@@ -12,6 +12,15 @@ function sample(timestamp: number): ResourceMetrics {
     networkTxBytes: 0,
     networkRxBytesPerSecond: 0,
     networkTxBytesPerSecond: 0,
+    diskReadBytes: 0,
+    diskWriteBytes: 0,
+    diskReadOperations: 0,
+    diskWriteOperations: 0,
+    diskReadBytesPerSecond: 0,
+    diskWriteBytesPerSecond: 0,
+    diskReadOperationsPerSecond: 0,
+    diskWriteOperationsPerSecond: 0,
+    interfaces: [],
   };
 }
 

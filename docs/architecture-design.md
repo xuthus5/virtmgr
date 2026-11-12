@@ -48,7 +48,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - libvirt 只读能力：宿主机信息、虚拟机列表、详情、磁盘、网卡、VNC 图形信息和当前允许动作。
 - 物理主机页读取宿主机、存储池、虚拟网络和虚拟机分配汇总，并展示异常提醒与容量使用率。
 - 物理主机设备：`GET /host/devices` 读取 libvirt 节点设备，解析 PCI、USB、网络、块设备和 DRM 能力；主机页展示设备地址、厂商/型号、驱动和在线状态。
-- 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件与安全启动状态进入创建审计，并从运行态域 XML 回读。
+- 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件、安全启动和硬件建模参数进入创建审计，并从运行态域 XML 回读。
 - Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
 - 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径和启动策略。新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
@@ -62,18 +62,18 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - CPU / 内存写能力：详情页通过 `PATCH /vms/{uuid}/resources` 调整持久域规格。运行、阻塞、暂停和挂起域使用 `SetVcpusFlags` / `SetMemoryFlags` 的 `LIVE|CONFIG`，目标不能超过当前活动最大值；关机或异常停止域使用 `CONFIG`，扩容时先更新持久最大值。临时域、不支持的瞬态状态、Viewer 和只读模式拒绝修改，成功/失败均记录 `vm.resources.update` 审计。
 - 磁盘扩容写能力：详情页通过 `PATCH /vms/{uuid}/disks/{target}` 扩容可写文件型 qcow2/raw 数据盘，请求体为字节容量。仅支持扩大、不支持缩容；容量通过 `Domain.GetBlockInfo` 回读，运行域使用 `Domain.BlockResize`，关机域优先使用 `StorageVol.Resize`，目录卷内未单独注册的嵌套文件使用临时目录池调整后清理。CD-ROM、只读盘、非文件后端、临时域、Viewer 和只读模式拒绝修改，成功/失败均记录 `vm.disk.resize` 审计。宿主机容量扩展不替代客户机内分区/文件系统扩容。
 - 服务端按 `viewer` / `operator` / `admin` 和全局只读模式判定权限，动作按 libvirt 当前状态校验并写审计。
-- 用户管理：管理员可创建本地账号、调整角色、禁用/启用用户；用户写操作同样记录审计，只读模式拒绝用户写操作。
-- 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）创建、启动/停止、刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO，以及删除未被虚拟机引用的卷。
+- 用户与账号安全：管理员可创建本地账号、调整角色、禁用/启用用户、重置其他账号密码并查看/撤销登录会话；所有本地账号可验证当前密码后自助改密。改密保留当前会话并撤销其他会话，管理员重置会撤销目标账号全部会话；密码和会话写操作均记录审计，只读模式拒绝用户写操作。
+- 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）创建、启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。
 - 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离网络、启停网络并删除未激活网络。模式、地址推导和删除约束由后端校验，写操作记录审计。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
-- 任务中心基础：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端每 5 秒刷新，展示进度、步骤、失败原因和关联虚拟机。ISO 上传已作为第一个真实生产者，在流式读取时更新任务进度。
+- 任务中心基础：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端每 5 秒刷新，展示进度、步骤、失败原因和关联虚拟机。存储卷上传已作为第一个真实生产者，在流式读取时更新任务进度。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
 - 控制台：Operator/Admin 可在虚拟机详情内嵌或独立窗口中打开 noVNC 与 xterm.js；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD` 或 console stream，并在打开时记录审计。
 - 域 XML：`GET /api/v1/vms/{uuid}/xml?format=live|config` 默认 live，使用 `DOMAIN_XML_INACTIVE` 读取 config；Admin 可通过 `PUT /api/v1/vms/{uuid}/xml` 在可写模式编辑持久配置，服务端锁定名称/UUID、拒绝 QEMU hook 命名空间，并以 `DOMAIN_DEFINE_VALIDATE` 校验后定义，审计不保存 XML 正文。
 - 虚拟机配置导出：`GET /api/v1/vms/{uuid}/export` 返回稳定版本化的 JSON 包，包含虚拟机详情、持久配置 XML、活动域 live XML、快照和磁盘/网络元数据；只读能力不受 Viewer 或全局只读模式限制，但记录 `vm.export` 审计，不包含磁盘镜像数据。
 - Playwright 使用只读和可写两套严格串行配置；可写场景只连接有状态 demo 后端，不对真实虚拟机执行写操作。
 
-P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO 上传已实现；ISO 使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、`.iso` 文件名和 1 MiB - 16 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` 模式和 IPv4 子网，子网至少为 `/29`，活跃网络必须先停止才能删除。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
+P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` 模式和 IPv4 子网，子网至少为 `/29`，活跃网络必须先停止才能删除。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
 
 ## 2. 总体架构
 
@@ -417,7 +417,7 @@ type Backend interface {
 ### 2.4 状态与任务模型
 
 - VM、存储池、网络、快照状态实时来自 libvirt，不写数据库副本。
-- 创建 VM、克隆、冷备份、ISO 上传、快照回滚、批量操作等长任务落 SQLite `tasks` 表。当前已实现任务查询、状态恢复、页面轮询刷新，以及 ISO 流式上传、VM 克隆和虚拟机冷备份的真实进度更新；后续长任务生产者通过同一任务模型更新进度，SSE 任务流作为增强项。
+- 创建 VM、克隆、冷备份、存储卷上传、快照回滚、批量操作等长任务落 SQLite `tasks` 表。当前已实现任务查询、状态恢复、页面轮询刷新，以及存储卷流式上传、VM 克隆和虚拟机冷备份的真实进度更新；后续长任务生产者通过同一任务模型更新进度，SSE 任务流作为增强项。
 - 短生命周期 libvirt 事件由事件采集器统一转换为业务事件，进入进程内事件总线，再通过 SSE 推送给前端；事件总线只保留最近 500 条，进程重启后清空。
 - 前端 TanStack Query 只缓存查询结果；收到 SSE 后按资源 key 失效，不自行推测最终状态。
 
@@ -672,6 +672,10 @@ type PassthroughDevice = {
 | `GET` | `/users` | 本地用户列表（管理员） |
 | `POST` | `/users` | 创建本地用户（管理员，需 CSRF） |
 | `PATCH` | `/users/{id}` | 更新角色和启用状态（管理员，需 CSRF） |
+| `PUT` | `/users/me/password` | 验证当前密码并修改自己的密码；保留当前会话并撤销其他会话（需 CSRF） |
+| `POST` | `/users/{id}/password` | 管理员重置目标账号密码并撤销其全部会话（需 CSRF） |
+| `GET` | `/users/{id}/sessions` | 管理员查看目标账号的有效登录会话 |
+| `DELETE` | `/users/{id}/sessions/{sessionId}` | 管理员撤销目标账号指定会话（需 CSRF） |
 
 ### 5.2 总览与宿主机
 
@@ -684,7 +688,7 @@ type PassthroughDevice = {
 
 `/host/devices` 当前已实现：后端枚举 `pci`、`usb`、`usb_device`、`net`、`storage`、`drm` 能力，读取设备 XML、父设备、能力、在线和持久状态。设备热插拔导致单个设备查找或 XML 解析失败时跳过该设备；存在部分结果时仍返回其余设备，全部失败时返回错误。
 
-`/host/metrics` 和 `/vms/{uuid}/metrics` 每次请求读取 libvirt 累计计数，并由进程内采样服务与上一请求对比计算 CPU 使用率和网络字节速率。首次采样速率为 0；计数器回退时速率降级为 0；CPU 使用率限制在 0-100%。宿主机网卡计数来自 `/proc/net/dev` 的物理接口，虚拟机网卡计数汇总域 XML 中各接口 target 设备。该实现不在 SQLite 保存历史，前端每 2 秒轮询并保留最近 30 个点，符合首版单进程部署模型。
+`/host/metrics` 和 `/vms/{uuid}/metrics` 每次请求读取 libvirt 累计计数，并由进程内采样服务与上一请求对比计算 CPU 使用率和网络字节速率。虚拟机指标还读取每个可写数据盘的 `BlockStats` 和各网卡 `InterfaceStats`，返回累计字节/操作数以及相邻采样的吞吐和 IOPS；分网卡速率按接口 target 名称匹配。首次采样速率为 0；计数器回退时速率降级为 0；CPU 使用率限制在 0-100%。宿主机网卡计数来自 `/proc/net/dev` 的物理接口，虚拟机网卡汇总域 XML 中各接口 target 设备。该实现不在 SQLite 保存历史，前端每 2 秒轮询并保留最近 30 个点，符合首版单进程部署模型。
 
 ### 5.3 虚拟机
 
@@ -703,7 +707,7 @@ type PassthroughDevice = {
 | `GET` | `/vms/{uuid}/xml?format=live|config` | 只读 XML |
 | `GET` | `/vms/{uuid}/export` | 下载配置与元数据 JSON 包（已实现） |
 | `PUT` | `/vms/{uuid}/xml` | Admin 编辑持久 XML，先 validate 再 define（已实现） |
-| `GET` | `/vms/{uuid}/metrics` | vCPU、内存和虚拟网卡的当前采样与相邻采样速率（已实现） |
+| `GET` | `/vms/{uuid}/metrics` | vCPU、内存、虚拟磁盘吞吐/IOPS 和分网卡吞吐的当前采样与相邻采样速率（已实现） |
 | `GET` | `/vms/{uuid}/snapshots` | 快照列表 |
 | `POST` | `/vms/{uuid}/snapshots` | 创建快照 |
 | `POST` | `/vms/{uuid}/snapshots/{name}/revert` | 回滚快照 |
@@ -723,7 +727,7 @@ type PassthroughDevice = {
 
 动作接口必须由后端基于当前状态返回 409 `VM_STATE_CONFLICT`，而不是只靠前端隐藏按钮。
 
-`POST /vms` 当前支持 `firmware: "bios" | "uefi"` 和 `secureBoot: boolean`；省略或空值规范化为 `bios`，未知固件以及 `secureBoot=true` + BIOS 返回 `400 INVALID_INPUT`。UEFI 域使用 `<os firmware='efi'>` 与 `<loader secure='yes|no'/>`，由 libvirt 结合宿主机 firmware 配置选择 OVMF 代码和 NVRAM 模板；平台不硬编码发行版固件路径。
+`POST /vms` 当前支持 `firmware: "bios" | "uefi"` 和 `secureBoot: boolean`；省略或空值规范化为 `bios`，未知固件以及 `secureBoot=true` + BIOS 返回 `400 INVALID_INPUT`。创建请求还支持 `diskBus: "virtio" | "sata" | "scsi"`、`nicModel: "virtio" | "e1000"` 和 `bootOrder: "auto" | "disk-first" | "cdrom-first"`；空值分别规范化为 `virtio`、`virtio` 和 `auto`，`cdrom-first` 必须提供 ISO。UEFI 域使用 `<os firmware='efi'>` 与 `<loader secure='yes|no'/>`，由 libvirt 结合宿主机 firmware 配置选择 OVMF 代码和 NVRAM 模板；平台不硬编码发行版固件路径。
 
 创建请求还可携带 `cloudInit: { "userData": "...", "pool": "default" }`。后端校验用户数据非空、无 NUL 且不超过 64 KiB，目标池必须是活跃 pool；随后通过 libvirt Storage Volume API 创建 `<vm-name>-cidata.iso` 并上传纯 Go 生成的 NoCloud ISO。域 XML 以只读 CD-ROM 和 `<serial>cloud-init</serial>` 挂载，虚拟机详情从运行态 XML 回读 `cloudInit` 状态。seed 创建或域定义失败时回滚卷和域，避免留下只完成一半的资源。
 
@@ -758,7 +762,7 @@ type PassthroughDevice = {
 - `DELETE /api/v1/storage/pools/{pool}`（需 CSRF；仅未激活池可删除定义）
 - `GET /api/v1/storage/pools/{pool}/volumes`（仅活跃池；未激活池返回 `503 UNAVAILABLE`）
 - `POST /api/v1/storage/pools/{pool}/volumes`（仅活跃池；需 CSRF，支持 `qcow2` / `raw`，重名返回 `409 CONFLICT`）
-- `POST /api/v1/storage/pools/{pool}/volumes/upload?name={iso}`（仅活跃池；需 CSRF 和 `Content-Length`；以原始字节流创建 raw ISO 卷）
+- `POST /api/v1/storage/pools/{pool}/volumes/upload?name={file}`（仅活跃池；需 CSRF 和 `Content-Length`；支持 `.iso`、`.qcow2`、`.raw`，以原始字节流写入，最大 256 GiB）
 - `DELETE /api/v1/storage/pools/{pool}/volumes/{volume}`（仅活跃池；需 CSRF；被虚拟机引用返回 `409 VOLUME_IN_USE`）
 - `GET /api/v1/networks`（虚拟网络列表）
 - `GET /api/v1/networks/{name}/leases`（活跃网络的 DHCP 租约；未激活网络返回空列表）
@@ -778,7 +782,7 @@ type PassthroughDevice = {
 | `DELETE` | `/storage/pools/{name}` | 删除未激活池定义（已实现；不删除磁盘文件） |
 | `GET` | `/storage/pools/{name}/volumes` | 卷列表 |
 | `POST` | `/storage/pools/{name}/volumes` | 创建 qcow2/raw 卷 |
-| `POST` | `/storage/pools/{name}/volumes/upload` | 流式上传 ISO（已实现同步流式写入） |
+| `POST` | `/storage/pools/{name}/volumes/upload` | 流式上传 ISO/qcow2/raw 镜像（已实现同步流式写入） |
 | `DELETE` | `/storage/pools/{name}/volumes/{volume}` | 删除未挂载卷 |
 | `GET` | `/networks` | 虚拟网络与宿主机桥 |
 | `POST` | `/networks` | 创建网络 |
@@ -798,7 +802,8 @@ type PassthroughDevice = {
 | `GET` | `/tasks?status=running&page=1&pageSize=50` | 任务列表（已实现）；状态可选 queued/running/succeeded/failed/interrupted |
 | `GET` | `/tasks/{id}` | 单任务详情（已实现） |
 | `GET` | `/tasks/stream` | 任务进度 SSE（目标能力，当前页面使用 5 秒轮询） |
-| `GET` | `/audit-events` | 审计查询；支持 `actor` / `action` / `targetKind` / `result` 筛选和 `page` / `pageSize` 分页，仅管理员 |
+| `GET` | `/audit-events` | 审计查询；支持 `actor` / `action` / `targetKind` / `targetId` / `result` / `from` / `to` 筛选和 `page` / `pageSize` 分页，仅管理员 |
+| `GET` | `/audit-events/export?format=json|csv` | 按相同筛选条件导出最多 50,000 条审计记录并记录 `audit.export`，仅管理员 |
 | `GET` | `/settings` | 可管理设置 |
 | `PUT` | `/settings` | 更新设置（管理员，需 CSRF；当前支持 `readOnly`，已实现） |
 | `GET` | `/healthz` | 进程存活 |
@@ -806,7 +811,7 @@ type PassthroughDevice = {
 
 事件结构包含 `id`、`occurredAt`、`source`、`kind`、`severity`、`targetKind`、`targetId`、`targetName`、`message` 和可选 `detail`。当前已映射域定义/删除、启动、停止、关机、暂停、恢复、崩溃和状态变化，以及快照、存储卷和虚拟网络写操作。后续 `scope=vm:{uuid}` 过滤属于目标能力，当前先提供全局流，由前端按目标字段筛选。
 
-任务结构包含 `id`、`kind`、`targetKind`、`targetId`、`status`、`progress`、`step`、`error`、`actor`、`createdAt` 和 `updatedAt`。任务记录与审计职责不同：任务表达进度和结果，审计表达谁执行了什么操作；二者可关联同一个资源，但不互相替代。当前 ISO 上传通过 `storage.volume.upload` 任务记录流式进度，有界 worker pool 与可取消任务仍属于后续增强。
+任务结构包含 `id`、`kind`、`targetKind`、`targetId`、`status`、`progress`、`step`、`error`、`actor`、`createdAt` 和 `updatedAt`。任务记录与审计职责不同：任务表达进度和结果，审计表达谁执行了什么操作；二者可关联同一个资源，但不互相替代。当前存储卷上传通过 `storage.volume.upload` 任务记录流式进度，有界 worker pool 与可取消任务仍属于后续增强。
 
 运行时只读模式保存在 SQLite `settings` 表的 `read_only` 键中。首次启动使用 `VIRTMGR_READ_ONLY` 初始化，之后以数据库持久化值为准；管理员通过 `PUT /settings` 切换，模式变化会立即作用于会话响应以及虚拟机、存储、网络和用户写服务。设置更新不受当前只读状态阻塞，但必须由管理员通过 CSRF 校验执行，并写入 `settings.readonly.update` 审计。
 
@@ -1094,7 +1099,7 @@ Tab 内容：
 | 角色 | 权限 |
 |---|---|
 | Viewer | 只读查看、事件、XML 只读；不提供可交互控制台 |
-| Operator | 生命周期、快照、控制台、上传 ISO；不能改 XML/删除宿主机资源 |
+| Operator | 生命周期、快照、控制台、上传镜像/ISO；不能改 XML/删除宿主机资源 |
 | Admin | 全部操作、用户管理、设置、审计 |
 
 登录方式：
@@ -1103,6 +1108,7 @@ Tab 内容：
 - 可选 PAM 登录，服务运行用户需在明确的 PAM 配置中授权。
 - 会话 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`，空闲/绝对超时与 dosh 保持一致。
 - 写请求校验 CSRF token；全局只读模式直接拒绝所有写操作。
+- 自助改密必须验证当前密码；成功后保留当前会话并撤销该账号其他会话。管理员重置其他账号密码会撤销目标账号全部会话，且不能通过该接口重置自己。
 - 控制台使用一次性 token，不在 URL 中暴露长期会话 Cookie。
 - 失败登录按用户名和来源地址持久化限流：15 分钟内同一用户名/IP 失败 5 次或同一用户名跨来源失败 20 次后返回 `429 TOO_MANY_ATTEMPTS`，成功登录清除失败计数；未知用户和禁用账号执行相同 Argon2id 成本以降低账号枚举信号。
 - 反向代理部署时，只有 `VIRTMGR_TRUSTED_PROXIES` 列出的 IP/CIDR 才能提供 `X-Forwarded-For` / `X-Real-IP`；直连客户端伪造这些请求头不会影响审计或限流来源地址。
@@ -1126,12 +1132,12 @@ Tab 内容：
 }
 ```
 
-密码、VNC 密码、私钥、cloud-init secret 和完整 XML 中的敏感字段必须脱敏。审计写入失败时，危险写操作默认 fail-closed。
+密码、VNC 密码、私钥、cloud-init secret 和完整 XML 中的敏感字段必须脱敏。审计写入失败时，危险写操作默认 fail-closed。审计查询支持时间范围和目标 ID；导出支持 JSON/CSV，CSV 对以 `= + - @` 开头的单元格做公式注入防护，并受 50,000 条上限约束。
 
 ### 9.4 文件与路径安全
 
 - 只通过 libvirt Storage Pool/Volume API 操作磁盘，不直接拼接宿主路径。
-- 上传 ISO 时直接创建目标 raw 卷并把请求体写入 libvirt 流；必须校验 `Content-Length` 和大小，池容量由 libvirt 写入时校验，失败时删除未完成卷。后续如需异步大文件任务，再引入临时卷和原子重命名。
+- 上传镜像时按 `.iso` / `.qcow2` / `.raw` 扩展名确定格式，直接创建目标卷并把请求体写入 libvirt 流；必须校验 `Content-Length` 和大小，池容量由 libvirt 写入时校验，失败时删除未完成卷，成功后刷新池元数据。后续如需临时卷和原子重命名，再扩展上传事务模型。
 - 禁止用户输入任意宿主机路径执行命令。
 - XML 只接受 libvirt 可解析内容；禁止通过 XML 注入任意宿主机 hook/command。
 
@@ -1189,13 +1195,13 @@ WantedBy=multi-user.target
 
 ### P1：日常运维增强
 
-- 快照创建/回滚/删除、VM 克隆、ISO 上传。
+- 快照创建/回滚/删除、VM 克隆、ISO/qcow2/raw 镜像上传。
 - 存储池 CRUD、存储卷高级操作和虚拟网络详情/DHCP lease。
 - Guest Agent IP/hostname、CPU/内存/网络趋势。
 - 全局搜索、批量操作、只读模式开关。
 - 移动端表格、控制台和详情页可用性验收。
 
-当前 P1 已落地快照、ISO 上传、VM 克隆、Guest Agent 主机名/IP、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索、虚拟机批量生命周期操作、运行时只读模式开关，以及目录存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
+当前 P1 已落地快照、ISO/qcow2/raw 镜像上传、VM 克隆、Guest Agent 主机名/IP、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索、虚拟机批量生命周期操作、运行时只读模式开关，以及目录存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
 
 验收：常见运维任务不依赖 `virsh`；长任务有进度和失败原因。
 
@@ -1230,7 +1236,7 @@ WantedBy=multi-user.target
 |---|---|
 | CGO/libvirt 依赖使构建和部署复杂 | 首版直接面向 KVM 宿主机，提供 systemd 包；用接口隔离 libvirt，后续可替换 |
 | 控制台端口和密码安全 | 后端代理 VNC socket，使用一次性 token，浏览器不直连宿主机端口 |
-| 大文件 ISO 上传拖垮服务 | 流式写入、大小/容量上限、异步任务、worker pool |
+| 大文件镜像上传拖垮服务 | 流式写入、大小/容量上限、异步任务、worker pool |
 | 长任务期间进程重启 | 任务落 SQLite；启动时将 running 状态标记为 interrupted，并提示重试 |
 | libvirt 状态与页面不一致 | 所有动作以服务端状态校验为准；SSE 触发查询失效；禁止前端伪造最终状态 |
 | 误删磁盘/强制下电 | 独立确认、名称输入、审计、只读模式 |

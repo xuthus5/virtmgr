@@ -34,7 +34,7 @@ const kindLabels: Record<string, string> = {
   "vm.backup.deleted": "虚拟机备份删除",
   "vm.backup.restored": "虚拟机备份恢复",
   "storage.volume.created": "存储卷创建",
-  "storage.volume.uploaded": "ISO 上传",
+  "storage.volume.uploaded": "存储卷上传",
   "storage.volume.deleted": "存储卷删除",
   "network.created": "虚拟网络创建",
   "network.started": "虚拟网络启动",

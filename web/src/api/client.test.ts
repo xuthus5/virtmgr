@@ -68,6 +68,27 @@ describe("api client", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/audit-events?actor=admin&action=vm.start&targetKind=vm&result=success&page=2&pageSize=20");
   });
 
+  it("encodes audit time and target filters and downloads exports", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0, page: 1, pageSize: 20 }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response("id,action\n1,vm.start\n", {
+        status: 200,
+        headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="virtmgr-audit-test.csv"' },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const filters = { targetId: "uuid-a", from: "2026-11-01T00:00:00.000Z", to: "2026-11-02T00:00:00.000Z", page: 1, pageSize: 20 };
+    await api.auditEvents(filters);
+    const result = await api.exportAuditEvents(filters, "csv");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/audit-events?targetId=uuid-a&from=2026-11-01T00%3A00%3A00.000Z&to=2026-11-02T00%3A00%3A00.000Z&page=1&pageSize=20");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/audit-events/export?targetId=uuid-a&from=2026-11-01T00%3A00%3A00.000Z&to=2026-11-02T00%3A00%3A00.000Z&format=csv");
+    expect(result.filename).toBe("virtmgr-audit-test.csv");
+    expect(result.blob.type).toContain("text/csv");
+  });
+
   it("requests VM XML for the selected format", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       uuid: "uuid-a", name: "demo", format: "config", xml: "<domain/>",

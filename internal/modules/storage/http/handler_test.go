@@ -221,6 +221,23 @@ func TestUploadStorageVolumeRoute(t *testing.T) {
 	}
 }
 
+func TestUploadDiskImageRoutePreservesFormat(t *testing.T) {
+	repository := &handlerRepository{}
+	router := chi.NewRouter()
+	New(storageapp.New(repository, nil, false)).Mount(router, allowAll)
+	request := httptest.NewRequest(http.MethodPost, "/storage/pools/images/volumes/upload?name=base.qcow2", bytes.NewReader(make([]byte, 1<<20)))
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request = request.WithContext(authctx.WithSession(request.Context(), domain.Session{User: domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin}}))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if repository.uploadSpec.Format != "qcow2" || repository.uploadSpec.Name != "base.qcow2" {
+		t.Fatalf("upload spec=%+v", repository.uploadSpec)
+	}
+}
+
 func TestUploadStorageVolumeRequiresSessionAndLength(t *testing.T) {
 	repository := &handlerRepository{}
 	router := chi.NewRouter()

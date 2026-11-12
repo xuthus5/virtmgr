@@ -88,7 +88,7 @@ export function StoragePage() {
   const uploadMutation = useMutation({
     mutationFn: ({ pool, file }: { pool: string; file: File }) => api.uploadStorageVolume(pool, file),
     onSuccess: (volume, variables) => {
-      setSuccessMessage(`ISO ${volume.name} 已上传。`);
+      setSuccessMessage(`存储卷 ${volume.name} 已上传。`);
       setSuccessTestId("storage-upload-success");
       setUploadError("");
       setUploadOpen(false);
@@ -97,7 +97,7 @@ export function StoragePage() {
       void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     },
     onError: (cause) => {
-      setUploadError(cause instanceof ApiError ? cause.message : "上传 ISO 失败，请稍后重试。");
+      setUploadError(cause instanceof ApiError ? cause.message : "上传存储卷失败，请稍后重试。");
     },
   });
 
@@ -139,7 +139,7 @@ export function StoragePage() {
     : !selectedActive ? "只有活跃存储池可以创建卷" : "";
   const uploadDisabledReason = !canManage
     ? manageDisabledReason
-    : !selectedActive ? "只有活跃存储池可以上传 ISO" : "";
+    : !selectedActive ? "只有活跃存储池可以上传文件" : "";
 
   function selectPool(name: string) {
     setSelectedPool(name);
@@ -181,12 +181,12 @@ export function StoragePage() {
   function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !selectedActive || !canManage || !uploadFile) return;
-    if (!uploadFile.name.toLowerCase().endsWith(".iso")) {
-      setUploadError("请选择 .iso 文件。");
+    if (!/\.(iso|qcow2|raw)$/i.test(uploadFile.name)) {
+      setUploadError("请选择 .iso、.qcow2 或 .raw 文件。");
       return;
     }
-    if (uploadFile.size < 1024 ** 2 || uploadFile.size > 16 * 1024 ** 4) {
-      setUploadError("ISO 文件大小必须在 1 MiB 到 16 GiB 之间。");
+    if (uploadFile.size < 1024 ** 2 || uploadFile.size > 256 * 1024 ** 3) {
+      setUploadError("文件大小必须在 1 MiB 到 256 GiB 之间。");
       return;
     }
     setUploadError("");
@@ -243,7 +243,7 @@ export function StoragePage() {
                       disabled={!canManage || !selectedActive || uploadMutation.isPending}
                       title={uploadDisabledReason}
                     >
-                      <Upload className="h-4 w-4" />上传 ISO
+                      <Upload className="h-4 w-4" />上传镜像/ISO
                     </Button>
                     <Button
                       type="button"
@@ -263,12 +263,12 @@ export function StoragePage() {
                 <form onSubmit={handleUpload} className="border-y bg-muted/20 p-4" data-testid="storage-upload-form">
                   <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
                     <div className="space-y-2">
-                      <Label htmlFor="storage-upload-file">ISO 文件</Label>
+                      <Label htmlFor="storage-upload-file">镜像或 ISO 文件</Label>
                       <input
                         id="storage-upload-file"
                         data-testid="storage-upload-input"
                         type="file"
-                        accept=".iso,application/x-iso9660-image"
+                        accept=".iso,.qcow2,.raw,application/x-iso9660-image,application/octet-stream"
                         onChange={(event) => { setUploadFile(event.target.files?.[0] ?? null); setUploadError(""); }}
                         className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1.5 text-sm shadow-sm file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                       />
@@ -278,7 +278,7 @@ export function StoragePage() {
                       <Button type="submit" size="sm" data-testid="storage-upload-submit" disabled={!uploadFile || uploadMutation.isPending}>{uploadMutation.isPending ? "上传中..." : "开始上传"}</Button>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs text-muted-foreground">仅支持 .iso，文件大小 1 MiB - 16 GiB。文件将以原始字节流写入 {selected.targetPath || "存储池"}，不会先落到临时文件。</p>
+                  <p className="mt-3 text-xs text-muted-foreground">支持 .iso、.qcow2 和 .raw，文件大小 1 MiB - 256 GiB。文件将以原始字节流写入 {selected.targetPath || "存储池"}，不会先落到临时文件。</p>
                   {uploadError ? (
                     <p role="alert" className="mt-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                       <AlertTriangle className="h-3.5 w-3.5" />{uploadError}

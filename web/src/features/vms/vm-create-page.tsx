@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, LayoutTemplate, LoaderCircle, Plus, Server } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { VMCreateInput, VMFirmware, VMTemplate } from "@/api/types";
+import type { VMBootOrder, VMCreateInput, VMDiskBus, VMFirmware, VMNICModel, VMTemplate } from "@/api/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,8 +27,11 @@ type FormState = {
   memoryMiB: string;
   diskPath: string;
   diskFormat: string;
+  diskBus: VMDiskBus;
   network: string;
+  nicModel: VMNICModel;
   isoPath: string;
+  bootOrder: VMBootOrder;
   firmware: VMFirmware;
   secureBoot: boolean;
   cloudInit: boolean;
@@ -43,8 +46,11 @@ const initialForm: FormState = {
   memoryMiB: "2048",
   diskPath: "",
   diskFormat: "qcow2",
+  diskBus: "virtio",
   network: "",
+  nicModel: "virtio",
   isoPath: "",
+  bootOrder: "auto",
   firmware: "bios",
   secureBoot: false,
   cloudInit: false,
@@ -171,8 +177,11 @@ export function VMCreatePage() {
       memoryMiB: Number(form.memoryMiB),
       diskPath: form.diskPath.trim(),
       diskFormat: form.diskFormat,
+      diskBus: form.diskBus,
       network: form.network.trim(),
+      nicModel: form.nicModel,
       isoPath: form.isoPath.trim(),
+      bootOrder: form.bootOrder,
       firmware: form.firmware,
       secureBoot: form.secureBoot,
       cloudInit: form.cloudInit ? { userData: form.cloudInitUserData.trim(), pool: diskPool } : undefined,
@@ -307,6 +316,14 @@ export function VMCreatePage() {
                 </select>
               </div>
               <div className="space-y-2">
+                <Label htmlFor="vm-disk-bus">磁盘总线</Label>
+                <select id="vm-disk-bus" value={form.diskBus} onChange={(event) => update("diskBus", event.target.value as VMDiskBus)} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  <option value="virtio">virtio（默认）</option>
+                  <option value="sata">SATA</option>
+                  <option value="scsi">SCSI</option>
+                </select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="vm-network">虚拟网络</Label>
                 <select id="vm-network" value={form.network} onChange={(event) => update("network", event.target.value)} required disabled={!canCreate || !activeNetworks.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
                   {!activeNetworks.length ? <option value="">{networksQuery.isLoading ? "正在读取网络..." : "没有活跃虚拟网络"}</option> : null}
@@ -314,10 +331,25 @@ export function VMCreatePage() {
                 </select>
                 <p className="text-xs text-muted-foreground">{networksQuery.isError ? "网络列表加载失败，请刷新页面后重试。" : `${activeNetworks.length} 个活跃虚拟网络可选。`}</p>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="vm-nic-model">网卡型号</Label>
+                <select id="vm-nic-model" value={form.nicModel} onChange={(event) => update("nicModel", event.target.value as VMNICModel)} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  <option value="virtio">virtio（默认）</option>
+                  <option value="e1000">e1000</option>
+                </select>
+              </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="vm-iso-path">ISO 路径（可选）</Label>
                 <Input id="vm-iso-path" value={form.isoPath} onChange={(event) => update("isoPath", event.target.value)} placeholder="/var/lib/libvirt/images/install.iso" disabled={!canCreate} />
-                <p className="text-xs text-muted-foreground">填写后以 CD-ROM 启动；留空则从硬盘启动。</p>
+                <p className="text-xs text-muted-foreground">填写后挂载为 CD-ROM；默认光盘优先，可按下方启动顺序调整。</p>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="vm-boot-order">启动顺序</Label>
+                <select id="vm-boot-order" value={form.bootOrder} onChange={(event) => update("bootOrder", event.target.value as VMBootOrder)} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  <option value="auto">自动（有 ISO 时光盘优先）</option>
+                  <option value="disk-first">硬盘优先</option>
+                  <option value="cdrom-first" disabled={!form.isoPath.trim()}>光盘优先（需填写 ISO）</option>
+                </select>
               </div>
               <div className="space-y-3 border-t pt-4 sm:col-span-2">
                 <label className="flex items-start gap-3 text-sm">

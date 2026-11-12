@@ -35,6 +35,19 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+type UserSession struct {
+	ID        string    `json:"id"`
+	TokenHash string    `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Current   bool      `json:"current"`
+}
+
+type UserSessionList struct {
+	Items []UserSession `json:"items"`
+	Total int           `json:"total"`
+}
+
 type ListQuery struct {
 	Query string
 	State string

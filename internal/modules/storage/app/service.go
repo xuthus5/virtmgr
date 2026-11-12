@@ -114,6 +114,7 @@ var (
 	volumeFormats     = map[string]string{"qcow2": ".qcow2", "raw": ".raw"}
 	minVolumeBytes    = uint64(1 << 20)
 	maxVolumeBytes    = uint64(16 << 40)
+	maxUploadBytes    = uint64(256 << 30)
 )
 
 func New(repository Repository, audit AuditRecorder, readOnly bool, options ...Option) *Service {
@@ -257,7 +258,8 @@ func (s *Service) CreateVolume(ctx context.Context, command CreateVolumeCommand)
 func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand) (domain.StorageVolume, error) {
 	command.Pool = strings.TrimSpace(command.Pool)
 	command.Name = strings.TrimSpace(command.Name)
-	detail := map[string]any{"name": command.Name, "format": "raw"}
+	format, supportedUpload := uploadVolumeFormat(command.Name)
+	detail := map[string]any{"name": command.Name, "format": format}
 	if command.Size > 0 {
 		detail["capacityBytes"] = uint64(command.Size)
 	}
@@ -267,13 +269,13 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 	if s.isReadOnly() {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrReadOnly)
 	}
-	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) || !strings.HasSuffix(strings.ToLower(command.Name), ".iso") {
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) || !supportedUpload {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
 	if command.Body == nil || command.Size <= 0 {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
-	if command.Size > int64(maxVolumeBytes) {
+	if command.Size > int64(maxUploadBytes) {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrTooLarge)
 	}
 	if command.Size < int64(minVolumeBytes) {
@@ -288,7 +290,7 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 			return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, fmt.Errorf("start upload task: %w", err))
 		}
 	}
-	spec := domain.StorageVolumeCreateSpec{Name: command.Name, Format: "raw", CapacityBytes: uint64(command.Size)}
+	spec := domain.StorageVolumeCreateSpec{Name: command.Name, Format: format, CapacityBytes: uint64(command.Size)}
 	body := command.Body
 	var tracker *uploadProgressTracker
 	if taskID != "" {
@@ -307,7 +309,7 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+spec.Name, detail, err)
 	}
 	if taskID != "" {
-		if err := s.tasks.Succeed(ctx, taskID, "ISO 上传完成"); err != nil {
+		if err := s.tasks.Succeed(ctx, taskID, "存储卷上传完成"); err != nil {
 			return domain.StorageVolume{}, fmt.Errorf("record upload task success: %w", err)
 		}
 	}
@@ -316,6 +318,19 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 		return domain.StorageVolume{}, fmt.Errorf("record storage volume upload audit: %w", err)
 	}
 	return volume, nil
+}
+
+func uploadVolumeFormat(name string) (string, bool) {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".iso":
+		return "raw", true
+	case ".qcow2":
+		return "qcow2", true
+	case ".raw":
+		return "raw", true
+	default:
+		return "", false
+	}
 }
 
 func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand) error {

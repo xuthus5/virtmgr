@@ -262,7 +262,7 @@ test("可写模式展示审计记录并支持筛选", async ({ page }) => {
   await expect(page.locator('[data-testid^="audit-row-"]').filter({ hasText: "失败" })).toHaveCount(2);
 });
 
-test("可写模式上传 ISO 并刷新存储卷", async ({ page }) => {
+test("可写模式上传存储卷并刷新列表", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "存储", exact: true }).click();
   await page.getByRole("button", { name: "iso-store", exact: true }).click();
@@ -300,10 +300,10 @@ test("可写模式上传 ISO 并刷新存储卷", async ({ page }) => {
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page.getByTestId("tasks-total")).toHaveText("共 5 个任务");
   const uploadTask = page.locator('[data-testid^="task-row-"]').filter({ hasText: "e2e-upload.iso" }).first();
-  await expect(uploadTask).toContainText("上传 ISO");
+  await expect(uploadTask).toContainText("上传存储卷");
   await expect(uploadTask).toContainText("已完成");
   await expect(uploadTask).toContainText("100%");
-  await expect(uploadTask).toContainText("ISO 上传完成");
+  await expect(uploadTask).toContainText("存储卷上传完成");
 });
 
 test("可写模式管理存储池生命周期", async ({ page }) => {
@@ -551,8 +551,9 @@ test("管理员创建、调整和禁用用户并验证访问控制", async ({ pa
   await loginAs(page, "e2e-viewer", "viewer-secret-123");
   await expect(page.getByRole("link", { name: "用户管理", exact: true })).toHaveCount(0);
   await page.goto("/users");
-  await expect(page.getByRole("heading", { name: "用户管理", exact: true })).toBeVisible();
-  await expect(page.getByText("当前账号无权查看用户管理", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "账号安全", exact: true })).toBeVisible();
+  await expect(page.getByTestId("change-password-card")).toBeVisible();
+  await expect(page.getByText("用户管理仅对管理员开放", { exact: true })).toBeVisible();
 });
 
 test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {

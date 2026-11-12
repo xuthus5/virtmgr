@@ -27,6 +27,10 @@ type Repository interface {
 	UserByUsername(ctx context.Context, username string) (domain.User, error)
 	CreateUser(ctx context.Context, username, passwordHash string, role domain.Role) (domain.User, error)
 	UpdateUser(ctx context.Context, id int64, role domain.Role, disabled bool) (domain.User, error)
+	UpdatePassword(ctx context.Context, id int64, passwordHash string) error
+	ListSessionsByUser(ctx context.Context, userID int64) ([]domain.UserSession, error)
+	DeleteSessionForUser(ctx context.Context, userID int64, sessionID string) error
+	DeleteOtherSessionsByUser(ctx context.Context, userID int64, keepTokenHash string) error
 }
 
 type AuditRecorder interface {
@@ -68,6 +72,24 @@ type UpdateUserCommand struct {
 	Request  MutationContext
 }
 
+type ChangePasswordCommand struct {
+	CurrentPassword string
+	NewPassword     string
+	Request         MutationContext
+}
+
+type ResetPasswordCommand struct {
+	ID       int64
+	Password string
+	Request  MutationContext
+}
+
+type RevokeSessionCommand struct {
+	ID        int64
+	SessionID string
+	Request   MutationContext
+}
+
 func New(repository Repository, audit AuditRecorder, readOnly bool, options ...Option) *Service {
 	service := &Service{repository: repository, audit: audit, readOnly: readOnly}
 	for _, option := range options {
@@ -105,8 +127,7 @@ func (s *Service) Create(ctx context.Context, command CreateUserCommand) (domain
 	if !usernamePattern.MatchString(command.Username) || !domain.ValidRole(command.Role) {
 		return domain.User{}, domain.ErrInvalidInput
 	}
-	passwordLength := utf8.RuneCountInString(command.Password)
-	if passwordLength < minPasswordLength || passwordLength > maxPasswordLength {
+	if !validPassword(command.Password) {
 		return domain.User{}, domain.ErrInvalidInput
 	}
 	if _, err := s.repository.UserByUsername(ctx, command.Username); err == nil {
@@ -128,6 +149,122 @@ func (s *Service) Create(ctx context.Context, command CreateUserCommand) (domain
 	}
 	user.PasswordHash = ""
 	return user, nil
+}
+
+func (s *Service) ChangePassword(ctx context.Context, command ChangePasswordCommand) error {
+	if command.Request.Session.User.ID < 1 || command.CurrentPassword == "" || !validPassword(command.NewPassword) || command.CurrentPassword == command.NewPassword {
+		return domain.ErrInvalidInput
+	}
+	if s.isReadOnly() {
+		return domain.ErrReadOnly
+	}
+	target, err := s.repository.UserByID(ctx, command.Request.Session.User.ID)
+	if err != nil {
+		return err
+	}
+	if !authapp.VerifyPassword(target.PasswordHash, command.CurrentPassword) {
+		return domain.ErrCurrentPassword
+	}
+	passwordHash, err := authapp.HashPassword(command.NewPassword)
+	if err != nil {
+		return fmt.Errorf("hash user password: %w", err)
+	}
+	if err := s.repository.UpdatePassword(ctx, target.ID, passwordHash); err != nil {
+		return err
+	}
+	if err := s.repository.DeleteOtherSessionsByUser(ctx, target.ID, command.Request.Session.TokenHash); err != nil {
+		return err
+	}
+	detail := map[string]any{"username": target.Username}
+	if err := s.recordAudit(ctx, command.Request, "user.password.change", target.ID, "success", detail, nil); err != nil {
+		return fmt.Errorf("record user password change audit: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) ResetPassword(ctx context.Context, command ResetPasswordCommand) error {
+	if command.Request.Session.User.Role != domain.RoleAdmin {
+		return domain.ErrForbidden
+	}
+	if s.isReadOnly() {
+		return domain.ErrReadOnly
+	}
+	if command.ID < 1 || !validPassword(command.Password) {
+		return domain.ErrInvalidInput
+	}
+	target, err := s.repository.UserByID(ctx, command.ID)
+	if err != nil {
+		return err
+	}
+	if target.ID == command.Request.Session.User.ID {
+		return domain.ErrSelfModification
+	}
+	passwordHash, err := authapp.HashPassword(command.Password)
+	if err != nil {
+		return fmt.Errorf("hash user password: %w", err)
+	}
+	if err := s.repository.UpdatePassword(ctx, target.ID, passwordHash); err != nil {
+		return err
+	}
+	if err := s.repository.DeleteOtherSessionsByUser(ctx, target.ID, ""); err != nil {
+		return err
+	}
+	detail := map[string]any{"username": target.Username, "sessionsRevoked": true}
+	if err := s.recordAudit(ctx, command.Request, "user.password.reset", target.ID, "success", detail, nil); err != nil {
+		return fmt.Errorf("record user password reset audit: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) ListSessions(ctx context.Context, id int64, session domain.Session) (domain.UserSessionList, error) {
+	if session.User.Role != domain.RoleAdmin {
+		return domain.UserSessionList{}, domain.ErrForbidden
+	}
+	if id < 1 {
+		return domain.UserSessionList{}, domain.ErrInvalidInput
+	}
+	if _, err := s.repository.UserByID(ctx, id); err != nil {
+		return domain.UserSessionList{}, err
+	}
+	sessions, err := s.repository.ListSessionsByUser(ctx, id)
+	if err != nil {
+		return domain.UserSessionList{}, err
+	}
+	for index := range sessions {
+		sessions[index].Current = session.TokenHash != "" && sessions[index].TokenHash == session.TokenHash
+		sessions[index].TokenHash = ""
+	}
+	return domain.UserSessionList{Items: sessions, Total: len(sessions)}, nil
+}
+
+func (s *Service) RevokeSession(ctx context.Context, command RevokeSessionCommand) error {
+	if command.Request.Session.User.Role != domain.RoleAdmin {
+		return domain.ErrForbidden
+	}
+	if s.isReadOnly() {
+		return domain.ErrReadOnly
+	}
+	command.SessionID = strings.TrimSpace(command.SessionID)
+	if command.ID < 1 || command.SessionID == "" {
+		return domain.ErrInvalidInput
+	}
+	target, err := s.repository.UserByID(ctx, command.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.repository.DeleteSessionForUser(ctx, target.ID, command.SessionID); err != nil {
+		return err
+	}
+	detail := map[string]any{"username": target.Username, "sessionId": command.SessionID}
+	if err := s.recordAudit(ctx, command.Request, "user.session.revoke", target.ID, "success", detail, nil); err != nil {
+		return fmt.Errorf("record user session revoke audit: %w", err)
+	}
+	return nil
+}
+
+func validPassword(password string) bool {
+	length := utf8.RuneCountInString(password)
+	return length >= minPasswordLength && length <= maxPasswordLength && !strings.ContainsRune(password, '\x00')
 }
 
 func (s *Service) Update(ctx context.Context, command UpdateUserCommand) (domain.User, error) {

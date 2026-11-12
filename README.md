@@ -51,19 +51,19 @@ All screenshots use the built-in demo backend, not production host data.
 |---|---|
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
-| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, network selection, ISO, autostart, and optional interactive Cloud-init builder with live YAML preview and source editing |
-| VM details | Hardware summary, live CPU/memory/network trends, disks, NICs, Guest Agent information, snapshots, and domain XML |
+| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and optional interactive Cloud-init builder with live YAML preview and source editing |
+| VM details | Hardware summary, live CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, Guest Agent information, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with retention policies |
 | Backups | Central cold-backup catalog, integrity verification, restore as a new VM, schedules, retention, pinning, and libvirt pool repositories |
-| Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; upload ISOs; protect in-use volumes |
+| Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; stream ISO, qcow2, and raw image uploads; protect in-use volumes |
 | Networking | NAT and isolated networks, bridge details, IPv4/DHCP configuration, live leases, static DHCP hosts, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
-| Observability | SSE event stream, task center with progress and failures, host and VM resource trends, structured logs, health endpoints |
-| Security | Local accounts, Argon2id passwords, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, audit trail, CSP and security headers |
+| Observability | SSE event stream, task center with progress and failures, host and VM resource trends, virtual disk I/O and per-NIC metrics, structured logs, health endpoints |
+| Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable audit trail, CSP and security headers |
 | User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, accessible dialogs, and explicit confirmation for destructive actions |
 | Templates | Reusable VM specifications, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
 
@@ -255,13 +255,13 @@ VirtMgr uses local accounts. Passwords are hashed with Argon2id, sessions are st
 
 The global read-only mode blocks all mutating infrastructure operations regardless of role. Read-only inventory, domain XML viewing, configuration export, and metric/event queries remain available.
 
-Administrators can create users, change roles, disable accounts, inspect the audit log, and change the persisted read-only setting from the web UI.
+Administrators can create users, change roles, disable accounts, reset other users' passwords, inspect and revoke login sessions, filter and export the audit log by time or target, and change the persisted read-only setting from the web UI. Every local account can also verify its current password and change its own password; the current session is kept while other sessions are revoked.
 
 ## Safety and operational behavior
 
 - **Libvirt is authoritative.** VirtMgr does not store a second VM inventory and degrades explicitly when libvirt is unavailable.
 - **Destructive operations require confirmation.** Force off, reset, snapshot revert, volume deletion, and VM deletion use explicit dialogs; some delete flows require typing the resource name.
-- **Long-running work becomes a task.** ISO uploads, cloning, and cold backups expose progress, steps, failures, and related resources through the task center.
+- **Long-running work becomes a task.** Storage volume uploads, cloning, and cold backups expose progress, steps, failures, and related resources through the task center.
 - **Backups restore as new VMs.** A backup contains the persistent domain XML, a SHA-256 manifest, and writable file disks, but not RAM state. In-place restore and RAM-state restore are not provided.
 - **Disk expansion does not resize guest partitions.** VirtMgr grows the qcow2/raw virtual disk only. Linux guests may still need `growpart` plus `resize2fs`/`xfs_growfs`; Windows guests require volume expansion in Disk Management. Shrinking is not supported.
 - **CPU and memory changes respect libvirt limits.** Running domains can be adjusted within their active maximum; increasing the maximum generally requires shutting the VM down first.
@@ -285,7 +285,7 @@ Representative endpoint groups include:
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
 | Networking | `/api/v1/networks`, `/leases`, `/hosts`, `/actions/{action}` |
-| System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/users`, `/settings` |
+| System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/audit-events/export`, `/users`, `/users/me/password`, `/users/{id}/sessions`, `/settings` |
 
 The complete route and behavior reference is maintained in [docs/architecture-design.md](docs/architecture-design.md).
 
@@ -346,6 +346,7 @@ scripts/                  Development and E2E helpers
 ## Documentation
 
 - [Architecture design](docs/architecture-design.md) — product boundaries, architecture, data model, routes, security, and deployment details (Chinese)
+- [Product gap analysis](docs/product-gap-analysis.md) — comparison with mainstream tools, single-host roadmap, and first-batch implementation status (Chinese)
 - [Backup and restore design](docs/backup-design.md) — implemented cold-backup catalog, restore, scheduling, and retention model (Chinese)
 - [Release workflow](.github/workflows/release.yml) — amd64/arm64 binary build and release attachment
 - [Environment example](deploy/virtmgr.env.example) — production-oriented variable template

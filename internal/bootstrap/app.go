@@ -156,7 +156,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		snapshotpoliciesapp.WithErrorHandler(func(err error) { logger.Error("snapshot_scheduler_failed", "error", err) }),
 	)
 	snapshotPoliciesHandler := snapshotpolicieshttp.New(snapshotPolicyService)
-	auditHistoryHandler := audithistoryhttp.New(audithistoryapp.New(store))
+	auditHistoryHandler := audithistoryhttp.New(audithistoryapp.New(store, audithistoryapp.WithAuditRecorder(store)))
 	usersHandler := usershttp.New(usersapp.New(store, store, cfg.ReadOnly, usersapp.WithReadOnlyMode(mode)))
 	settingsHandler := settingshttp.New(settingsapp.New(mode, store))
 	handler := buildRouter(routerDependencies{

@@ -108,14 +108,77 @@ func NormalizeVMFirmware(value string) (VMFirmware, bool) {
 	}
 }
 
+type VMDiskBus string
+
+const (
+	VMDiskBusVirtio VMDiskBus = "virtio"
+	VMDiskBusSATA   VMDiskBus = "sata"
+	VMDiskBusSCSI   VMDiskBus = "scsi"
+)
+
+func NormalizeVMDiskBus(value string) (VMDiskBus, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(VMDiskBusVirtio):
+		return VMDiskBusVirtio, true
+	case string(VMDiskBusSATA):
+		return VMDiskBusSATA, true
+	case string(VMDiskBusSCSI):
+		return VMDiskBusSCSI, true
+	default:
+		return "", false
+	}
+}
+
+type VMNICModel string
+
+const (
+	VMNICModelVirtio VMNICModel = "virtio"
+	VMNICModelE1000  VMNICModel = "e1000"
+)
+
+func NormalizeVMNICModel(value string) (VMNICModel, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(VMNICModelVirtio):
+		return VMNICModelVirtio, true
+	case string(VMNICModelE1000):
+		return VMNICModelE1000, true
+	default:
+		return "", false
+	}
+}
+
+type VMBootOrder string
+
+const (
+	VMBootOrderAuto       VMBootOrder = "auto"
+	VMBootOrderDiskFirst  VMBootOrder = "disk-first"
+	VMBootOrderCDROMFirst VMBootOrder = "cdrom-first"
+)
+
+func NormalizeVMBootOrder(value string) (VMBootOrder, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(VMBootOrderAuto):
+		return VMBootOrderAuto, true
+	case string(VMBootOrderDiskFirst):
+		return VMBootOrderDiskFirst, true
+	case string(VMBootOrderCDROMFirst):
+		return VMBootOrderCDROMFirst, true
+	default:
+		return "", false
+	}
+}
+
 type VMCreateSpec struct {
 	Name       string         `json:"name"`
 	VCPUs      uint           `json:"vcpus"`
 	MemoryMiB  uint64         `json:"memoryMiB"`
 	DiskPath   string         `json:"diskPath"`
 	DiskFormat string         `json:"diskFormat"`
+	DiskBus    VMDiskBus      `json:"diskBus,omitempty"`
 	Network    string         `json:"network"`
+	NICModel   VMNICModel     `json:"nicModel,omitempty"`
 	ISOPath    string         `json:"isoPath,omitempty"`
+	BootOrder  VMBootOrder    `json:"bootOrder,omitempty"`
 	Firmware   VMFirmware     `json:"firmware"`
 	SecureBoot bool           `json:"secureBoot"`
 	CloudInit  *CloudInitSpec `json:"cloudInit,omitempty"`

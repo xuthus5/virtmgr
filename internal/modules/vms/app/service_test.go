@@ -643,6 +643,9 @@ func TestCreateVM(t *testing.T) {
 	if spec.Name != "api-02" || spec.DiskFormat != "qcow2" || spec.Network != "default" || spec.Firmware != domain.VMFirmwareBIOS || spec.SecureBoot {
 		t.Fatalf("normalized spec = %+v", spec)
 	}
+	if spec.DiskBus != domain.VMDiskBusVirtio || spec.NICModel != domain.VMNICModelVirtio || spec.BootOrder != domain.VMBootOrderAuto {
+		t.Fatalf("device defaults = %+v", spec)
+	}
 	if len(audit.events) != 1 || audit.events[0].Action != "vm.create" || audit.events[0].TargetID != "uuid-created" {
 		t.Fatalf("audit events = %+v", audit.events)
 	}
@@ -708,6 +711,30 @@ func TestCreateVMCloudInit(t *testing.T) {
 	}
 }
 
+func TestCreateVMCustomDevices(t *testing.T) {
+	audit := &fakeAuditRecorder{}
+	repository := &recordingRepository{fakeVMRepository: fakeVMRepository{}}
+	service := New(repository, audit, false)
+	spec := withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
+		spec.DiskBus = domain.VMDiskBusSATA
+		spec.NICModel = domain.VMNICModelE1000
+		spec.ISOPath = "/var/lib/libvirt/images/install.iso"
+		spec.BootOrder = domain.VMBootOrderDiskFirst
+	})
+	if _, err := service.Create(context.Background(), CreateCommand{
+		Spec: spec, Request: MutationContext{Session: operatorSession()},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(repository.createdSpecs) != 1 || repository.createdSpecs[0].DiskBus != domain.VMDiskBusSATA || repository.createdSpecs[0].NICModel != domain.VMNICModelE1000 || repository.createdSpecs[0].BootOrder != domain.VMBootOrderDiskFirst {
+		t.Fatalf("created specs = %+v", repository.createdSpecs)
+	}
+	detail := audit.events[0].Detail
+	if detail["diskBus"] != domain.VMDiskBusSATA || detail["nicModel"] != domain.VMNICModelE1000 || detail["bootOrder"] != domain.VMBootOrderDiskFirst {
+		t.Fatalf("audit detail = %+v", detail)
+	}
+}
+
 func TestCreateVMRejectsViewerReadOnlyAndInvalidSpec(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -729,8 +756,11 @@ func TestCreateVMRejectsViewerReadOnlyAndInvalidSpec(t *testing.T) {
 		{name: "small memory", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.MemoryMiB = 64 }), want: domain.ErrInvalidInput},
 		{name: "relative disk", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.DiskPath = "disk.qcow2" }), want: domain.ErrInvalidInput},
 		{name: "bad format", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.DiskFormat = "vmdk" }), want: domain.ErrInvalidInput},
+		{name: "bad disk bus", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.DiskBus = "ide" }), want: domain.ErrInvalidInput},
 		{name: "bad network", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.Network = "bad network" }), want: domain.ErrInvalidInput},
+		{name: "bad nic model", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.NICModel = "rtl8139" }), want: domain.ErrInvalidInput},
 		{name: "relative iso", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.ISOPath = "install.iso" }), want: domain.ErrInvalidInput},
+		{name: "cdrom first without iso", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.BootOrder = domain.VMBootOrderCDROMFirst }), want: domain.ErrInvalidInput},
 		{name: "bad firmware", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.Firmware = "coreboot" }), want: domain.ErrInvalidInput},
 		{name: "secure boot without uefi", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) { spec.SecureBoot = true }), want: domain.ErrInvalidInput},
 		{name: "empty cloud-init", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {

@@ -24,4 +24,5 @@ var (
 	ErrNetworkUnsupported = errors.New("network update unsupported")
 	ErrCSRF               = errors.New("csrf validation failed")
 	ErrSelfModification   = errors.New("cannot modify current user")
+	ErrCurrentPassword    = errors.New("current password is incorrect")
 )

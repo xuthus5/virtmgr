@@ -23,7 +23,10 @@ type AuditEventQuery struct {
 	Actor      string
 	Action     string
 	TargetKind string
+	TargetID   string
 	Result     string
+	From       time.Time
+	To         time.Time
 	Page       int
 	PageSize   int
 }
@@ -38,12 +41,38 @@ type AuditEventList struct {
 const (
 	DefaultAuditPageSize = 50
 	MaxAuditPageSize     = 200
+	MaxAuditExportEvents = 50000
 )
+
+type AuditExportFormat string
+
+const (
+	AuditExportFormatJSON AuditExportFormat = "json"
+	AuditExportFormatCSV  AuditExportFormat = "csv"
+)
+
+func ValidAuditExportFormat(value string) (AuditExportFormat, bool) {
+	format := AuditExportFormat(strings.ToLower(strings.TrimSpace(value)))
+	switch format {
+	case AuditExportFormatJSON, AuditExportFormatCSV:
+		return format, true
+	default:
+		return "", false
+	}
+}
+
+type AuditEventExport struct {
+	Format      AuditExportFormat
+	ContentType string
+	Data        []byte
+	EventCount  int
+}
 
 func (q AuditEventQuery) Normalized() AuditEventQuery {
 	q.Actor = strings.TrimSpace(q.Actor)
 	q.Action = strings.TrimSpace(q.Action)
 	q.TargetKind = strings.TrimSpace(q.TargetKind)
+	q.TargetID = strings.TrimSpace(q.TargetID)
 	q.Result = strings.TrimSpace(q.Result)
 	if q.Page < 1 {
 		q.Page = 1

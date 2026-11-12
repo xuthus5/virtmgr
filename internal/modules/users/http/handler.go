@@ -28,6 +28,15 @@ type updateRequest struct {
 	Disabled bool        `json:"disabled"`
 }
 
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+type resetPasswordRequest struct {
+	Password string `json:"password"`
+}
+
 func New(service *usersapp.Service) *Handler {
 	return &Handler{service: service}
 }
@@ -99,13 +108,108 @@ func (h *Handler) Update(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, user)
 }
 
+func (h *Handler) ChangePassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request changePasswordRequest
+	if err := httpx.DecodeJSON(r, &request); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.service.ChangePassword(r.Context(), usersapp.ChangePasswordCommand{
+		CurrentPassword: request.CurrentPassword,
+		NewPassword:     request.NewPassword,
+		Request:         mutationContext(r, session),
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h *Handler) ResetPassword(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	id, ok := userID(r)
+	if !ok {
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	var request resetPasswordRequest
+	if err := httpx.DecodeJSON(r, &request); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.service.ResetPassword(r.Context(), usersapp.ResetPasswordCommand{
+		ID: id, Password: request.Password, Request: mutationContext(r, session),
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h *Handler) ListSessions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	id, ok := userID(r)
+	if !ok {
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	result, err := h.service.ListSessions(r.Context(), id, session)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) RevokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	id, ok := userID(r)
+	if !ok {
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.service.RevokeSession(r.Context(), usersapp.RevokeSessionCommand{
+		ID: id, SessionID: chi.URLParam(r, "sessionId"), Request: mutationContext(r, session),
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/users", h.List)
+	r.Get("/users/{id}/sessions", h.ListSessions)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
 		mutating.Post("/users", h.Create)
+		mutating.Put("/users/me/password", h.ChangePassword)
 		mutating.Patch("/users/{id}", h.Update)
+		mutating.Post("/users/{id}/password", h.ResetPassword)
+		mutating.Delete("/users/{id}/sessions/{sessionId}", h.RevokeSession)
 	})
+}
+
+func userID(r *stdhttp.Request) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	return id, err == nil && id > 0
 }
 
 func mutationContext(r *stdhttp.Request, session domain.Session) usersapp.MutationContext {

@@ -11,13 +11,14 @@ import (
 
 type memoryRepository struct {
 	users     map[int64]domain.User
+	sessions  map[int64][]domain.UserSession
 	next      int64
 	createErr error
 	updateErr error
 }
 
 func newMemoryRepository(users ...domain.User) *memoryRepository {
-	repository := &memoryRepository{users: map[int64]domain.User{}}
+	repository := &memoryRepository{users: map[int64]domain.User{}, sessions: map[int64][]domain.UserSession{}}
 	for _, user := range users {
 		repository.users[user.ID] = user
 		if user.ID > repository.next {
@@ -74,6 +75,43 @@ func (m *memoryRepository) UpdateUser(_ context.Context, id int64, role domain.R
 	user.Disabled = disabled
 	m.users[id] = user
 	return user, nil
+}
+
+func (m *memoryRepository) UpdatePassword(_ context.Context, id int64, passwordHash string) error {
+	user, ok := m.users[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	user.PasswordHash = passwordHash
+	m.users[id] = user
+	return nil
+}
+
+func (m *memoryRepository) ListSessionsByUser(_ context.Context, userID int64) ([]domain.UserSession, error) {
+	return append([]domain.UserSession(nil), m.sessions[userID]...), nil
+}
+
+func (m *memoryRepository) DeleteSessionForUser(_ context.Context, userID int64, sessionID string) error {
+	sessions := m.sessions[userID]
+	for index, session := range sessions {
+		if session.ID == sessionID {
+			m.sessions[userID] = append(sessions[:index], sessions[index+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+func (m *memoryRepository) DeleteOtherSessionsByUser(_ context.Context, userID int64, keepTokenHash string) error {
+	sessions := m.sessions[userID]
+	kept := make([]domain.UserSession, 0, len(sessions))
+	for _, session := range sessions {
+		if keepTokenHash != "" && session.TokenHash == keepTokenHash {
+			kept = append(kept, session)
+		}
+	}
+	m.sessions[userID] = kept
+	return nil
 }
 
 type auditRecorder struct {
@@ -262,6 +300,100 @@ func TestUpdateUserErrors(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("invalid role error = %v", err)
+	}
+}
+
+func TestChangePasswordRehashesAndKeepsCurrentSession(t *testing.T) {
+	currentHash, err := authapp.HashPassword("current-secret-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := newMemoryRepository(domain.User{ID: 2, Username: "viewer", Role: domain.RoleViewer, PasswordHash: currentHash})
+	repository.sessions[2] = []domain.UserSession{
+		{ID: "current", TokenHash: "keep-me"},
+		{ID: "other", TokenHash: "revoke-me"},
+	}
+	audit := &auditRecorder{}
+	request := MutationContext{Session: domain.Session{TokenHash: "keep-me", User: domain.User{ID: 2, Username: "viewer", Role: domain.RoleViewer}}}
+	if err := New(repository, audit, false).ChangePassword(context.Background(), ChangePasswordCommand{
+		CurrentPassword: "current-secret-123", NewPassword: "new-secret-456", Request: request,
+	}); err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+	if !authapp.VerifyPassword(repository.users[2].PasswordHash, "new-secret-456") {
+		t.Fatal("new password was not persisted")
+	}
+	if len(repository.sessions[2]) != 1 || repository.sessions[2][0].ID != "current" {
+		t.Fatalf("sessions = %+v", repository.sessions[2])
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "user.password.change" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestChangePasswordRejectsWrongCurrentPassword(t *testing.T) {
+	currentHash, err := authapp.HashPassword("current-secret-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := newMemoryRepository(domain.User{ID: 2, Username: "viewer", PasswordHash: currentHash})
+	request := MutationContext{Session: domain.Session{User: domain.User{ID: 2, Username: "viewer"}}}
+	if err := New(repository, &auditRecorder{}, false).ChangePassword(context.Background(), ChangePasswordCommand{
+		CurrentPassword: "wrong-password", NewPassword: "new-secret-456", Request: request,
+	}); !errors.Is(err, domain.ErrCurrentPassword) {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+}
+
+func TestResetPasswordRevokesAllSessionsAndAudits(t *testing.T) {
+	repository := newMemoryRepository(
+		domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin},
+		domain.User{ID: 2, Username: "viewer", Role: domain.RoleViewer},
+	)
+	repository.sessions[2] = []domain.UserSession{{ID: "one", TokenHash: "a"}, {ID: "two", TokenHash: "b"}}
+	audit := &auditRecorder{}
+	if err := New(repository, audit, false).ResetPassword(context.Background(), ResetPasswordCommand{
+		ID: 2, Password: "new-secret-456", Request: adminRequest(),
+	}); err != nil {
+		t.Fatalf("ResetPassword() error = %v", err)
+	}
+	if !authapp.VerifyPassword(repository.users[2].PasswordHash, "new-secret-456") || len(repository.sessions[2]) != 0 {
+		t.Fatalf("user=%+v sessions=%+v", repository.users[2], repository.sessions[2])
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "user.password.reset" || audit.events[0].Detail["sessionsRevoked"] != true {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+	if err := New(repository, audit, false).ResetPassword(context.Background(), ResetPasswordCommand{
+		ID: 1, Password: "new-secret-456", Request: adminRequest(),
+	}); !errors.Is(err, domain.ErrSelfModification) {
+		t.Fatalf("self reset error = %v", err)
+	}
+}
+
+func TestListAndRevokeSessions(t *testing.T) {
+	repository := newMemoryRepository(domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin})
+	repository.sessions[1] = []domain.UserSession{{ID: "current", TokenHash: "token-current"}, {ID: "other", TokenHash: "token-other"}}
+	service := New(repository, &auditRecorder{}, false)
+	session := domain.Session{TokenHash: "token-current", User: domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin}}
+	result, err := service.ListSessions(context.Background(), 1, session)
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if result.Total != 2 || !result.Items[0].Current || result.Items[0].TokenHash != "" {
+		t.Fatalf("sessions = %+v", result)
+	}
+	audit := &auditRecorder{}
+	service = New(repository, audit, false)
+	if err := service.RevokeSession(context.Background(), RevokeSessionCommand{
+		ID: 1, SessionID: "other", Request: MutationContext{Session: session},
+	}); err != nil {
+		t.Fatalf("RevokeSession() error = %v", err)
+	}
+	if len(repository.sessions[1]) != 1 || repository.sessions[1][0].ID != "current" {
+		t.Fatalf("sessions = %+v", repository.sessions[1])
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "user.session.revoke" {
+		t.Fatalf("audit events = %+v", audit.events)
 	}
 }
 

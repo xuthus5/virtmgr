@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"virtmgr/internal/domain"
@@ -15,13 +16,20 @@ import (
 )
 
 type handlerRepository struct {
-	result   domain.AuditEventList
-	received domain.AuditEventQuery
+	result        domain.AuditEventList
+	exported      []domain.AuditEvent
+	received      domain.AuditEventQuery
+	exportedQuery domain.AuditEventQuery
 }
 
 func (f *handlerRepository) ListAuditEvents(_ context.Context, query domain.AuditEventQuery) (domain.AuditEventList, error) {
 	f.received = query
 	return f.result, nil
+}
+
+func (f *handlerRepository) ExportAuditEvents(_ context.Context, query domain.AuditEventQuery) ([]domain.AuditEvent, error) {
+	f.exportedQuery = query
+	return f.exported, nil
 }
 
 func withSession(request *http.Request, role domain.Role) *http.Request {
@@ -84,5 +92,23 @@ func TestAuditHistoryRouteRejectsInvalidPagination(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAuditHistoryExportRoute(t *testing.T) {
+	repository := &handlerRepository{exported: []domain.AuditEvent{{ID: 1, Action: "vm.start"}}}
+	router := chi.NewRouter()
+	New(audithistoryapp.New(repository)).Mount(router)
+	request := withSession(httptest.NewRequest(http.MethodGet, "/audit-events/export?format=csv&targetId=uuid-a&from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z", nil), domain.RoleAdmin)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/csv") || !strings.Contains(recorder.Header().Get("Content-Disposition"), ".csv") {
+		t.Fatalf("headers = %+v", recorder.Header())
+	}
+	if repository.exportedQuery.TargetID != "uuid-a" || repository.exportedQuery.From.IsZero() || repository.exportedQuery.To.IsZero() {
+		t.Fatalf("query = %+v", repository.exportedQuery)
 	}
 }

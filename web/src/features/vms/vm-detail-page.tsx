@@ -478,6 +478,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           error={metricsQuery.isError ? (metricsQuery.error instanceof Error ? metricsQuery.error.message : "无法读取虚拟机资源指标") : undefined}
           testId="vm-metrics"
           historyKey={uuid}
+          showDiskIO
         />
       </div>
 

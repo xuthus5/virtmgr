@@ -1,4 +1,4 @@
-import type { AuditEventFilters, AuditEventList, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -48,6 +48,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (typeof nextToken === "string") csrfToken = nextToken;
   }
   return payload as T;
+}
+
+function auditQueryParams(filters: AuditEventFilters, pagination: boolean): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.actor) params.set("actor", filters.actor);
+  if (filters.action) params.set("action", filters.action);
+  if (filters.targetKind) params.set("targetKind", filters.targetKind);
+  if (filters.targetId) params.set("targetId", filters.targetId);
+  if (filters.result) params.set("result", filters.result);
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (pagination && filters.page) params.set("page", String(filters.page));
+  if (pagination && filters.pageSize) params.set("pageSize", String(filters.pageSize));
+  return params;
+}
+
+async function download(path: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(path, { credentials: "same-origin" });
+  if (!response.ok) {
+    let code = "HTTP_ERROR";
+    let message = `请求失败 (${response.status})`;
+    try {
+      const body = await response.json() as { error?: { code?: string; message?: string } };
+      code = body.error?.code ?? code;
+      message = body.error?.message ?? message;
+    } catch {
+      // Keep the status-based fallback when the response is not JSON.
+    }
+    if (response.status === 401) {
+      csrfToken = "";
+      if (typeof window !== "undefined") window.dispatchEvent(new Event(unauthorizedEvent));
+    }
+    throw new ApiError(response.status, code, message);
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return { blob: await response.blob(), filename: match?.[1] ?? "virtmgr-export" };
 }
 
 export const api = {
@@ -288,15 +325,14 @@ export const api = {
   },
   task: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`),
   auditEvents: (filters: AuditEventFilters = {}) => {
-    const params = new URLSearchParams();
-    if (filters.actor) params.set("actor", filters.actor);
-    if (filters.action) params.set("action", filters.action);
-    if (filters.targetKind) params.set("targetKind", filters.targetKind);
-    if (filters.result) params.set("result", filters.result);
-    if (filters.page) params.set("page", String(filters.page));
-    if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+    const params = auditQueryParams(filters, true);
     const suffix = params.toString();
     return request<AuditEventList>(`/api/v1/audit-events${suffix ? `?${suffix}` : ""}`);
+  },
+  exportAuditEvents: (filters: AuditEventFilters, format: AuditExportFormat) => {
+    const params = auditQueryParams(filters, false);
+    params.set("format", format);
+    return download(`/api/v1/audit-events/export?${params.toString()}`);
   },
   users: () => request<UserList>("/api/v1/users"),
   createUser: (input: UserCreateInput) => request<User>("/api/v1/users", {
@@ -306,6 +342,18 @@ export const api = {
   updateUser: (id: number, input: UserUpdateInput) => request<User>(`/api/v1/users/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
+  }),
+  changePassword: (input: ChangePasswordInput) => request<void>("/api/v1/users/me/password", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  }),
+  resetUserPassword: (id: number, password: string) => request<void>(`/api/v1/users/${id}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  }),
+  userSessions: (id: number) => request<UserSessionList>(`/api/v1/users/${id}/sessions`),
+  revokeUserSession: (id: number, sessionId: string) => request<void>(`/api/v1/users/${id}/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
   }),
   settings: () => request<Settings>("/api/v1/settings"),
   updateSettings: (input: SettingsUpdateInput) => request<Settings>("/api/v1/settings", {

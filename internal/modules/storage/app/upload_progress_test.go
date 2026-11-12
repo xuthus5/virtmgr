@@ -78,7 +78,7 @@ func TestUploadVolumeRecordsTaskLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadVolume() error = %v", err)
 	}
-	if result.Name != "install.iso" || len(tasks.starts) != 1 || len(tasks.progresses) == 0 || len(tasks.succeeded) != 1 || tasks.succeeded[0] != "ISO 上传完成" {
+	if result.Name != "install.iso" || len(tasks.starts) != 1 || len(tasks.progresses) == 0 || len(tasks.succeeded) != 1 || tasks.succeeded[0] != "存储卷上传完成" {
 		t.Fatalf("result=%+v starts=%v progresses=%v succeeded=%v", result, tasks.starts, tasks.progresses, tasks.succeeded)
 	}
 	if tasks.starts[0] != "storage.volume.upload|storage_volume|iso-store/install.iso|operator|正在上传 install.iso" {

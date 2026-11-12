@@ -67,7 +67,7 @@ func (c *Client) VMMetrics(ctx context.Context, uuid string) (domain.MetricsCoun
 			memoryUsed = min(rss, memoryTotal)
 		}
 	}
-	rxBytes, txBytes := domainNetworkCounters(dom)
+	disks, interfaces, rxBytes, txBytes := domainRuntimeCounters(dom)
 	return domain.MetricsCounters{
 		CPUTimeNanos:     info.CpuTime,
 		CPUCapacity:      uint64(info.NrVirtCpu),
@@ -75,6 +75,8 @@ func (c *Client) VMMetrics(ctx context.Context, uuid string) (domain.MetricsCoun
 		MemoryTotalBytes: memoryTotal,
 		NetworkRxBytes:   rxBytes,
 		NetworkTxBytes:   txBytes,
+		Disks:            disks,
+		Interfaces:       interfaces,
 	}, nil
 }
 
@@ -131,11 +133,33 @@ func parseDomainInterfaceTargets(text string) []string {
 	return targets
 }
 
-func domainNetworkCounters(dom *libvirt.Domain) (uint64, uint64) {
+func domainRuntimeCounters(dom *libvirt.Domain) ([]domain.MetricsDiskCounters, []domain.MetricsInterfaceCounters, uint64, uint64) {
 	xmlText, err := dom.GetXMLDesc(0)
 	if err != nil {
-		return 0, 0
+		return nil, nil, 0, 0
 	}
+	details, err := parseDomainXML(xmlText)
+	if err != nil {
+		return nil, nil, 0, 0
+	}
+	disks := make([]domain.MetricsDiskCounters, 0, len(details.Disks))
+	for _, disk := range details.Disks {
+		if disk.ReadOnly || disk.Device != "disk" || strings.TrimSpace(disk.Target) == "" {
+			continue
+		}
+		stats, err := dom.BlockStats(disk.Target)
+		if err != nil {
+			continue
+		}
+		disks = append(disks, domain.MetricsDiskCounters{
+			Target:          disk.Target,
+			ReadBytes:       nonNegativeCounter(stats.RdBytesSet, stats.RdBytes),
+			WriteBytes:      nonNegativeCounter(stats.WrBytesSet, stats.WrBytes),
+			ReadOperations:  nonNegativeCounter(stats.RdReqSet, stats.RdReq),
+			WriteOperations: nonNegativeCounter(stats.WrReqSet, stats.WrReq),
+		})
+	}
+	interfaces := make([]domain.MetricsInterfaceCounters, 0)
 	var rxBytes uint64
 	var txBytes uint64
 	for _, target := range parseDomainInterfaceTargets(xmlText) {
@@ -143,14 +167,20 @@ func domainNetworkCounters(dom *libvirt.Domain) (uint64, uint64) {
 		if err != nil {
 			continue
 		}
-		if stats.RxBytesSet && stats.RxBytes > 0 {
-			rxBytes += uint64(stats.RxBytes)
-		}
-		if stats.TxBytesSet && stats.TxBytes > 0 {
-			txBytes += uint64(stats.TxBytes)
-		}
+		rx := nonNegativeCounter(stats.RxBytesSet, stats.RxBytes)
+		tx := nonNegativeCounter(stats.TxBytesSet, stats.TxBytes)
+		interfaces = append(interfaces, domain.MetricsInterfaceCounters{Name: target, RxBytes: rx, TxBytes: tx})
+		rxBytes += rx
+		txBytes += tx
 	}
-	return rxBytes, txBytes
+	return disks, interfaces, rxBytes, txBytes
+}
+
+func nonNegativeCounter(set bool, value int64) uint64 {
+	if !set || value <= 0 {
+		return 0
+	}
+	return uint64(value)
 }
 
 func readHostNetworkCounters() (uint64, uint64) {

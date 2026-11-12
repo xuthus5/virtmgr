@@ -135,22 +135,46 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 		builder.WriteString("<os><type arch='x86_64'>hvm</type>")
 	}
 	builder.WriteString("</os><features><acpi/><apic/></features><devices>")
-	diskBootOrder := "2"
-	if spec.ISOPath == "" {
-		diskBootOrder = "1"
+	diskBus := spec.DiskBus
+	if diskBus == "" {
+		diskBus = domain.VMDiskBusVirtio
 	}
-	fmt.Fprintf(&builder, "<disk type='file' device='disk'><driver name='qemu' type='%s'/><source file='%s'/><target dev='vda' bus='virtio'/><boot order='%s'/></disk>",
-		escapeXML(spec.DiskFormat), escapeXML(spec.DiskPath), diskBootOrder)
+	nicModel := spec.NICModel
+	if nicModel == "" {
+		nicModel = domain.VMNICModelVirtio
+	}
+	diskTarget, nextTarget := "vda", "sdb"
+	if diskBus != domain.VMDiskBusVirtio {
+		diskTarget = "sda"
+	}
+	diskBootOrder := "1"
+	cdromBootOrder := "2"
+	if spec.ISOPath != "" && spec.BootOrder != domain.VMBootOrderDiskFirst {
+		diskBootOrder, cdromBootOrder = "2", "1"
+	}
+	if diskBus == domain.VMDiskBusSCSI {
+		builder.WriteString("<controller type='scsi' index='0' model='virtio-scsi'/>")
+	}
+	fmt.Fprintf(&builder, "<disk type='file' device='disk'><driver name='qemu' type='%s'/><source file='%s'/><target dev='%s' bus='%s'/><boot order='%s'/></disk>",
+		escapeXML(spec.DiskFormat), escapeXML(spec.DiskPath), diskTarget, diskBus, diskBootOrder)
 	if spec.ISOPath != "" {
-		fmt.Fprintf(&builder, "<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='sda' bus='sata'/><readonly/><boot order='1'/></disk>", escapeXML(spec.ISOPath))
+		fmt.Fprintf(&builder, "<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='%s' bus='sata'/><readonly/><boot order='%s'/></disk>", escapeXML(spec.ISOPath), nextTarget, cdromBootOrder)
+		nextTarget = nextSATAAndSCSITarget(nextTarget)
 	}
 	if cloudInitPath != "" {
-		fmt.Fprintf(&builder, "<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='sdb' bus='sata'/><readonly/><serial>cloud-init</serial></disk>", escapeXML(cloudInitPath))
+		fmt.Fprintf(&builder, "<disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='%s' bus='sata'/><readonly/><serial>cloud-init</serial></disk>", escapeXML(cloudInitPath), nextTarget)
 	}
-	fmt.Fprintf(&builder, "<interface type='network'><source network='%s'/><model type='virtio'/></interface>", escapeXML(spec.Network))
+	fmt.Fprintf(&builder, "<interface type='network'><source network='%s'/><model type='%s'/></interface>", escapeXML(spec.Network), nicModel)
 	builder.WriteString("<graphics type='vnc' listen='127.0.0.1' autoport='yes'/><video><model type='virtio'/></video>")
 	builder.WriteString("</devices></domain>")
 	return builder.String()
+}
+
+func nextSATAAndSCSITarget(current string) string {
+	if current == "" || current[len(current)-1] == 'z' {
+		return current
+	}
+	return current[:len(current)-1] + string(current[len(current)-1]+1)
 }
 
 func escapeXML(value string) string {

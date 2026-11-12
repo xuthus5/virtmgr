@@ -40,6 +40,23 @@ export type UserUpdateInput = {
   disabled: boolean;
 };
 
+export type ChangePasswordInput = {
+  currentPassword: string;
+  newPassword: string;
+};
+
+export type UserSession = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+};
+
+export type UserSessionList = {
+  items: UserSession[];
+  total: number;
+};
+
 export type VMState = "running" | "blocked" | "paused" | "shutting-down" | "crashed" | "suspended" | "shutoff" | "unknown";
 
 export type Disk = {
@@ -99,6 +116,9 @@ export type VMDiskResizeInput = {
 };
 
 export type VMFirmware = "bios" | "uefi";
+export type VMDiskBus = "virtio" | "sata" | "scsi";
+export type VMNICModel = "virtio" | "e1000";
+export type VMBootOrder = "auto" | "disk-first" | "cdrom-first";
 
 export type CloudInitInput = {
   userData: string;
@@ -131,8 +151,11 @@ export type VMCreateInput = {
   memoryMiB: number;
   diskPath: string;
   diskFormat: string;
+  diskBus?: VMDiskBus;
   network: string;
+  nicModel?: VMNICModel;
   isoPath?: string;
+  bootOrder?: VMBootOrder;
   firmware: VMFirmware;
   secureBoot: boolean;
   cloudInit?: CloudInitInput;
@@ -584,6 +607,23 @@ export type ResourceMetrics = {
   networkTxBytes: number;
   networkRxBytesPerSecond: number;
   networkTxBytesPerSecond: number;
+  diskReadBytes: number;
+  diskWriteBytes: number;
+  diskReadOperations: number;
+  diskWriteOperations: number;
+  diskReadBytesPerSecond: number;
+  diskWriteBytesPerSecond: number;
+  diskReadOperationsPerSecond: number;
+  diskWriteOperationsPerSecond: number;
+  interfaces?: NetworkInterfaceMetrics[];
+};
+
+export type NetworkInterfaceMetrics = {
+  name: string;
+  rxBytes: number;
+  txBytes: number;
+  rxBytesPerSecond: number;
+  txBytesPerSecond: number;
 };
 
 export type HostMetrics = ResourceMetrics & {
@@ -808,10 +848,15 @@ export type AuditEventFilters = {
   actor?: string;
   action?: string;
   targetKind?: string;
+  targetId?: string;
   result?: AuditResult;
+  from?: string;
+  to?: string;
   page?: number;
   pageSize?: number;
 };
+
+export type AuditExportFormat = "json" | "csv";
 
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 

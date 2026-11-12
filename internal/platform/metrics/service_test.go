@@ -104,6 +104,40 @@ func TestServiceComputesVMRatesAndMasksCounterReset(t *testing.T) {
 	}
 }
 
+func TestServiceComputesDiskAndPerInterfaceRates(t *testing.T) {
+	source := &fakeSource{vm: domain.MetricsCounters{Disks: []domain.MetricsDiskCounters{{
+		Target: "vda", ReadBytes: 1000, WriteBytes: 2000, ReadOperations: 10, WriteOperations: 20,
+	}}, Interfaces: []domain.MetricsInterfaceCounters{
+		{Name: "vnet0", RxBytes: 4000, TxBytes: 3000},
+		{Name: "vnet1", RxBytes: 100, TxBytes: 200},
+	}}}
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	service := New(source, WithClock(func() time.Time { return now }))
+	if _, err := service.VM(context.Background(), "vm-a"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	source.vm = domain.MetricsCounters{Disks: []domain.MetricsDiskCounters{{
+		Target: "vda", ReadBytes: 5000, WriteBytes: 6000, ReadOperations: 30, WriteOperations: 50,
+	}}, Interfaces: []domain.MetricsInterfaceCounters{
+		{Name: "vnet0", RxBytes: 8000, TxBytes: 5000},
+		{Name: "vnet1", RxBytes: 300, TxBytes: 600},
+	}}
+	result, err := service.VM(context.Background(), "vm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DiskReadBytes != 5000 || result.DiskWriteBytes != 6000 || result.DiskReadOperations != 30 || result.DiskWriteOperations != 50 {
+		t.Fatalf("disk counters = %+v", result.ResourceMetrics)
+	}
+	if result.DiskReadBytesPerSecond != 2000 || result.DiskWriteBytesPerSecond != 2000 || result.DiskReadOperationsPerSecond != 10 || result.DiskWriteOperationsPerSecond != 15 {
+		t.Fatalf("disk rates = %+v", result.ResourceMetrics)
+	}
+	if len(result.Interfaces) != 2 || result.Interfaces[0].RxBytesPerSecond != 2000 || result.Interfaces[0].TxBytesPerSecond != 1000 || result.Interfaces[1].RxBytesPerSecond != 100 || result.Interfaces[1].TxBytesPerSecond != 200 {
+		t.Fatalf("interfaces = %+v", result.Interfaces)
+	}
+}
+
 func TestServiceClampsCPUAndPropagatesErrors(t *testing.T) {
 	source := &fakeSource{host: domain.MetricsCounters{CPUTimeNanos: uint64(time.Second), CPUCapacity: 1}}
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)

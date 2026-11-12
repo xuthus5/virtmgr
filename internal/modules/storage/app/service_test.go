@@ -361,7 +361,7 @@ func TestUploadVolumeRejectsInvalidRequests(t *testing.T) {
 		{name: "missing body", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: int64(minVolumeBytes), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "missing size", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
 		{name: "too small", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: 1, Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrInvalidInput},
-		{name: "too large", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: int64(maxVolumeBytes) + 1, Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrTooLarge},
+		{name: "too large", command: UploadVolumeCommand{Pool: "iso-store", Name: "install.iso", Size: int64(maxUploadBytes) + 1, Body: validBody(), Request: MutationContext{Session: operatorSession()}}, want: domain.ErrTooLarge},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &fakeRepository{}
@@ -374,6 +374,38 @@ func TestUploadVolumeRejectsInvalidRequests(t *testing.T) {
 				t.Fatal("rejected request reached repository")
 			}
 			if len(audit.events) != 1 || audit.events[0].Result != "failure" {
+				t.Fatalf("audit events = %+v", audit.events)
+			}
+		})
+	}
+}
+
+func TestUploadVolumeDerivesDiskImageFormat(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		volumeName string
+		format     string
+	}{
+		{name: "iso", volumeName: "installer.iso", format: "raw"},
+		{name: "qcow2", volumeName: "base-image.qcow2", format: "qcow2"},
+		{name: "raw", volumeName: "base-image.raw", format: "raw"},
+		{name: "uppercase", volumeName: "BASE-IMAGE.QCOW2", format: "qcow2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			audit := &fakeAuditRecorder{}
+			size := int64(minVolumeBytes)
+			result, err := New(repository, audit, false).UploadVolume(context.Background(), UploadVolumeCommand{
+				Pool: "images", Name: test.volumeName, Size: size, Body: bytes.NewReader(make([]byte, size)),
+				Request: MutationContext{Session: operatorSession()},
+			})
+			if err != nil {
+				t.Fatalf("UploadVolume() error = %v", err)
+			}
+			if repository.uploadSpec.Format != test.format || result.Format != test.format {
+				t.Fatalf("format = %q, result = %+v", repository.uploadSpec.Format, result)
+			}
+			if len(audit.events) != 1 || audit.events[0].Detail["format"] != test.format {
 				t.Fatalf("audit events = %+v", audit.events)
 			}
 		})

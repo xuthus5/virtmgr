@@ -92,9 +92,21 @@ func (s *Service) sample(key string, counters domain.MetricsCounters) domain.Res
 		MemoryTotalBytes: counters.MemoryTotalBytes,
 		NetworkRxBytes:   counters.NetworkRxBytes,
 		NetworkTxBytes:   counters.NetworkTxBytes,
+		Interfaces:       make([]domain.NetworkInterfaceMetrics, 0, len(counters.Interfaces)),
 	}
 	previous, ok := s.previous[key]
 	s.previous[key] = previousSample{at: now, counters: counters}
+	for _, currentDisk := range counters.Disks {
+		result.DiskReadBytes += currentDisk.ReadBytes
+		result.DiskWriteBytes += currentDisk.WriteBytes
+		result.DiskReadOperations += currentDisk.ReadOperations
+		result.DiskWriteOperations += currentDisk.WriteOperations
+	}
+	for _, currentInterface := range counters.Interfaces {
+		result.Interfaces = append(result.Interfaces, domain.NetworkInterfaceMetrics{
+			Name: currentInterface.Name, RxBytes: currentInterface.RxBytes, TxBytes: currentInterface.TxBytes,
+		})
+	}
 	if !ok || !now.After(previous.at) {
 		return result
 	}
@@ -106,6 +118,33 @@ func (s *Service) sample(key string, counters domain.MetricsCounters) domain.Res
 	result.CPUPercent = cpuPercent(counters, previous.counters, elapsed)
 	result.NetworkRxBytesPerSecond = counterRate(previous.counters.NetworkRxBytes, counters.NetworkRxBytes, elapsed)
 	result.NetworkTxBytesPerSecond = counterRate(previous.counters.NetworkTxBytes, counters.NetworkTxBytes, elapsed)
+	previousDisks := make(map[string]domain.MetricsDiskCounters, len(previous.counters.Disks))
+	for _, disk := range previous.counters.Disks {
+		previousDisks[disk.Target] = disk
+	}
+	for _, currentDisk := range counters.Disks {
+		previousDisk, exists := previousDisks[currentDisk.Target]
+		if !exists {
+			continue
+		}
+		result.DiskReadBytesPerSecond += counterRate(previousDisk.ReadBytes, currentDisk.ReadBytes, elapsed)
+		result.DiskWriteBytesPerSecond += counterRate(previousDisk.WriteBytes, currentDisk.WriteBytes, elapsed)
+		result.DiskReadOperationsPerSecond += counterRate(previousDisk.ReadOperations, currentDisk.ReadOperations, elapsed)
+		result.DiskWriteOperationsPerSecond += counterRate(previousDisk.WriteOperations, currentDisk.WriteOperations, elapsed)
+	}
+	previousInterfaces := make(map[string]domain.MetricsInterfaceCounters, len(previous.counters.Interfaces))
+	for _, previousInterface := range previous.counters.Interfaces {
+		previousInterfaces[previousInterface.Name] = previousInterface
+	}
+	for index := range result.Interfaces {
+		currentInterface := counters.Interfaces[index]
+		previousInterface, exists := previousInterfaces[currentInterface.Name]
+		if !exists {
+			continue
+		}
+		result.Interfaces[index].RxBytesPerSecond = counterRate(previousInterface.RxBytes, currentInterface.RxBytes, elapsed)
+		result.Interfaces[index].TxBytesPerSecond = counterRate(previousInterface.TxBytes, currentInterface.TxBytes, elapsed)
+	}
 	return result
 }
 

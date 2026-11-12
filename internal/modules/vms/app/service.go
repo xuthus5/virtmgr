@@ -933,15 +933,33 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	if _, ok := supportedFormats[spec.DiskFormat]; !ok {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: disk format must be qcow2 or raw", domain.ErrInvalidInput)
 	}
+	diskBus, ok := domain.NormalizeVMDiskBus(string(spec.DiskBus))
+	if !ok {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: disk bus must be virtio, sata or scsi", domain.ErrInvalidInput)
+	}
+	spec.DiskBus = diskBus
 	if !networkPattern.MatchString(spec.Network) {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid network name", domain.ErrInvalidInput)
 	}
+	nicModel, ok := domain.NormalizeVMNICModel(string(spec.NICModel))
+	if !ok {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: NIC model must be virtio or e1000", domain.ErrInvalidInput)
+	}
+	spec.NICModel = nicModel
 	if spec.ISOPath != "" {
 		if !validAbsolutePath(spec.ISOPath) {
 			return domain.VMCreateSpec{}, fmt.Errorf("%w: ISO path must be absolute", domain.ErrInvalidInput)
 		}
 		spec.ISOPath = filepath.Clean(spec.ISOPath)
 	}
+	bootOrder, ok := domain.NormalizeVMBootOrder(string(spec.BootOrder))
+	if !ok {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: boot order must be auto, disk-first or cdrom-first", domain.ErrInvalidInput)
+	}
+	if bootOrder == domain.VMBootOrderCDROMFirst && spec.ISOPath == "" {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: cdrom-first boot order requires an ISO path", domain.ErrInvalidInput)
+	}
+	spec.BootOrder = bootOrder
 	if spec.CloudInit != nil {
 		userData := strings.TrimSpace(spec.CloudInit.UserData)
 		pool := strings.TrimSpace(spec.CloudInit.Pool)
@@ -974,7 +992,11 @@ func specDetail(spec domain.VMCreateSpec) map[string]any {
 		"vcpus":      spec.VCPUs,
 		"memoryMiB":  spec.MemoryMiB,
 		"diskPath":   spec.DiskPath,
+		"diskFormat": spec.DiskFormat,
+		"diskBus":    spec.DiskBus,
 		"network":    spec.Network,
+		"nicModel":   spec.NICModel,
+		"bootOrder":  spec.BootOrder,
 		"firmware":   spec.Firmware,
 		"secureBoot": spec.SecureBoot,
 		"cloudInit":  spec.CloudInit != nil,

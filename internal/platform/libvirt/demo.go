@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -169,6 +170,16 @@ func (d *DemoBackend) VMMetrics(_ context.Context, uuid string) (domain.MetricsC
 		counters.CPUTimeNanos = call * uint64(400*time.Millisecond)
 		counters.NetworkRxBytes = call * 2 * 1024 * 1024
 		counters.NetworkTxBytes = call * 1024 * 1024
+		counters.Disks = []domain.MetricsDiskCounters{{
+			Target: "vda", ReadBytes: call * 512 * 1024, WriteBytes: call * 256 * 1024,
+			ReadOperations: call * 24, WriteOperations: call * 12,
+		}}
+		for index := range vm.Interfaces {
+			counters.Interfaces = append(counters.Interfaces, domain.MetricsInterfaceCounters{
+				Name: "vnet" + strconv.Itoa(index), RxBytes: call * uint64(2+index) * 1024 * 1024,
+				TxBytes: call * uint64(1+index) * 1024 * 1024,
+			})
+		}
 	}
 	return counters, nil
 }
@@ -1148,7 +1159,7 @@ func (d *DemoBackend) UploadStorageVolume(_ context.Context, poolName string, sp
 		CapacityBytes: spec.CapacityBytes, AllocationBytes: spec.CapacityBytes,
 	}
 	d.volumes[poolName] = append(d.volumes[poolName], volume)
-	d.publish("storage.volume.uploaded", "info", "storage_volume", poolName+"/"+volume.Name, volume.Name, "ISO "+volume.Name+" 已上传")
+	d.publish("storage.volume.uploaded", "info", "storage_volume", poolName+"/"+volume.Name, volume.Name, "存储卷 "+volume.Name+" 已上传")
 	return volume, nil
 }
 

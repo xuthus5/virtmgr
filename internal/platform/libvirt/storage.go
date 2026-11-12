@@ -331,6 +331,14 @@ func (c *Client) UploadStorageVolume(ctx context.Context, poolName string, spec 
 		return domain.StorageVolume{}, fmt.Errorf("finish upload for storage volume %s: %w", spec.Name, err)
 	}
 	committed = true
+	if err := pool.Refresh(0); err == nil {
+		if uploaded, lookupErr := pool.LookupStorageVolByName(spec.Name); lookupErr == nil {
+			defer func() { _ = uploaded.Free() }()
+			if result, infoErr := storageVolumeFromLibvirt(uploaded); infoErr == nil {
+				return result, nil
+			}
+		}
+	}
 	return storageVolumeFromLibvirt(volume)
 }
 

@@ -109,3 +109,49 @@ func TestListAndUpdateUsers(t *testing.T) {
 		t.Fatalf("missing user update error = %v", err)
 	}
 }
+
+func TestPasswordAndSessionLifecycle(t *testing.T) {
+	store := openTestDB(t)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, "viewer", "old-hash", domain.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdatePassword(ctx, user.ID, "new-hash"); err != nil {
+		t.Fatalf("UpdatePassword() error = %v", err)
+	}
+	loaded, err := store.UserByID(ctx, user.ID)
+	if err != nil || loaded.PasswordHash != "new-hash" {
+		t.Fatalf("password = %q, error = %v", loaded.PasswordHash, err)
+	}
+	for _, token := range []string{"current", "other"} {
+		if err := store.CreateSession(ctx, token, "csrf-"+token, user.ID, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions, err := store.ListSessionsByUser(ctx, user.ID)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("sessions = %+v, error = %v", sessions, err)
+	}
+	for _, session := range sessions {
+		if session.ID == "" || session.TokenHash == "" || session.CreatedAt.IsZero() || session.ExpiresAt.IsZero() {
+			t.Fatalf("session metadata = %+v", session)
+		}
+	}
+	if err := store.DeleteOtherSessionsByUser(ctx, user.ID, "current"); err != nil {
+		t.Fatalf("DeleteOtherSessionsByUser() error = %v", err)
+	}
+	sessions, err = store.ListSessionsByUser(ctx, user.ID)
+	if err != nil || len(sessions) != 1 || sessions[0].TokenHash != "current" {
+		t.Fatalf("remaining sessions = %+v, error = %v", sessions, err)
+	}
+	if err := store.DeleteSessionForUser(ctx, user.ID, sessions[0].ID); err != nil {
+		t.Fatalf("DeleteSessionForUser() error = %v", err)
+	}
+	if _, err := store.SessionByTokenHash(ctx, "current"); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("revoked session error = %v", err)
+	}
+	if err := store.DeleteSessionForUser(ctx, user.ID, "missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing session error = %v", err)
+	}
+}

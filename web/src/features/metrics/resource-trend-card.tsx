@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, MemoryStick, Network } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Network } from "lucide-react";
 import type { ResourceMetrics } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -92,9 +92,10 @@ type ResourceTrendCardProps = {
   error?: string;
   testId: string;
   historyKey: string;
+  showDiskIO?: boolean;
 };
 
-export function ResourceTrendCard({ title, description, metrics, isLoading, error, testId, historyKey }: ResourceTrendCardProps) {
+export function ResourceTrendCard({ title, description, metrics, isLoading, error, testId, historyKey, showDiskIO = false }: ResourceTrendCardProps) {
   const [history, setHistory] = useState<ResourceMetrics[]>([]);
 
   useEffect(() => {
@@ -123,6 +124,7 @@ export function ResourceTrendCard({ title, description, metrics, isLoading, erro
         ) : isLoading && !latest ? (
           <p className="text-sm text-muted-foreground" role="status">正在采集资源指标…</p>
         ) : latest ? (
+          <div className="space-y-3">
           <div className="grid gap-3 lg:grid-cols-3">
             <TrendMetric
               icon={Cpu}
@@ -151,6 +153,33 @@ export function ResourceTrendCard({ title, description, metrics, isLoading, erro
                 { label: "发送", values: history.map((item) => item.networkTxBytesPerSecond), className: "text-success" },
               ] }}
             />
+            {showDiskIO ? (
+              <TrendMetric
+                icon={HardDrive}
+                label="磁盘吞吐"
+                value={`读 ${formatRate(latest.diskReadBytesPerSecond)}`}
+                detail={`写 ${formatRate(latest.diskWriteBytesPerSecond)} · IOPS 读 ${latest.diskReadOperationsPerSecond}/s 写 ${latest.diskWriteOperationsPerSecond}/s`}
+                testId={`${testId}-disk`}
+                chart={{ testId: `${testId}-disk-chart`, series: [
+                  { label: "磁盘读", values: history.map((item) => item.diskReadBytesPerSecond), className: "text-primary" },
+                  { label: "磁盘写", values: history.map((item) => item.diskWriteBytesPerSecond), className: "text-warning" },
+                ] }}
+              />
+            ) : null}
+          </div>
+          {latest.interfaces?.length ? (
+            <div className="rounded-lg border bg-muted/20 p-4" data-testid={`${testId}-interfaces`}>
+              <p className="flex items-center gap-2 text-sm font-medium"><Network className="h-4 w-4 text-primary" />分网卡吞吐</p>
+              <div className="mt-2 space-y-2">
+                {latest.interfaces.map((networkInterface) => (
+                  <div key={networkInterface.name} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <Badge variant="outline">{networkInterface.name}</Badge>
+                    <span className="font-mono tabular-nums text-muted-foreground">↓ {formatRate(networkInterface.rxBytesPerSecond)} · ↑ {formatRate(networkInterface.txBytesPerSecond)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">暂无资源指标。</p>

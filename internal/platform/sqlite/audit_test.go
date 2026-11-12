@@ -104,7 +104,7 @@ func TestListAuditEventsFilters(t *testing.T) {
 	}
 
 	filtered, err := store.ListAuditEvents(context.Background(), domain.AuditEventQuery{
-		Actor: " admin ", Action: "vm.start", TargetKind: "vm", Result: "failure",
+		Actor: " admin ", Action: "vm.start", TargetKind: "vm", TargetID: " uuid-2 ", Result: "failure",
 	})
 	if err != nil {
 		t.Fatalf("ListAuditEvents() error = %v", err)
@@ -119,6 +119,17 @@ func TestListAuditEventsFilters(t *testing.T) {
 	}
 	if empty.Total != 0 || len(empty.Items) != 0 {
 		t.Fatalf("empty events = %+v", empty)
+	}
+
+	rangeFiltered, err := store.ListAuditEvents(context.Background(), domain.AuditEventQuery{
+		From: time.Unix(1_700_000_050, 0), To: time.Unix(1_700_000_150, 0),
+	})
+	if err != nil || rangeFiltered.Total != 1 || rangeFiltered.Items[0].TargetID != "uuid-2" {
+		t.Fatalf("range filtered events = %+v, error = %v", rangeFiltered, err)
+	}
+	exported, err := store.ExportAuditEvents(context.Background(), domain.AuditEventQuery{TargetID: "uuid-1"})
+	if err != nil || len(exported) != 1 || exported[0].Actor != "admin" {
+		t.Fatalf("exported events = %+v, error = %v", exported, err)
 	}
 }
 

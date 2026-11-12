@@ -84,6 +84,9 @@ func TestDemoBackendMetrics(t *testing.T) {
 	if first.CPUTimeNanos >= second.CPUTimeNanos || first.CPUCapacity != 8 || first.MemoryTotalBytes != 16<<30 || first.MemoryUsedBytes == 0 {
 		t.Fatalf("vm metrics = first %+v second %+v", first, second)
 	}
+	if len(first.Disks) == 0 || first.Disks[0].ReadBytes == 0 || len(first.Interfaces) == 0 || first.Interfaces[0].RxBytes == 0 {
+		t.Fatalf("vm runtime counters = %+v", first)
+	}
 	if _, err := backend.VMMetrics(ctx, "missing"); err != domain.ErrNotFound {
 		t.Fatalf("missing metrics error = %v", err)
 	}

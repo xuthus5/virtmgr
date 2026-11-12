@@ -51,19 +51,19 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 |---|---|
 | 总览 | 宿主机 CPU、内存、libvirt 版本、虚拟机数量、资源分配率、异常提醒和近期虚拟机状态 |
 | 虚拟机 | 搜索和筛选域；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
-| 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、网络选择、ISO、自动启动，以及带实时 YAML 预览和源码编辑的可交互 Cloud-init seed ISO |
-| 虚拟机详情 | 硬件摘要、CPU/内存/网络实时趋势、磁盘、网卡、Guest Agent 信息、快照和域 XML |
+| 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、磁盘总线（virtio/SATA/SCSI）、网卡型号（virtio/e1000）、启动顺序、网络选择、ISO、自动启动，以及带实时 YAML 预览和源码编辑的可交互 Cloud-init seed ISO |
+| 虚拟机详情 | 硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、分网卡吞吐、磁盘、网卡、Guest Agent 信息、快照和域 XML |
 | Web 控制台 | 页面内嵌或独立窗口打开 noVNC / xterm.js 控制台，支持图形与串口切换、Cockpit 风格组合键、缩放、断开重连、全屏和分离窗口；会话均通过一次性 token 与服务端 WebSocket 代理 |
 | 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整和磁盘扩容 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
 | 快照 | 创建、回滚、删除快照，并按保留策略配置定时快照 |
 | 备份中心 | 集中管理冷备份、完整性校验、恢复为新虚拟机、定时计划、保留清理、固定保留和 libvirt 存储库 |
-| 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；上传 ISO；阻止删除仍在使用的卷 |
+| 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；流式上传 ISO、qcow2 和 raw 镜像；阻止删除仍在使用的卷 |
 | 网络 | NAT 和隔离网络、桥接口、IPv4/DHCP 配置、实时租约、静态 DHCP 主机，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
-| 可观测性 | SSE 实时事件、带进度和失败原因的任务中心、宿主机与虚拟机资源趋势、结构化日志和健康检查 |
-| 安全 | 本地账号、Argon2id 密码、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、审计、CSP 和安全响应头 |
+| 可观测性 | SSE 实时事件、带进度和失败原因的任务中心、宿主机与虚拟机资源趋势、虚拟磁盘 IO 与分网卡指标、结构化日志和健康检查 |
+| 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选与导出的审计、CSP 和安全响应头 |
 | 使用体验 | 响应式布局、固定且可折叠的侧边导航、明暗主题、键盘友好的全局搜索、可访问对话框和危险操作二次确认 |
 | 虚拟机模板 | 复用虚拟机规格、固件/网络默认值和可交互 Cloud-init 默认配置（软件包、启动命令、区域、sudo/SSH 用户），不包含实例名称和磁盘路径 |
 
@@ -255,13 +255,13 @@ VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中
 
 无论角色如何，全局只读模式都会阻止所有基础设施写操作。只读资源查询、域 XML 查看、配置导出、指标和事件查询仍然可用。
 
-管理员可以在 Web 页面中创建用户、修改角色、禁用账号、查看审计日志，并切换持久化的全局只读设置。
+管理员可以在 Web 页面中创建用户、修改角色、禁用账号、重置其他账号密码、查看并撤销登录会话、按时间或目标筛选并导出审计日志，以及切换持久化的全局只读设置。所有本地账号都可以在需要时验证当前密码并修改自己的密码；改密成功后保留当前会话并撤销其他会话。
 
 ## 安全与操作语义
 
 - **libvirt 是唯一事实来源。** VirtMgr 不保存第二份虚拟机清单；libvirt 不可用时页面会明确降级，而不是展示伪造状态。
 - **危险操作必须确认。** 强制下电、强制重启、快照回滚、删除存储卷和删除虚拟机都有明确确认流程，部分删除操作要求输入资源名称。
-- **长任务进入任务中心。** ISO 上传、克隆和冷备份都会展示进度、步骤、失败原因和关联资源。
+- **长任务进入任务中心。** 存储卷上传、克隆和冷备份都会展示进度、步骤、失败原因和关联资源。
 - **备份以新虚拟机方式恢复。** 备份包含持久域 XML、SHA-256 manifest 和可写文件磁盘，不包含内存状态；不支持原地覆盖恢复或内存状态恢复。
 - **磁盘扩容不等于扩展客户机分区。** VirtMgr 只扩展 qcow2/raw 虚拟磁盘。Linux 客户机通常还需执行 `growpart` 和 `resize2fs`/`xfs_growfs`；Windows 客户机需在磁盘管理中扩展卷。不支持缩容。
 - **CPU 与内存调整受 libvirt 上限约束。** 运行中的虚拟机只能在其活动最大值内热调整；提高最大值通常需要先关机。
@@ -285,7 +285,7 @@ API 位于 `/api/v1`，使用 JSON。认证基于 Cookie，写操作还需要 `X
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
 | 网络 | `/api/v1/networks`、`/leases`、`/hosts`、`/actions/{action}` |
-| 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/users`、`/settings` |
+| 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/audit-events/export`、`/users`、`/users/me/password`、`/users/{id}/sessions`、`/settings` |
 
 完整路由和行为说明见 [docs/architecture-design.md](docs/architecture-design.md)。
 
@@ -346,6 +346,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 ## 文档
 
 - [架构设计](docs/architecture-design.md)——产品边界、架构、数据模型、路由、安全和部署细节
+- [产品差距分析](docs/product-gap-analysis.md)——与主流管理工具的差异、单机精品路线和第一批增强状态
 - [备份与恢复方案](docs/backup-design.md)——已实现的冷备份目录、恢复、调度和保留策略
 - [发布流水线](.github/workflows/release.yml)——amd64/arm64 二进制构建与 Release 附件
 - [环境变量示例](deploy/virtmgr.env.example)——生产环境配置模板

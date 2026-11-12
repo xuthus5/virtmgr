@@ -106,6 +106,21 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, role domain.Role, disa
 	return s.UserByID(ctx, id)
 }
 
+func (s *Store) UpdatePassword(ctx context.Context, id int64, passwordHash string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, id)
+	if err != nil {
+		return fmt.Errorf("update user password: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated password count: %w", err)
+	}
+	if affected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -134,7 +149,8 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (domain.Use
 
 func (s *Store) CreateSession(ctx context.Context, tokenHash, csrfToken string, userID int64, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions(token_hash, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions(token_hash, user_id, csrf_token, created_at, expires_at, session_id)
+		 VALUES (?, ?, ?, ?, ?, lower(hex(randomblob(16))))`,
 		tokenHash, userID, csrfToken, time.Now().UTC().Unix(), expiresAt.UTC().Unix(),
 	)
 	if err != nil {
@@ -176,6 +192,64 @@ func (s *Store) SessionByTokenHash(ctx context.Context, tokenHash string) (domai
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListSessionsByUser(ctx context.Context, userID int64) ([]domain.UserSession, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT session_id, token_hash, created_at, expires_at
+		FROM sessions
+		WHERE user_id = ? AND expires_at > ?
+		ORDER BY created_at DESC, session_id ASC`,
+		userID, time.Now().UTC().Unix(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list user sessions: %w", err)
+	}
+	defer rows.Close()
+	sessions := make([]domain.UserSession, 0)
+	for rows.Next() {
+		var session domain.UserSession
+		var createdUnix int64
+		var expiresUnix int64
+		if err := rows.Scan(&session.ID, &session.TokenHash, &createdUnix, &expiresUnix); err != nil {
+			return nil, fmt.Errorf("scan user session: %w", err)
+		}
+		session.CreatedAt = time.Unix(createdUnix, 0).UTC()
+		session.ExpiresAt = time.Unix(expiresUnix, 0).UTC()
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *Store) DeleteSessionForUser(ctx context.Context, userID int64, sessionID string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND session_id = ?`, userID, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete user session: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read deleted session count: %w", err)
+	}
+	if affected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteOtherSessionsByUser(ctx context.Context, userID int64, keepTokenHash string) error {
+	var err error
+	if keepTokenHash == "" {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	} else {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepTokenHash)
+	}
+	if err != nil {
+		return fmt.Errorf("delete user sessions: %w", err)
 	}
 	return nil
 }

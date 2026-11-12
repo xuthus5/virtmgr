@@ -26,7 +26,7 @@ func seedDemoTasks(ctx context.Context, store *sqlite.Store) error {
 		},
 		{
 			ID: "task-demo-iso-upload", Kind: "storage.volume.upload", TargetKind: "storage_volume", TargetID: "iso-store/debian-13-netinst.iso",
-			Status: domain.TaskStatusSucceeded, Progress: 100, Step: "ISO 上传完成", Actor: "admin",
+			Status: domain.TaskStatusSucceeded, Progress: 100, Step: "存储卷上传完成", Actor: "admin",
 			CreatedAt: now.Add(-25 * time.Minute), UpdatedAt: now.Add(-18 * time.Minute),
 		},
 		{

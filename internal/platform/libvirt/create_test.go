@@ -81,3 +81,29 @@ func TestBuildDomainXMLWithoutISO(t *testing.T) {
 		t.Fatalf("unexpected XML: %s", text)
 	}
 }
+
+func TestBuildDomainXMLCustomDevices(t *testing.T) {
+	text := buildDomainXML(domain.VMCreateSpec{
+		Name: "windows-01", VCPUs: 4, MemoryMiB: 8192,
+		DiskPath: "/var/lib/libvirt/images/windows-01.qcow2", DiskFormat: "qcow2",
+		DiskBus: domain.VMDiskBusSCSI, Network: "default", NICModel: domain.VMNICModelE1000,
+		ISOPath: "/var/lib/libvirt/images/windows.iso", BootOrder: domain.VMBootOrderDiskFirst,
+	})
+	for _, fragment := range []string{
+		"<controller type='scsi' index='0' model='virtio-scsi'/>",
+		"<target dev='sda' bus='scsi'/><boot order='1'/>",
+		"<target dev='sdb' bus='sata'/><readonly/><boot order='2'/>",
+		"<model type='e1000'/>",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("XML missing %q: %s", fragment, text)
+		}
+	}
+	details, err := parseDomainXML(text)
+	if err != nil {
+		t.Fatalf("parseDomainXML() error = %v", err)
+	}
+	if len(details.Disks) != 2 || details.Disks[0].Bus != "scsi" || details.Interfaces[0].Model != "e1000" {
+		t.Fatalf("details = %+v", details)
+	}
+}

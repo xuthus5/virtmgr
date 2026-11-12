@@ -164,6 +164,8 @@ func mapError(err error) (int, string, string) {
 		return stdhttp.StatusConflict, "NETWORK_UPDATE_UNSUPPORTED", "当前网络类型不支持修改配置"
 	case errors.Is(err, domain.ErrSelfModification):
 		return stdhttp.StatusConflict, "SELF_MODIFICATION", "不能修改当前登录账号的角色或状态"
+	case errors.Is(err, domain.ErrCurrentPassword):
+		return stdhttp.StatusBadRequest, "CURRENT_PASSWORD_INVALID", "当前密码不正确"
 	case errors.Is(err, domain.ErrNotFound):
 		return stdhttp.StatusNotFound, "NOT_FOUND", "请求的资源不存在"
 	case errors.Is(err, domain.ErrConflict):

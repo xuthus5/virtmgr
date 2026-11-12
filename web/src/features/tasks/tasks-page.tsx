@@ -33,7 +33,7 @@ const kindLabels: Record<string, string> = {
   "vm.snapshot.revert": "回滚快照",
   "vm.snapshot.delete": "删除快照",
   "storage.volume.create": "创建存储卷",
-  "storage.volume.upload": "上传 ISO",
+  "storage.volume.upload": "上传存储卷",
   "storage.volume.delete": "删除存储卷",
   "network.create": "创建虚拟网络",
   "network.start": "启动虚拟网络",

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, ScrollText, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Download, LoaderCircle, ScrollText, ShieldAlert, XCircle } from "lucide-react";
+import { api } from "@/api/client";
 import type { AuditEvent, AuditEventFilters, AuditResult, Role } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
@@ -58,7 +59,7 @@ const actions = [
   { value: "vm_template.update", label: "更新虚拟机模板" },
   { value: "vm_template.delete", label: "删除虚拟机模板" },
   { value: "storage.volume.create", label: "创建存储卷" },
-  { value: "storage.volume.upload", label: "上传 ISO" },
+  { value: "storage.volume.upload", label: "上传镜像/ISO" },
   { value: "storage.volume.delete", label: "删除存储卷" },
   { value: "storage.pool.create", label: "创建存储池" },
   { value: "storage.pool.start", label: "启动存储池" },
@@ -74,6 +75,10 @@ const actions = [
   { value: "network.delete", label: "删除虚拟网络" },
   { value: "user.create", label: "创建用户" },
   { value: "user.update", label: "更新用户" },
+  { value: "user.password.change", label: "修改密码" },
+  { value: "user.password.reset", label: "重置用户密码" },
+  { value: "user.session.revoke", label: "撤销用户会话" },
+  { value: "audit.export", label: "导出审计日志" },
   { value: "settings.readonly.update", label: "更新只读模式" },
 ];
 
@@ -96,6 +101,7 @@ const targetKindLabels: Record<string, string> = {
   storage_volume: "存储卷",
   network: "虚拟网络",
   user: "用户",
+  audit: "审计日志",
   settings: "系统设置",
 };
 
@@ -161,11 +167,19 @@ export function AuditPage() {
   const session = useSessionQuery();
   const [action, setAction] = useState("");
   const [result, setResult] = useState<"" | AuditResult>("");
+  const [targetId, setTargetId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState<"json" | "csv" | "">("");
+  const [exportError, setExportError] = useState("");
   const isAdmin = session.data?.user.role === "admin";
   const filters: AuditEventFilters = {
     action: action || undefined,
     result: result || undefined,
+    targetId: targetId.trim() || undefined,
+    from: from ? new Date(from).toISOString() : undefined,
+    to: to ? new Date(to).toISOString() : undefined,
     page,
     pageSize,
   };
@@ -193,6 +207,30 @@ export function AuditPage() {
   const firstItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastItem = Math.min(page * pageSize, total);
 
+  async function exportAudit(format: "json" | "csv") {
+    if (from && to && new Date(from) > new Date(to)) {
+      setExportError("开始时间不能晚于结束时间。");
+      return;
+    }
+    setExportError("");
+    setExporting(format);
+    try {
+      const { blob, filename } = await api.exportAuditEvents(filters, format);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : "导出审计日志失败，请稍后重试。");
+    } finally {
+      setExporting("");
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -208,7 +246,7 @@ export function AuditPage() {
           <CardDescription>按执行时间倒序排列。审计记录只读，查询不会修改宿主机状态。</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center" data-testid="audit-filters">
+          <div className="flex flex-col gap-3 border-b p-4 xl:flex-row xl:items-center xl:flex-wrap" data-testid="audit-filters">
             <select
               aria-label="审计动作筛选"
               data-testid="audit-action-filter"
@@ -230,8 +268,40 @@ export function AuditPage() {
               <option value="success">成功</option>
               <option value="failure">失败</option>
             </select>
-            <p className="text-xs text-muted-foreground md:ml-auto" data-testid="audit-total">共 {total} 条审计记录</p>
+            <input
+              aria-label="审计目标 ID 筛选"
+              data-testid="audit-target-filter"
+              value={targetId}
+              onChange={(event) => { setTargetId(event.target.value); setPage(1); }}
+              placeholder="目标 ID"
+              className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <input
+              aria-label="审计开始时间"
+              type="datetime-local"
+              value={from}
+              onChange={(event) => { setFrom(event.target.value); setPage(1); }}
+              className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <input
+              aria-label="审计结束时间"
+              type="datetime-local"
+              value={to}
+              onChange={(event) => { setTo(event.target.value); setPage(1); }}
+              className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="flex items-center gap-2 xl:ml-auto">
+              <Button variant="outline" size="sm" data-testid="audit-export-json" disabled={Boolean(exporting)} onClick={() => void exportAudit("json")}>
+                {exporting === "json" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}JSON
+              </Button>
+              <Button variant="outline" size="sm" data-testid="audit-export-csv" disabled={Boolean(exporting)} onClick={() => void exportAudit("csv")}>
+                {exporting === "csv" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}CSV
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground" data-testid="audit-total">共 {total} 条审计记录</p>
           </div>
+
+          {exportError ? <p className="mx-4 mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{exportError}</p> : null}
 
           {query.isLoading ? <LoadingState label="正在读取审计记录" /> : null}
           {query.isError ? <ErrorState message={query.error instanceof Error ? query.error.message : "无法读取审计记录"} onRetry={() => void query.refetch()} className="m-4" /> : null}
