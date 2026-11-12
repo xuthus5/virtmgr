@@ -98,7 +98,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
 
   return (
     <section className={cn("overflow-hidden rounded-xl border bg-card shadow-sm", className)} data-testid={`${prefix}-editor`}>
-      <div className="flex flex-wrap items-start gap-3 border-b bg-muted/25 p-4">
+      <div className="flex flex-col gap-3 border-b bg-muted/25 p-3 sm:flex-row sm:flex-wrap sm:items-start sm:p-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <FileCode2 className="h-4 w-4 text-primary" />
@@ -108,7 +108,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
           </div>
           <p className="mt-1 text-xs text-muted-foreground">用表单填写常用初始化项并实时生成标准 <code className="font-mono">#cloud-config</code> YAML；高级场景可切换到源码模式。</p>
         </div>
-        <div className="inline-flex rounded-lg border bg-card p-0.5" role="tablist" aria-label="Cloud-init 编辑模式">
+        <div className="grid w-full grid-cols-2 rounded-lg border bg-card p-0.5 sm:inline-flex sm:w-auto" role="tablist" aria-label="Cloud-init 编辑模式">
           <button
             type="button"
             role="tab"
@@ -116,7 +116,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
             data-testid={`${prefix}-mode-visual`}
             onClick={showVisualEditor}
             disabled={disabled}
-            className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50", mode === "visual" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            className={cn("inline-flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50", mode === "visual" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
             <Settings2 className="h-3.5 w-3.5" />可视化
           </button>
@@ -127,7 +127,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
             data-testid={`${prefix}-mode-source`}
             onClick={() => { setMode("source"); setModeNotice(""); }}
             disabled={disabled}
-            className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50", mode === "source" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            className={cn("inline-flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50", mode === "source" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
             <Code2 className="h-3.5 w-3.5" />YAML 源码
           </button>
@@ -142,7 +142,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
       ) : null}
 
       {mode === "visual" ? (
-        <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(20rem,0.92fr)]">
+        <div className="grid gap-4 p-3 sm:p-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(20rem,0.92fr)]">
           <div className="space-y-4">
             <div className="rounded-lg border p-3.5">
               <div className="mb-3 flex items-center gap-2">
@@ -280,7 +280,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
             ) : null}
           </div>
 
-          <aside className="flex min-h-[26rem] flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-slate-100">
+          <aside className="flex min-h-[18rem] flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950 text-slate-100 sm:min-h-[26rem]">
             <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
               <Code2 className="h-4 w-4 text-sky-300" />
               <p className="text-xs font-medium">实时 YAML 预览</p>
@@ -293,7 +293,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
           </aside>
         </div>
       ) : (
-        <div className="space-y-3 p-4">
+        <div className="space-y-3 p-3 sm:p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={parsed.cloudConfig ? "secondary" : "outline"}>{parsed.cloudConfig ? "#cloud-config" : "自定义 user-data"}</Badge>
             {parsed.cloudConfig && parsed.syntaxValid ? <Badge variant="success"><CheckCircle2 className="h-3 w-3" />YAML 语法有效</Badge> : null}
@@ -303,7 +303,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
               {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}复制
             </Button>
           </div>
-          <div className="h-[28rem] overflow-hidden rounded-lg border" data-testid={`${prefix}-source-shell`}>
+          <div className="h-[22rem] overflow-hidden rounded-lg border sm:h-[28rem]" data-testid={`${prefix}-source-shell`}>
             <Suspense fallback={<div className="grid h-full place-items-center text-xs text-muted-foreground">正在加载 YAML 编辑器…</div>}>
               <YAMLCodeEditor
                 value={value}
