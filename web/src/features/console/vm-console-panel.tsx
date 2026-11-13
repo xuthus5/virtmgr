@@ -24,6 +24,7 @@ import {
   type ConsoleConnectionState,
   type VNCScaleMode,
 } from "@/features/console/console-model";
+import { consoleSocketTimeoutMs } from "@/features/console/console-socket";
 import { useSerialSession } from "@/features/console/use-serial-session";
 import { useVNCSession } from "@/features/console/use-vnc-session";
 import { cn } from "@/lib/utils";
@@ -67,6 +68,7 @@ export function VMConsolePanel({
   const [kind, setKind] = useState<ConsoleKind | null>(() => resolveConsoleKind(initialKind, graphics, serials));
   const [scaleMode, setScaleMode] = useState<VNCScaleMode>("fit");
   const [connectionRequested, setConnectionRequested] = useState(false);
+  const [connectionStalled, setConnectionStalled] = useState(false);
   const [keyNotice, setKeyNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const serialDevices = serials ?? EMPTY_SERIALS;
@@ -92,7 +94,22 @@ export function VMConsolePanel({
   const activeError = activeKind ? active.error : "";
   const busy = activeState === "authorizing" || activeState === "connecting";
   const connected = activeState === "connected";
-  const statusText = activeError && activeState !== "connected" ? activeError : consoleStateText[activeState];
+  const showBusy = busy && !connectionStalled;
+  const statusText = connectionStalled
+    ? "连接超时，未收到 WebSocket 握手"
+    : activeError && activeState !== "connected"
+      ? activeError
+      : consoleStateText[activeState];
+
+  useEffect(() => {
+    if (!busy) {
+      setConnectionStalled(false);
+      return;
+    }
+    setConnectionStalled(false);
+    const timeout = window.setTimeout(() => setConnectionStalled(true), consoleSocketTimeoutMs + 5_000);
+    return () => window.clearTimeout(timeout);
+  }, [busy, activeKind, uuid]);
 
   useEffect(() => {
     const resolved = resolveConsoleKind(initialKind, graphics, serialDevices);
@@ -186,6 +203,7 @@ export function VMConsolePanel({
       data-testid="vm-console-panel"
       data-kind={activeKind ?? "none"}
       data-state={activeState}
+      data-connection-stalled={connectionStalled}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2">
         <div className="inline-flex rounded-lg border border-slate-700 bg-slate-950 p-0.5" role="tablist" aria-label="控制台类型">
@@ -215,13 +233,13 @@ export function VMConsolePanel({
         </div>
 
         <Badge
-          variant={stateTone(activeState)}
+          variant={connectionStalled ? "destructive" : stateTone(activeState)}
           data-testid={variant === "standalone" ? "vnc-console-status" : "vm-console-status"}
           role="status"
           aria-live="polite"
           className={cn("max-w-full truncate", activeState === "connected" && "border-emerald-500/40 bg-emerald-500/10 text-emerald-300")}
         >
-          {busy ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+          {showBusy ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
           {statusText}
         </Badge>
 
@@ -335,11 +353,18 @@ export function VMConsolePanel({
         {!connected ? (
           <div className="pointer-events-none absolute inset-0 grid place-items-center bg-slate-950/80 p-5">
             <div className="pointer-events-auto w-full max-w-md rounded-xl border border-slate-700 bg-slate-900/95 p-5 text-center shadow-2xl">
-              {busy ? <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-sky-300" /> : activeError ? <AlertTriangle className="mx-auto h-7 w-7 text-rose-300" /> : <Monitor className="mx-auto h-7 w-7 text-slate-300" />}
+              {showBusy ? <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-sky-300" /> : activeError || connectionStalled ? <AlertTriangle className="mx-auto h-7 w-7 text-rose-300" /> : <Monitor className="mx-auto h-7 w-7 text-slate-300" />}
               <p className="mt-3 text-sm text-slate-300" data-testid="vm-console-message">
-                {busy ? `正在准备${activeKind === "serial" ? "串口" : "图形"}控制台，请稍候。` : overlayText || "控制台尚未连接。"}
+                {showBusy
+                  ? `正在准备${activeKind === "serial" ? "串口" : "图形"}控制台，请稍候。`
+                  : connectionStalled
+                    ? "控制台 WebSocket 连接已超时。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问，却拦截 wss 握手；请改用受信任的 HTTPS 域名。"
+                    : overlayText || "控制台尚未连接。"}
               </p>
-              {canOpen && activeKind && !busy ? (
+              {showBusy ? (
+                <p className="mt-2 text-xs text-slate-500">WebSocket 建连最多等待 15 秒，超时后会显示具体原因。</p>
+              ) : null}
+              {canOpen && activeKind && !showBusy ? (
                 <Button type="button" size="sm" className="mt-4" onClick={connect}>
                   <RefreshCw className="h-3.5 w-3.5" />{activeState === "idle" ? "连接控制台" : "重新连接"}
                 </Button>

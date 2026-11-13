@@ -18,8 +18,9 @@ import (
 )
 
 var consoleUpgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 32 * 1024,
+	HandshakeTimeout: 15 * time.Second,
+	ReadBufferSize:   4096,
+	WriteBufferSize:  32 * 1024,
 	CheckOrigin: func(r *stdhttp.Request) bool {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin == "" {

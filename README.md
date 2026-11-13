@@ -222,6 +222,8 @@ Both TLS files must be configured together. Restrict the private key to the serv
 
 Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve WebSocket upgrades for the VNC console, and set `VIRTMGR_COOKIE_SECURE=true` whenever the browser accesses the service over HTTPS. Set `VIRTMGR_TRUSTED_PROXIES` to the reverse proxy address or CIDR (for example `127.0.0.1/32` or `10.0.0.0/8`) before relying on `X-Forwarded-For` or `X-Real-IP`; untrusted clients cannot override the recorded source address. HTTPS deployments also receive `Strict-Transport-Security: max-age=31536000`.
 
+The console uses a same-origin `wss://` connection. Some browsers let users bypass a self-signed certificate for the HTTPS page while still blocking the WebSocket handshake, which leaves the console connecting although the server never receives an Upgrade request. Use a certificate and hostname trusted by the browser in production; do not rely on an IP address with a self-signed certificate as the long-term console entry point.
+
 Do not expose a writable VirtMgr instance directly to the public internet without TLS, a firewall, and a strong administrator password.
 
 ## Container deployment

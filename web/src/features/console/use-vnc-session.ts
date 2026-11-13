@@ -3,6 +3,7 @@ import type RFB from "@novnc/novnc";
 import { ApiError, api } from "@/api/client";
 import type { ConsoleConnectionState, VNCScaleMode } from "@/features/console/console-model";
 import { consoleWebSocketURL } from "@/features/console/console-model";
+import { openConsoleSocket } from "@/features/console/console-socket";
 
 type VNCStateEvent = CustomEvent<{ clean?: boolean }>;
 type VNCSecurityEvent = CustomEvent<{ reason?: string }>;
@@ -55,8 +56,13 @@ export function useVNCSession({
         setState("connecting");
         const { default: RFBClient } = await import("@novnc/novnc");
         if (disposed || !screenRef.current) return;
+        const socket = await openConsoleSocket(consoleWebSocketURL(ticket.path));
+        if (disposed || !screenRef.current) {
+          socket.close();
+          return;
+        }
         screenRef.current.replaceChildren();
-        rfb = new RFBClient(screenRef.current, consoleWebSocketURL(ticket.path), { shared: true });
+        rfb = new RFBClient(screenRef.current, socket, { shared: true });
         rfb.scaleViewport = scaleModeRef.current === "fit";
         rfb.resizeSession = scaleModeRef.current === "remote";
         rfb.clipViewport = scaleModeRef.current !== "fit";

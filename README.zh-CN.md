@@ -222,6 +222,8 @@ VIRTMGR_COOKIE_SECURE=true
 
 让 VirtMgr 继续监听 `127.0.0.1:8443`，反向代理全部应用路径，并为 Web VNC 保留 WebSocket Upgrade；浏览器通过 HTTPS 访问时，应设置 `VIRTMGR_COOKIE_SECURE=true`。依赖 `X-Forwarded-For` 或 `X-Real-IP` 前，必须将反向代理地址或 CIDR 配置到 `VIRTMGR_TRUSTED_PROXIES`（例如 `127.0.0.1/32` 或 `10.0.0.0/8`）；不受信客户端无法伪造审计与限流使用的来源地址。HTTPS 部署的响应还会包含 `Strict-Transport-Security: max-age=31536000`。
 
+控制台使用同源 `wss://` 连接。部分浏览器允许用户临时跳过自签名证书以打开 HTTPS 页面，却仍会拦截 WebSocket 握手，表现为控制台一直连接但服务端收不到 Upgrade 请求。生产环境应使用浏览器信任的证书和域名；不要依赖 IP 地址加自签名证书作为长期控制台入口。
+
 不要在没有 TLS、防火墙和强管理员密码的情况下，将可写模式的 VirtMgr 直接暴露到公网。
 
 ## 使用容器部署

@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { ApiError, api } from "@/api/client";
 import type { ConsoleConnectionState } from "@/features/console/console-model";
 import { consoleWebSocketURL } from "@/features/console/console-model";
+import { consoleSocketTimeoutMs } from "@/features/console/console-socket";
 
 export function useSerialSession({
   uuid,
@@ -87,8 +88,17 @@ export function useSerialSession({
         socket = new WebSocket(consoleWebSocketURL(ticket.path));
         socket.binaryType = "arraybuffer";
         socketRef.current = socket;
+        let opened = false;
+        const timeout = window.setTimeout(() => {
+          if (disposed || opened) return;
+          setState("error");
+          setError("串口控制台 WebSocket 连接超时。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问却拦截 wss；请改用受信任的 HTTPS 域名，刷新页面后重试。");
+          socket?.close();
+        }, consoleSocketTimeoutMs);
         socket.addEventListener("open", () => {
           if (disposed) return;
+          opened = true;
+          window.clearTimeout(timeout);
           setState("connected");
           terminal.focus();
           resize();
@@ -100,13 +110,15 @@ export function useSerialSession({
         });
         socket.addEventListener("close", () => {
           if (disposed) return;
+          window.clearTimeout(timeout);
           setState("disconnected");
           socketRef.current = null;
         });
         socket.addEventListener("error", () => {
           if (disposed) return;
+          window.clearTimeout(timeout);
           setState("error");
-          setError("串口控制台连接失败，请重新连接。设备可能正被其他会话占用。");
+          setError("串口控制台 WebSocket 建连失败。请确认浏览器信任当前 HTTPS 证书、网络或反向代理允许 WebSocket，设备也可能正被其他会话占用。");
         });
       } catch (cause) {
         if (disposed) return;
