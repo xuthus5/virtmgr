@@ -5,6 +5,7 @@ import {
   Code2,
   Copy,
   FileCode2,
+  Network,
   Package,
   Settings2,
   Terminal,
@@ -16,13 +17,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  cloudInitByteLength,
+  cloudInitCombinedByteLength,
   cloudInitDraftIssues,
+  cloudInitNetworkIssues,
   emptyCloudInitDraft,
+  emptyCloudInitNetworkDraft,
   maxCloudInitBytes,
   parseCloudInitUserData,
   serializeCloudInit,
+  serializeNetworkConfig,
   type CloudInitDraft,
+  type CloudInitNetworkDraft,
 } from "@/features/cloud-init/cloud-init-model";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +38,10 @@ const YAMLCodeEditor = lazy(() =>
 type CloudInitEditorProps = {
   value: string;
   onChange: (value: string) => void;
+  networkConfig?: string;
+  onNetworkConfigChange?: (value: string) => void;
+  vendorData?: string;
+  onVendorDataChange?: (value: string) => void;
   disabled?: boolean;
   prefix?: string;
   className?: string;
@@ -47,17 +56,21 @@ function initialEditorState(value: string): { mode: "visual" | "source"; draft: 
   };
 }
 
-export function CloudInitEditor({ value, onChange, disabled = false, prefix = "cloud-init", className }: CloudInitEditorProps) {
+export function CloudInitEditor({ value, onChange, networkConfig = "", onNetworkConfigChange, vendorData = "", onVendorDataChange, disabled = false, prefix = "cloud-init", className }: CloudInitEditorProps) {
   const initialState = useMemo(() => initialEditorState(value), []); // Initialize once; external edits are synchronized below.
   const [mode, setMode] = useState<"visual" | "source">(initialState.mode);
   const [draft, setDraft] = useState<CloudInitDraft>(initialState.draft);
   const [modeNotice, setModeNotice] = useState("");
   const [copied, setCopied] = useState(false);
+  const [networkDraft, setNetworkDraft] = useState<CloudInitNetworkDraft>(() => ({ ...emptyCloudInitNetworkDraft }));
   const parsed = useMemo(() => parseCloudInitUserData(value), [value]);
   const preview = useMemo(() => serializeCloudInit(draft), [draft]);
   const issues = cloudInitDraftIssues(draft);
-  const bytes = cloudInitByteLength(value);
-  const tooLarge = bytes > maxCloudInitBytes;
+  const networkBytes = networkConfig ? new TextEncoder().encode(networkConfig).length : 0;
+  const combinedBytes = cloudInitCombinedByteLength(value, networkConfig, vendorData);
+  const tooLarge = combinedBytes > maxCloudInitBytes;
+  const networkPreview = useMemo(() => serializeNetworkConfig(networkDraft), [networkDraft]);
+  const networkIssues = cloudInitNetworkIssues(networkDraft);
 
   useEffect(() => {
     if (parsed.visualizable) setDraft(parsed.draft);
@@ -68,6 +81,10 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
     setDraft(next);
     onChange(serializeCloudInit(next));
     setModeNotice("");
+  }
+
+  function updateNetworkDraft<K extends keyof CloudInitNetworkDraft>(key: K, nextValue: CloudInitNetworkDraft[K]) {
+    setNetworkDraft((current) => ({ ...current, [key]: nextValue }));
   }
 
   function showVisualEditor() {
@@ -104,7 +121,7 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
             <FileCode2 className="h-4 w-4 text-primary" />
             <h4 className="text-sm font-semibold">Cloud-init 配置</h4>
             <Badge variant="outline">NoCloud user-data</Badge>
-            <Badge variant={bytes > maxCloudInitBytes ? "destructive" : "secondary"}>{bytes} / 64 KiB</Badge>
+            <Badge variant={tooLarge ? "destructive" : "secondary"}>{combinedBytes} / 64 KiB</Badge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">用表单填写常用初始化项并实时生成标准 <code className="font-mono">#cloud-config</code> YAML；高级场景可切换到源码模式。</p>
         </div>
@@ -326,7 +343,60 @@ export function CloudInitEditor({ value, onChange, disabled = false, prefix = "c
         </div>
       )}
 
-      {tooLarge ? <p className="border-t border-destructive/25 bg-destructive/5 px-4 py-2 text-xs text-destructive" role="alert">Cloud-init 用户数据超过 64 KiB 上限，请精简后保存。</p> : null}
+      {onNetworkConfigChange || onVendorDataChange ? (
+        <div className="space-y-4 border-t bg-muted/10 p-3 sm:p-4" data-testid={`${prefix}-network-vendor`}>
+          <div className="flex items-start gap-2">
+            <Network className="mt-0.5 h-4 w-4 text-primary" />
+            <div>
+              <p className="text-sm font-medium">网络与 vendor-data</p>
+              <p className="text-xs text-muted-foreground">生成 Netplan v2 <code className="font-mono">network-config</code>，支持静态 IPv4/IPv6；vendor-data 会原样写入 NoCloud seed ISO。</p>
+            </div>
+          </div>
+          {onNetworkConfigChange ? (
+            <div className="space-y-3 rounded-lg border bg-card p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Label>网络模式</Label>
+                {(["disabled", "dhcp", "static"] as const).map((networkMode) => (
+                  <Button key={networkMode} type="button" size="sm" variant={networkDraft.mode === networkMode ? "default" : "outline"} disabled={disabled} onClick={() => updateNetworkDraft("mode", networkMode)}>
+                    {networkMode === "disabled" ? "不写入" : networkMode === "dhcp" ? "DHCP" : "静态"}
+                  </Button>
+                ))}
+              </div>
+              {networkDraft.mode !== "disabled" ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5"><Label htmlFor={`${prefix}-network-interface`}>网卡名称</Label><Input id={`${prefix}-network-interface`} value={networkDraft.interface} onChange={(event) => updateNetworkDraft("interface", event.target.value)} disabled={disabled} placeholder="ens3" /></div>
+                  <div className="space-y-1.5"><Label htmlFor={`${prefix}-network-dns`}>DNS（逗号或换行分隔）</Label><Input id={`${prefix}-network-dns`} value={networkDraft.dnsServers} onChange={(event) => updateNetworkDraft("dnsServers", event.target.value)} disabled={disabled} placeholder="1.1.1.1, 2606:4700:4700::1111" /></div>
+                  {networkDraft.mode === "static" ? (
+                    <>
+                      <div className="space-y-1.5"><Label htmlFor={`${prefix}-ipv4-address`}>IPv4 地址/前缀</Label><Input id={`${prefix}-ipv4-address`} value={networkDraft.ipv4Address} onChange={(event) => updateNetworkDraft("ipv4Address", event.target.value)} disabled={disabled} placeholder="192.0.2.10/24" /></div>
+                      <div className="space-y-1.5"><Label htmlFor={`${prefix}-ipv4-gateway`}>IPv4 网关</Label><Input id={`${prefix}-ipv4-gateway`} value={networkDraft.ipv4Gateway} onChange={(event) => updateNetworkDraft("ipv4Gateway", event.target.value)} disabled={disabled} placeholder="192.0.2.1" /></div>
+                      <div className="space-y-1.5"><Label htmlFor={`${prefix}-ipv6-address`}>IPv6 地址/前缀</Label><Input id={`${prefix}-ipv6-address`} value={networkDraft.ipv6Address} onChange={(event) => updateNetworkDraft("ipv6Address", event.target.value)} disabled={disabled} placeholder="2001:db8::10/64" /></div>
+                      <div className="space-y-1.5"><Label htmlFor={`${prefix}-ipv6-gateway`}>IPv6 网关</Label><Input id={`${prefix}-ipv6-gateway`} value={networkDraft.ipv6Gateway} onChange={(event) => updateNetworkDraft("ipv6Gateway", event.target.value)} disabled={disabled} placeholder="2001:db8::1" /></div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {networkIssues.length ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{networkIssues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
+              {networkDraft.mode === "static" ? <pre className="max-h-56 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-[11px] text-slate-200" data-testid={`${prefix}-network-preview`}>{networkPreview}</pre> : null}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" disabled={disabled || networkIssues.length > 0} onClick={() => onNetworkConfigChange(networkPreview)}>应用网络配置</Button>
+                {networkConfig ? <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => { updateNetworkDraft("mode", "disabled"); onNetworkConfigChange(""); }}>清除 network-config</Button> : null}
+                <span className="text-xs text-muted-foreground">{networkBytes} bytes</span>
+              </div>
+              <Textarea aria-label="Cloud-init network-config YAML" data-testid={`${prefix}-network-config`} value={networkConfig} onChange={(event) => onNetworkConfigChange(event.target.value)} disabled={disabled} rows={5} spellCheck={false} className="font-mono text-xs" placeholder="留空则不写入 network-config；也可直接粘贴自定义 Netplan YAML。" />
+            </div>
+          ) : null}
+          {onVendorDataChange ? (
+            <div className="space-y-2 rounded-lg border bg-card p-3">
+              <Label htmlFor={`${prefix}-vendor-data`}>vendor-data（可选）</Label>
+              <Textarea id={`${prefix}-vendor-data`} data-testid={`${prefix}-vendor-data`} value={vendorData} onChange={(event) => onVendorDataChange(event.target.value)} disabled={disabled} rows={4} spellCheck={false} className="font-mono text-xs" placeholder="#cloud-config 或 cloud-init vendor 脚本" />
+              <p className="text-xs text-muted-foreground">{vendorData ? new TextEncoder().encode(vendorData).length : 0} bytes；NoCloud seed 中的三个文件合计不得超过 64 KiB。</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tooLarge ? <p className="border-t border-destructive/25 bg-destructive/5 px-4 py-2 text-xs text-destructive" role="alert">Cloud-init user-data、network-config 与 vendor-data 总计超过 64 KiB 上限，请精简后保存。</p> : null}
     </section>
   );
 }

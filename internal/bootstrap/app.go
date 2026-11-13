@@ -24,6 +24,8 @@ import (
 	eventshttp "virtmgr/internal/modules/events/http"
 	hostapp "virtmgr/internal/modules/host/app"
 	hosthttp "virtmgr/internal/modules/host/http"
+	monitoringapp "virtmgr/internal/modules/monitoring/app"
+	monitoringhttp "virtmgr/internal/modules/monitoring/http"
 	networksapp "virtmgr/internal/modules/networks/app"
 	networkshttp "virtmgr/internal/modules/networks/http"
 	overviewapp "virtmgr/internal/modules/overview/app"
@@ -34,6 +36,8 @@ import (
 	snapshotpolicieshttp "virtmgr/internal/modules/snapshotpolicies/http"
 	storageapp "virtmgr/internal/modules/storage/app"
 	storagehttp "virtmgr/internal/modules/storage/http"
+	systemapp "virtmgr/internal/modules/system/app"
+	systemhttp "virtmgr/internal/modules/system/http"
 	tasksapp "virtmgr/internal/modules/tasks/app"
 	taskshttp "virtmgr/internal/modules/tasks/http"
 	templatesapp "virtmgr/internal/modules/templates/app"
@@ -69,6 +73,8 @@ type App struct {
 	scheduler       *snapshotpoliciesapp.Service
 	backupScheduler *backupsapp.Service
 	configVersions  *configversionsapp.Service
+	monitoring      *monitoringapp.Service
+	auditRetention  *runtimeconfig.AuditRetention
 	eventBus        *eventbus.Bus
 }
 
@@ -89,6 +95,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		logger.Warn("login_attempts_cleanup_failed", "error", err)
 	}
 	mode, err := runtimeconfig.New(ctx, store, cfg.ReadOnly)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	auditRetention, err := runtimeconfig.NewAuditRetention(ctx, store, 30)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -133,8 +144,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	overviewHandler := overviewhttp.New(overviewapp.New(backend))
 	metricsService := resourcemetrics.New(backend)
 	hostHandler := hosthttp.New(hostapp.New(backend, hostapp.WithMetrics(metricsService)))
+	monitoringService := monitoringapp.New(store, metricsService, backend, store,
+		monitoringapp.WithErrorHandler(func(err error) { logger.Warn("monitoring_sampler_failed", "error", err) }),
+	)
+	monitoringHandler := monitoringhttp.New(monitoringService)
 	eventsHandler := eventshttp.New(eventsapp.New(eventBus))
-	tasksHandler := taskshttp.New(tasksapp.New(store))
 	taskRecorder := tasksplatform.New(store)
 	configVersionService := configversionsapp.New(store, backend, store, cfg.ReadOnly,
 		configversionsapp.WithReadOnlyMode(mode),
@@ -145,11 +159,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		backupsapp.WithConfigVersionRecorder(configVersionService),
 	)
 	backupsHandler := backupshttp.New(backupService)
+	tasksHandler := taskshttp.New(tasksapp.New(store, tasksapp.WithRetryer(backupService)))
 	configVersionsHandler := configversionshttp.New(configVersionService)
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store)))
 	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
@@ -158,7 +173,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	snapshotPoliciesHandler := snapshotpolicieshttp.New(snapshotPolicyService)
 	auditHistoryHandler := audithistoryhttp.New(audithistoryapp.New(store, audithistoryapp.WithAuditRecorder(store)))
 	usersHandler := usershttp.New(usersapp.New(store, store, cfg.ReadOnly, usersapp.WithReadOnlyMode(mode)))
-	settingsHandler := settingshttp.New(settingsapp.New(mode, store))
+	settingsHandler := settingshttp.New(settingsapp.New(mode, store, settingsapp.WithAuditRetention(auditRetention)))
+	systemHandler := systemhttp.New(systemapp.New(store, store))
 	handler := buildRouter(routerDependencies{
 		logger:           logger,
 		cfg:              cfg,
@@ -177,6 +193,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		auditHistory:     auditHistoryHandler,
 		users:            usersHandler,
 		settings:         settingsHandler,
+		system:           systemHandler,
+		monitoring:       monitoringHandler,
 		backups:          backupsHandler,
 		configVersions:   configVersionsHandler,
 		staticFS:         web.FS(),
@@ -189,7 +207,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, eventBus: eventBus}, nil
+	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, monitoring: monitoringService, auditRetention: auditRetention, eventBus: eventBus}, nil
 }
 
 func (a *App) Handler() stdhttp.Handler { return a.handler }
@@ -214,7 +232,9 @@ func (a *App) Run(ctx context.Context) error {
 	go a.runConfigVersionLifecycle(ctx)
 	go a.scheduler.Run(ctx)
 	go a.backupScheduler.Run(ctx)
+	go a.monitoring.Run(ctx)
 	go a.cleanupExpiredSessions(ctx)
+	go a.runAuditRetention(ctx)
 	scheme := "http"
 	if a.config.TLSEnabled() {
 		scheme = "https"
@@ -230,6 +250,36 @@ func (a *App) Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (a *App) runAuditRetention(ctx context.Context) {
+	cleanup := func(now time.Time) {
+		before := now.AddDate(0, 0, -a.auditRetention.Days())
+		deleted, err := a.store.DeleteAuditEventsBefore(ctx, before)
+		if err != nil {
+			a.logger.Warn("audit_retention_cleanup_failed", "error", err)
+			return
+		}
+		if deleted > 0 {
+			a.logger.Info("audit_retention_cleanup", "deleted", deleted, "before", before.UTC())
+			_ = a.store.RecordAudit(ctx, domain.AuditEvent{
+				OccurredAt: time.Now().UTC(), Actor: "system", Role: domain.RoleAdmin,
+				Action: "audit.retention.cleanup", TargetKind: "settings", TargetID: "audit_retention",
+				Result: "success", Detail: map[string]any{"deleted": deleted, "before": before.UTC().Format(time.RFC3339)},
+			})
+		}
+	}
+	cleanup(time.Now().UTC())
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			cleanup(now.UTC())
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (a *App) cleanupExpiredSessions(ctx context.Context) {
@@ -322,6 +372,8 @@ type routerDependencies struct {
 	auditHistory     *audithistoryhttp.Handler
 	users            *usershttp.Handler
 	settings         *settingshttp.Handler
+	system           *systemhttp.Handler
+	monitoring       *monitoringhttp.Handler
 	backups          *backupshttp.Handler
 	configVersions   *configversionshttp.Handler
 	staticFS         fs.FS
@@ -352,6 +404,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 		}
 		httpx.JSON(w, code, status)
 	})
+	r.Get("/metrics", deps.host.Prometheus)
 
 	r.Route("/api/v1", func(api chi.Router) {
 		deps.auth.Mount(api)
@@ -360,7 +413,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.overview.Mount(protected)
 			deps.host.Mount(protected)
 			deps.events.Mount(protected)
-			deps.tasks.Mount(protected)
+			deps.tasks.Mount(protected, deps.auth.RequireCSRF)
 			deps.storage.Mount(protected, deps.auth.RequireCSRF)
 			deps.networks.Mount(protected, deps.auth.RequireCSRF)
 			deps.vms.Mount(protected, deps.auth.RequireCSRF)
@@ -369,6 +422,8 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.auditHistory.Mount(protected)
 			deps.users.Mount(protected, deps.auth.RequireCSRF)
 			deps.settings.Mount(protected, deps.auth.RequireCSRF)
+			deps.system.Mount(protected, deps.auth.RequireCSRF)
+			deps.monitoring.Mount(protected, deps.auth.RequireCSRF)
 			deps.backups.Mount(protected, deps.auth.RequireCSRF)
 			deps.configVersions.Mount(protected, deps.auth.RequireCSRF)
 		})

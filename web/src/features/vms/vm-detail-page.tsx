@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -50,7 +50,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { VMConsoleCard } from "@/features/console/vm-console-card";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
@@ -63,12 +62,15 @@ import { canEditVMConfigXML, validateVMXMLDraft } from "@/features/vms/vm-xml-ed
 import { VMBackupCard } from "@/features/vms/vm-backup-card";
 import { VMRecentBackupsCard } from "@/features/vms/vm-recent-backups-card";
 import { VMDisksCard } from "@/features/vms/vm-disks-card";
+import { VMMetadataCard } from "@/features/vms/vm-metadata-card";
+import { VMNetworkInterfacesCard } from "@/features/vms/vm-network-interfaces-card";
 import { VMPassthroughCard } from "@/features/vms/vm-passthrough-card";
 import { VMResourcesCard } from "@/features/vms/vm-resources-card";
 import { vmResourcesDisabledReason } from "@/features/vms/vm-resources-model";
 import { VMSnapshotPoliciesCard } from "@/features/vms/vm-snapshot-policies-card";
 import { VMSnapshotsCard } from "@/features/vms/vm-snapshots-card";
 import { ResourceTrendCard } from "@/features/metrics/resource-trend-card";
+import { MetricHistoryCard } from "@/features/metrics/metric-history-card";
 import { formatBytes, cn } from "@/lib/utils";
 
 type ActionMeta = {
@@ -117,7 +119,6 @@ function confirmCopy(action: VMAction | null) {
     button: "确认强制重启",
   };
 }
-
 export function VMDetailPage({ uuid }: { uuid: string }) {
   const vmQuery = useVMQuery(uuid);
   const metricsQuery = useVMMetricsQuery(uuid);
@@ -469,6 +470,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
 
       <VMResourcesCard vm={vm} canMutate={canMutate && !resourcesDisabledReason} disabledReason={resourcesDisabledReason} />
 
+      <VMMetadataCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+
       <div className="mt-4">
         <ResourceTrendCard
           title="资源趋势"
@@ -480,6 +483,10 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           historyKey={uuid}
           showDiskIO
         />
+      </div>
+
+      <div className="mt-4">
+        <MetricHistoryCard scope="vm" targetId={uuid} title="虚拟机历史趋势" description="虚拟机运行期间的 CPU、内存、磁盘和网络分钟级采样。" testId="vm-metric-history" />
       </div>
 
       <Card className="mt-4" data-testid="vm-clone-card">
@@ -663,19 +670,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
 
       <VMDisksCard vm={vm} role={session.data?.user.role} readOnly={readOnly} />
 
-      <ResourceTable
-        title="网络接口"
-        description="libvirt 网络、桥接或直通网卡配置。"
-        empty="当前虚拟机没有网络接口。"
-        headers={["类型", "来源", "MAC", "模型", "PCI 地址"]}
-        rows={vm.interfaces.flatMap((network, index) => [
-          { key: `${index}-0`, cell: <span>{network.type || "-"}</span> },
-          { key: `${index}-1`, cell: <span className="font-mono text-xs">{network.source || "-"}</span> },
-          { key: `${index}-2`, cell: <span className="font-mono text-xs">{network.mac || "-"}</span> },
-          { key: `${index}-3`, cell: <span>{network.model || "-"}</span> },
-          { key: `${index}-4`, cell: <span className="font-mono text-xs text-muted-foreground">{network.address || "-"}</span> },
-        ])}
-      />
+      <VMNetworkInterfacesCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
 
       <VMPassthroughCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
 
@@ -873,33 +868,5 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-type ResourceRow = Array<{ key: string; cell: ReactNode }>;
-
-function ResourceTable({ title, description, empty, headers, rows }: {
-  title: string;
-  description: string;
-  empty: string;
-  headers: string[];
-  rows: ResourceRow;
-}) {
-  return (
-    <Card className="mt-4">
-      <CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader>
-      <CardContent className="p-0">
-        {rows.length ? (
-          <Table className="min-w-[760px]">
-            <TableHeader><TableRow>{headers.map((header) => <TableHead key={header}>{header}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>
-              {Array.from({ length: rows.length / headers.length }, (_, rowIndex) => (
-                <TableRow key={rowIndex}>{rows.slice(rowIndex * headers.length, (rowIndex + 1) * headers.length).map((item) => <TableCell key={item.key}>{item.cell}</TableCell>)}</TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : <p className="p-5 text-sm text-muted-foreground">{empty}</p>}
-      </CardContent>
-    </Card>
   );
 }

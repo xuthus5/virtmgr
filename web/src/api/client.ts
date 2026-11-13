@@ -1,4 +1,4 @@
-import type { AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskResizeInput, VMExport, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -64,8 +64,11 @@ function auditQueryParams(filters: AuditEventFilters, pagination: boolean): URLS
   return params;
 }
 
-async function download(path: string): Promise<{ blob: Blob; filename: string }> {
-  const response = await fetch(path, { credentials: "same-origin" });
+async function download(path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string }> {
+  const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (method !== "GET" && csrfToken && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrfToken);
+  const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   if (!response.ok) {
     let code = "HTTP_ERROR";
     let message = `请求失败 (${response.status})`;
@@ -136,6 +139,11 @@ export const api = {
     `/api/v1/networks/${encodeURIComponent(name)}/hosts`,
     { method: "POST", body: JSON.stringify(input) },
   ),
+  exportNetworkDHCPHosts: (name: string) => download(`/api/v1/networks/${encodeURIComponent(name)}/hosts/export`),
+  importNetworkDHCPHosts: (name: string, csv: string) => request<NetworkDHCPHostImportResult>(
+    `/api/v1/networks/${encodeURIComponent(name)}/hosts/import`,
+    { method: "POST", headers: { "Content-Type": "text/csv; charset=utf-8" }, body: csv },
+  ),
   deleteNetworkDHCPHost: (name: string, mac: string) => request<VirtualNetwork>(
     `/api/v1/networks/${encodeURIComponent(name)}/hosts/${encodeURIComponent(mac)}`,
     { method: "DELETE" },
@@ -145,14 +153,21 @@ export const api = {
     { method: "POST" },
   ),
   deleteNetwork: (name: string) => request<void>(`/api/v1/networks/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  vms: (query = "", state = "") => {
+  vms: (query = "", state = "", tag = "", owner = "") => {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (state) params.set("state", state as VMState);
+    if (tag) params.set("tag", tag);
+    if (owner) params.set("owner", owner);
     const suffix = params.toString();
     return request<VMSummaryList>(`/api/v1/vms${suffix ? `?${suffix}` : ""}`);
   },
   vm: (uuid: string) => request<VM>(`/api/v1/vms/${encodeURIComponent(uuid)}`),
+  vmMetadata: (uuid: string) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`),
+  updateVMMetadata: (uuid: string, input: VMMetadataInput) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  }),
   vmMetrics: (uuid: string) => request<VMMetrics>(`/api/v1/vms/${encodeURIComponent(uuid)}/metrics`),
   vmXML: (uuid: string, format: VMXMLFormat) => request<VMXML>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/xml?format=${encodeURIComponent(format)}`,
@@ -288,6 +303,22 @@ export const api = {
     `/api/v1/vms/${encodeURIComponent(uuid)}/disks/${encodeURIComponent(target)}`,
     { method: "PATCH", body: JSON.stringify(input) },
   ),
+  attachVMDisk: (uuid: string, input: VMDiskAttachInput) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/disks`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  detachVMDisk: (uuid: string, target: string) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/disks/${encodeURIComponent(target)}`,
+    { method: "DELETE" },
+  ),
+  attachVMNetwork: (uuid: string, input: VMNetworkAttachInput) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/network-interfaces`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  detachVMNetwork: (uuid: string, mac: string) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/network-interfaces/${encodeURIComponent(mac)}`,
+    { method: "DELETE" },
+  ),
   attachVMDevice: (uuid: string, input: VMDeviceInput) => request<VM>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/devices`,
     { method: "POST", body: JSON.stringify(input) },
@@ -324,6 +355,26 @@ export const api = {
     return request<TaskList>(`/api/v1/tasks${suffix ? `?${suffix}` : ""}`);
   },
   task: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`),
+  retryTask: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+  metricHistory: (filters: MetricHistoryFilters) => {
+    const params = new URLSearchParams({ scope: filters.scope, targetId: filters.targetId });
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.limit) params.set("limit", String(filters.limit));
+    return request<MetricSampleList>(`/api/v1/metrics/history?${params.toString()}`);
+  },
+  alertRules: () => request<AlertRuleList>("/api/v1/alert-rules"),
+  createAlertRule: (input: AlertRuleInput) => request<AlertRule>("/api/v1/alert-rules", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  updateAlertRule: (id: number, input: AlertRuleInput) => request<AlertRule>(`/api/v1/alert-rules/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  }),
+  deleteAlertRule: (id: number) => request<void>(`/api/v1/alert-rules/${id}`, { method: "DELETE" }),
+  systemInfo: () => request<SystemInfo>("/api/v1/system/info"),
+  exportDatabase: () => download("/api/v1/system/database-export", { method: "POST" }),
   auditEvents: (filters: AuditEventFilters = {}) => {
     const params = auditQueryParams(filters, true);
     const suffix = params.toString();
@@ -359,5 +410,9 @@ export const api = {
   updateSettings: (input: SettingsUpdateInput) => request<Settings>("/api/v1/settings", {
     method: "PUT",
     body: JSON.stringify(input),
+  }),
+  updateAuditRetention: (days: number) => request<Settings>("/api/v1/settings/audit-retention", {
+    method: "PUT",
+    body: JSON.stringify({ days }),
   }),
 };

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  cloudInitBundleValidationError,
   cloudInitByteLength,
+  cloudInitCombinedByteLength,
   cloudInitDraftIssues,
+  cloudInitNetworkIssues,
   cloudInitValidationError,
   defaultCloudInitUserData,
   parseCloudInitUserData,
   serializeCloudInit,
+  serializeNetworkConfig,
 } from "@/features/cloud-init/cloud-init-model";
 
 describe("cloud-init model", () => {
@@ -97,5 +101,34 @@ runcmd:
     expect(cloudInitValidationError("")).toContain("必须填写");
     expect(cloudInitValidationError("#cloud-config\npackages: [")).toContain("语法错误");
     expect(cloudInitValidationError("#!/bin/sh\necho hello")).toBe("");
+  });
+
+  it("generates netplan v2 DHCP and static IPv4/IPv6 network config", () => {
+    expect(serializeNetworkConfig({ mode: "disabled", interface: "ens3", ipv4Address: "", ipv4Gateway: "", ipv6Address: "", ipv6Gateway: "", dnsServers: "" })).toBe("");
+    const dhcp = serializeNetworkConfig({ mode: "dhcp", interface: "ens3", ipv4Address: "", ipv4Gateway: "", ipv6Address: "", ipv6Gateway: "", dnsServers: "" });
+    expect(dhcp).toContain("version: 2");
+    expect(dhcp).toContain("dhcp4: true");
+
+    const staticConfig = serializeNetworkConfig({
+      mode: "static",
+      interface: "ens3",
+      ipv4Address: "192.0.2.10/24",
+      ipv4Gateway: "192.0.2.1",
+      ipv6Address: "2001:db8::10/64",
+      ipv6Gateway: "2001:db8::1",
+      dnsServers: "1.1.1.1, 2606:4700:4700::1111",
+    });
+    expect(staticConfig).toContain("addresses:\n      - 192.0.2.10/24\n      - 2001:db8::10/64");
+    expect(staticConfig).toContain("via: 192.0.2.1");
+    expect(staticConfig).toContain("via: 2001:db8::1");
+    expect(staticConfig).toContain("- 1.1.1.1\n        - 2606:4700:4700::1111");
+  });
+
+  it("validates static networking and the combined cloud-init size", () => {
+    expect(cloudInitNetworkIssues({ mode: "static", interface: "ens3", ipv4Address: "", ipv4Gateway: "", ipv6Address: "", ipv6Gateway: "", dnsServers: "" })).toHaveLength(1);
+    expect(cloudInitNetworkIssues({ mode: "static", interface: "ens3", ipv4Address: "192.0.2.10", ipv4Gateway: "bad", ipv6Address: "", ipv6Gateway: "", dnsServers: "" }).length).toBeGreaterThan(0);
+    expect(cloudInitNetworkIssues({ mode: "static", interface: "ens3", ipv4Address: "192.0.2.10/24", ipv4Gateway: "192.0.2.1", ipv6Address: "2001:db8::10/64", ipv6Gateway: "2001:db8::1", dnsServers: "" })).toEqual([]);
+    expect(cloudInitCombinedByteLength("abc", "de", "f")).toBe(6);
+    expect(cloudInitBundleValidationError("#cloud-config\n", "x".repeat(65 << 10))).toContain("总计");
   });
 });

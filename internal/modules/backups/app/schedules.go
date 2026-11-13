@@ -63,8 +63,9 @@ func (s *Service) CreateSchedule(ctx context.Context, command ScheduleCommand) (
 	now := s.now().UTC()
 	item := domain.BackupSchedule{
 		VMUUID: command.VMUUID, RepositoryID: repository.ID, TargetPool: repository.PoolName,
-		Name: spec.Name, IntervalHours: spec.IntervalHours, RetentionCount: spec.RetentionCount,
-		RetentionDays: spec.RetentionDays, Enabled: spec.Enabled, NextRunAt: now.Add(time.Duration(spec.IntervalHours) * time.Hour),
+		Name: spec.Name, IntervalHours: spec.IntervalHours, ScheduleMode: spec.ScheduleMode, DailyTime: spec.DailyTime,
+		RetentionCount: spec.RetentionCount, RetentionDays: spec.RetentionDays, Enabled: spec.Enabled,
+		NextRunAt: domain.NextScheduleTime(now, spec.ScheduleMode, time.Duration(spec.IntervalHours)*time.Hour, spec.DailyTime),
 		CreatedAt: now, UpdatedAt: now,
 	}
 	created, err := s.repository.CreateBackupSchedule(ctx, item)
@@ -106,10 +107,12 @@ func (s *Service) UpdateSchedule(ctx context.Context, command ScheduleCommand) (
 	item.TargetPool = repository.PoolName
 	item.Name = spec.Name
 	item.IntervalHours = spec.IntervalHours
+	item.ScheduleMode = spec.ScheduleMode
+	item.DailyTime = spec.DailyTime
 	item.RetentionCount = spec.RetentionCount
 	item.RetentionDays = spec.RetentionDays
 	item.Enabled = spec.Enabled
-	item.NextRunAt = s.now().UTC().Add(time.Duration(spec.IntervalHours) * time.Hour)
+	item.NextRunAt = domain.NextScheduleTime(s.now().UTC(), spec.ScheduleMode, time.Duration(spec.IntervalHours)*time.Hour, spec.DailyTime)
 	item.UpdatedAt = s.now().UTC()
 	updated, err := s.repository.UpdateBackupSchedule(ctx, item)
 	if err != nil {
@@ -160,7 +163,7 @@ func (s *Service) RunScheduleNow(ctx context.Context, command ScheduleRunCommand
 	}
 	now := s.now().UTC()
 	item.LastRunAt = &now
-	item.NextRunAt = now.Add(time.Duration(item.IntervalHours) * time.Hour)
+	item.NextRunAt = domain.NextScheduleTime(now, item.ScheduleMode, time.Duration(item.IntervalHours)*time.Hour, item.DailyTime)
 	item.LastError = ""
 	if _, err := s.repository.UpdateBackupSchedule(ctx, item); err != nil {
 		_ = s.recordAudit(ctx, command.Request, "backup.schedule.run", fmt.Sprint(item.ID), "failure", map[string]any{"scheduleId": item.ID, "backupId": task.TargetID}, err)
@@ -202,7 +205,7 @@ func (s *Service) runDueSchedules(ctx context.Context) error {
 		}
 		if err := s.executeScheduledBackup(ctx, item); err != nil {
 			item.LastRunAt = &now
-			item.NextRunAt = now.Add(time.Duration(item.IntervalHours) * time.Hour)
+			item.NextRunAt = domain.NextScheduleTime(now, item.ScheduleMode, time.Duration(item.IntervalHours)*time.Hour, item.DailyTime)
 			item.LastError = err.Error()
 			item.UpdatedAt = now
 			_, _ = s.repository.UpdateBackupSchedule(ctx, item)
@@ -293,7 +296,7 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	}
 	cleaned, cleanupErr := s.cleanupRetention(ctx, schedule, request)
 	schedule.LastRunAt = &completedAt
-	schedule.NextRunAt = completedAt.Add(time.Duration(schedule.IntervalHours) * time.Hour)
+	schedule.NextRunAt = domain.NextScheduleTime(completedAt, schedule.ScheduleMode, time.Duration(schedule.IntervalHours)*time.Hour, schedule.DailyTime)
 	schedule.LastBackupID = item.ID
 	schedule.LastError = ""
 	if cleanupErr != nil {
@@ -371,6 +374,19 @@ func normalizeScheduleSpec(spec domain.BackupScheduleSpec) (domain.BackupSchedul
 	if spec.RepositoryID == "" {
 		return spec, fmt.Errorf("%w: repository is required", domain.ErrInvalidInput)
 	}
+	mode, err := domain.NormalizeScheduleMode(spec.ScheduleMode)
+	if err != nil {
+		return spec, err
+	}
+	dailyTime, err := domain.NormalizeDailyTime(spec.DailyTime)
+	if err != nil {
+		return spec, err
+	}
+	spec.ScheduleMode = mode
+	spec.DailyTime = dailyTime
+	if mode == domain.ScheduleModeDaily && spec.IntervalHours == 0 {
+		spec.IntervalHours = 24
+	}
 	if spec.IntervalHours < minScheduleIntervalHours || spec.IntervalHours > maxScheduleIntervalHours {
 		return spec, fmt.Errorf("%w: schedule interval must be between %d and %d hours", domain.ErrInvalidInput, minScheduleIntervalHours, maxScheduleIntervalHours)
 	}
@@ -386,6 +402,7 @@ func normalizeScheduleSpec(spec domain.BackupScheduleSpec) (domain.BackupSchedul
 func scheduleDetail(spec domain.BackupScheduleSpec) map[string]any {
 	return map[string]any{
 		"name": spec.Name, "repositoryId": spec.RepositoryID, "intervalHours": spec.IntervalHours,
+		"scheduleMode": spec.ScheduleMode, "dailyTime": spec.DailyTime,
 		"retentionCount": spec.RetentionCount, "retentionDays": spec.RetentionDays, "enabled": spec.Enabled,
 	}
 }

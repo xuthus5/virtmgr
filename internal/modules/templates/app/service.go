@@ -203,6 +203,8 @@ func normalizeSpec(spec domain.VMTemplateSpec) (domain.VMTemplateSpec, error) {
 	spec.Network = strings.TrimSpace(spec.Network)
 	spec.ISOPath = strings.TrimSpace(spec.ISOPath)
 	spec.CloudInitUserData = strings.TrimSpace(spec.CloudInitUserData)
+	spec.CloudInitNetworkConfig = strings.TrimSpace(spec.CloudInitNetworkConfig)
+	spec.CloudInitVendorData = strings.TrimSpace(spec.CloudInitVendorData)
 	if spec.DiskFormat == "" {
 		spec.DiskFormat = "qcow2"
 	}
@@ -242,11 +244,14 @@ func normalizeSpec(spec domain.VMTemplateSpec) (domain.VMTemplateSpec, error) {
 	}
 	spec.Firmware = firmware
 	if spec.CloudInit {
-		if spec.CloudInitUserData == "" || len(spec.CloudInitUserData) > maxTemplateCloudInitBytes || strings.ContainsRune(spec.CloudInitUserData, '\x00') {
-			return domain.VMTemplateSpec{}, fmt.Errorf("%w: cloud-init user data must be between 1 and %d bytes and contain no NUL", domain.ErrInvalidInput, maxTemplateCloudInitBytes)
+		total := len(spec.CloudInitUserData) + len(spec.CloudInitNetworkConfig) + len(spec.CloudInitVendorData)
+		if spec.CloudInitUserData == "" || total > maxTemplateCloudInitBytes || containsNUL(spec.CloudInitUserData, spec.CloudInitNetworkConfig, spec.CloudInitVendorData) {
+			return domain.VMTemplateSpec{}, fmt.Errorf("%w: cloud-init data must include user-data and be at most %d bytes in total with no NUL", domain.ErrInvalidInput, maxTemplateCloudInitBytes)
 		}
 	} else {
 		spec.CloudInitUserData = ""
+		spec.CloudInitNetworkConfig = ""
+		spec.CloudInitVendorData = ""
 	}
 	return spec, nil
 }
@@ -266,11 +271,22 @@ func templateDetail(template domain.VMTemplate) map[string]any {
 	}
 	if template.CloudInit {
 		detail["cloudInitUserDataBytes"] = len(template.CloudInitUserData)
+		detail["cloudInitNetworkConfigBytes"] = len(template.CloudInitNetworkConfig)
+		detail["cloudInitVendorDataBytes"] = len(template.CloudInitVendorData)
 	}
 	if template.ISOPath != "" {
 		detail["isoPath"] = template.ISOPath
 	}
 	return detail
+}
+
+func containsNUL(values ...string) bool {
+	for _, value := range values {
+		if strings.ContainsRune(value, '\x00') {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) recordAudit(ctx context.Context, request MutationContext, action string, targetID int64, detail map[string]any) error {

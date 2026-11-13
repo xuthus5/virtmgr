@@ -80,6 +80,14 @@ func (s *Store) ExportAuditEvents(ctx context.Context, input domain.AuditEventQu
 	return scanAuditEvents(rows)
 }
 
+func (s *Store) DeleteAuditEventsBefore(ctx context.Context, before time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM audit_events WHERE occurred_at < ?`, before.UTC().Unix())
+	if err != nil {
+		return 0, fmt.Errorf("delete expired audit events: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 func auditEventWhere(query domain.AuditEventQuery) (string, []any) {
 	clauses := make([]string, 0, 7)
 	args := make([]any, 0, 7)

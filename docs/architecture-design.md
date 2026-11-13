@@ -1176,9 +1176,10 @@ WantedBy=multi-user.target
 
 ### 11.2 容器化
 
-- 容器需要挂载 `/var/run/libvirt/libvirt-sock`。
-- 镜像包含 `libvirt0` 运行库；不要以 `--privileged` 运行。
-- 若管理网络/存储，优先通过 libvirt API 和受控 socket，而不是挂载整个宿主机根目录。
+- 官方示例位于 `deploy/docker/Dockerfile` 和 `deploy/docker/compose.yaml`，采用 Node 前端、Go CGO 后端和 Debian runtime 三阶段构建。
+- 容器必须挂载 `/var/run/libvirt/libvirt-sock`，并通过 `group_add` 使用与宿主机 socket 组 ID 一致的补充组；不要以 `--privileged` 运行。
+- 镜像包含 `libvirt0` 运行库、`ca-certificates`、`curl` 和时区数据，默认以非特权用户 `virtmgr` 运行，SQLite 数据持久化到 `/var/lib/virtmgr`。
+- 若备份或存储功能需要直接访问宿主机存储路径，应以相同路径挂载对应目录；优先通过 libvirt API 和受控 socket，而不是挂载整个宿主机根目录。
 - 前端静态资源由 Go `embed` 提供，无需单独部署 Node 服务。
 
 ## 12. 分阶段落地

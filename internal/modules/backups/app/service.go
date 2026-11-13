@@ -64,6 +64,10 @@ type TaskRecorder interface {
 	Fail(ctx context.Context, id string, progress int, step string, cause error) error
 }
 
+type TaskMetadataRecorder interface {
+	SetMetadata(ctx context.Context, id string, metadata map[string]any) error
+}
+
 type ConfigVersionRecorder interface {
 	CaptureVM(ctx context.Context, vmUUID string, capture domain.VMConfigCapture) (domain.VMConfigVersion, error)
 }
@@ -255,6 +259,12 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
 	}
+	if recorder, ok := s.tasks.(TaskMetadataRecorder); ok {
+		_ = recorder.SetMetadata(ctx, taskID, map[string]any{
+			"vmUuid": command.VMUUID, "name": command.Spec.Name,
+			"targetPool": command.Spec.TargetPool, "repositoryId": command.Spec.RepositoryID,
+		})
+	}
 	now := s.now().UTC()
 	item, err := s.repository.CreateBackup(ctx, domain.Backup{
 		ID: backupID, VMUUID: command.VMUUID, VMName: source.Name, RepositoryID: repository.ID,
@@ -278,6 +288,30 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 		s.executeBackup(jobContext, taskID, item, command, detail)
 	}()
 	return task, nil
+}
+
+func (s *Service) RetryTask(ctx context.Context, task domain.Task, session domain.Session, requestID, sourceIP string) (domain.Task, error) {
+	if task.Kind != "vm.backup" || (task.Status != domain.TaskStatusFailed && task.Status != domain.TaskStatusInterrupted) {
+		return domain.Task{}, domain.ErrInvalidInput
+	}
+	vmUUID, _ := task.Metadata["vmUuid"].(string)
+	spec := domain.BackupCreateSpec{
+		Name:         stringMetadata(task.Metadata, "name"),
+		TargetPool:   stringMetadata(task.Metadata, "targetPool"),
+		RepositoryID: stringMetadata(task.Metadata, "repositoryId"),
+	}
+	if vmUUID == "" || spec.Name == "" || (spec.TargetPool == "" && spec.RepositoryID == "") {
+		return domain.Task{}, domain.ErrInvalidInput
+	}
+	return s.Create(ctx, CreateCommand{
+		VMUUID: vmUUID, Spec: spec,
+		Request: MutationContext{Session: session, RequestID: requestID, SourceIP: sourceIP},
+	})
+}
+
+func stringMetadata(metadata map[string]any, key string) string {
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.Backup, command CreateCommand, detail map[string]any) {

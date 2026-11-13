@@ -51,6 +51,8 @@ type UserSessionList struct {
 type ListQuery struct {
 	Query string
 	State string
+	Tag   string
+	Owner string
 }
 
 type ReadOnlyProvider interface {

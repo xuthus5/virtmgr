@@ -7,6 +7,8 @@ type SnapshotPolicy struct {
 	VMUUID          string     `json:"vmUuid"`
 	Name            string     `json:"name"`
 	IntervalMinutes int        `json:"intervalMinutes"`
+	ScheduleMode    string     `json:"scheduleMode"`
+	DailyTime       string     `json:"dailyTime"`
 	Retention       int        `json:"retention"`
 	Enabled         bool       `json:"enabled"`
 	LastRunAt       *time.Time `json:"lastRunAt,omitempty"`
@@ -20,6 +22,8 @@ type SnapshotPolicy struct {
 type SnapshotPolicySpec struct {
 	Name            string `json:"name"`
 	IntervalMinutes int    `json:"intervalMinutes"`
+	ScheduleMode    string `json:"scheduleMode"`
+	DailyTime       string `json:"dailyTime"`
 	Retention       int    `json:"retention"`
 	Enabled         bool   `json:"enabled"`
 }

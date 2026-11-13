@@ -198,6 +198,74 @@ func (f *fakeAuditRecorder) RecordAudit(_ context.Context, event domain.AuditEve
 	return f.err
 }
 
+type fakeVMMetadataRepository struct {
+	items map[string]domain.VMMetadata
+}
+
+func (f *fakeVMMetadataRepository) ListVMMetadata(context.Context) (map[string]domain.VMMetadata, error) {
+	return f.items, nil
+}
+
+func (f *fakeVMMetadataRepository) GetVMMetadata(_ context.Context, uuid string) (domain.VMMetadata, error) {
+	item, ok := f.items[uuid]
+	if !ok {
+		return domain.VMMetadata{}, domain.ErrNotFound
+	}
+	return item, nil
+}
+
+func (f *fakeVMMetadataRepository) UpsertVMMetadata(_ context.Context, item domain.VMMetadata) (domain.VMMetadata, error) {
+	f.items[item.VMUUID] = item
+	return item, nil
+}
+
+func (f *fakeVMMetadataRepository) DeleteVMMetadata(_ context.Context, uuid string) error {
+	delete(f.items, uuid)
+	return nil
+}
+
+func TestServiceVMMetadataEnrichesFiltersAndAudits(t *testing.T) {
+	repository := fakeVMRepository{vms: []domain.VM{
+		{UUID: "vm-a", Name: "api-01", State: domain.VMStateRunning},
+		{UUID: "vm-b", Name: "db-01", State: domain.VMStateShutoff},
+	}}
+	metadata := &fakeVMMetadataRepository{items: map[string]domain.VMMetadata{
+		"vm-a": {VMUUID: "vm-a", Tags: []string{"prod", "API"}, Owner: "platform", Note: "对外接口"},
+	}}
+	audit := &fakeAuditRecorder{}
+	service := New(repository, audit, false, WithVMMetadata(metadata))
+
+	list, err := service.List(context.Background(), domain.ListQuery{Tag: "prod", Owner: "plat"})
+	if err != nil || list.Total != 1 || list.Items[0].UUID != "vm-a" || list.Items[0].Metadata == nil {
+		t.Fatalf("List() = %+v, %v", list, err)
+	}
+	if search, err := service.List(context.Background(), domain.ListQuery{Query: "对外"}); err != nil || search.Total != 1 {
+		t.Fatalf("metadata search = %+v, %v", search, err)
+	}
+	if hidden, err := service.List(context.Background(), domain.ListQuery{Tag: "test"}); err != nil || hidden.Total != 0 {
+		t.Fatalf("tag filter = %+v, %v", hidden, err)
+	}
+	vm, err := service.Get(context.Background(), "vm-a")
+	if err != nil || vm.Metadata == nil || vm.Metadata.Owner != "platform" {
+		t.Fatalf("Get() = %+v, %v", vm, err)
+	}
+
+	updated, err := service.UpdateMetadata(context.Background(), VMMetadataCommand{
+		UUID:    "vm-b",
+		Spec:    domain.VMMetadataSpec{Tags: []string{" prod ", "Prod", "数据库"}, Note: " 重要 ", Owner: " dba "},
+		Request: MutationContext{Session: operatorSession(), RequestID: "req-meta"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateMetadata() error = %v", err)
+	}
+	if len(updated.Tags) != 2 || updated.Tags[0] != "prod" || updated.Owner != "dba" || updated.UpdatedBy != "operator" {
+		t.Fatalf("updated metadata = %+v", updated)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.metadata.update" || audit.events[0].Result != "success" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
 func operatorSession() domain.Session {
 	return domain.Session{User: domain.User{ID: 1, Username: "operator", Role: domain.RoleOperator}, ExpiresAt: time.Now().Add(time.Hour)}
 }

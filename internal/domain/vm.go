@@ -195,9 +195,38 @@ type VMDiskResizeSpec struct {
 	CapacityBytes uint64 `json:"capacityBytes"`
 }
 
+type VMDiskAttachSpec struct {
+	Pool   string    `json:"pool"`
+	Volume string    `json:"volume"`
+	Target string    `json:"target,omitempty"`
+	Bus    VMDiskBus `json:"bus,omitempty"`
+}
+
+type VMNetworkAttachSpec struct {
+	Network string     `json:"network"`
+	Model   VMNICModel `json:"model,omitempty"`
+}
+
+type VMMetadata struct {
+	VMUUID    string    `json:"vmUuid"`
+	Tags      []string  `json:"tags"`
+	Note      string    `json:"note"`
+	Owner     string    `json:"owner"`
+	UpdatedBy string    `json:"updatedBy"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type VMMetadataSpec struct {
+	Tags  []string `json:"tags"`
+	Note  string   `json:"note"`
+	Owner string   `json:"owner"`
+}
+
 type CloudInitSpec struct {
-	UserData string `json:"userData"`
-	Pool     string `json:"pool"`
+	UserData      string `json:"userData"`
+	NetworkConfig string `json:"networkConfig,omitempty"`
+	VendorData    string `json:"vendorData,omitempty"`
+	Pool          string `json:"pool"`
 }
 
 type VMCloneSpec struct {
@@ -327,6 +356,7 @@ type VM struct {
 	Hostname       string              `json:"hostname,omitempty"`
 	AgentConnected bool                `json:"agentConnected"`
 	AllowedActions []VMAction          `json:"allowedActions"`
+	Metadata       *VMMetadata         `json:"metadata,omitempty"`
 }
 
 type VMXMLFormat string

@@ -281,6 +281,7 @@ func TestVMXMLAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
+
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid format status = %d", response.StatusCode)
 	}
@@ -1457,6 +1458,32 @@ func TestNetworkManagementAPI(t *testing.T) {
 	}
 	response.Body.Close()
 
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/api/v1/networks/api-net-01/hosts/import", bytes.NewBufferString(`{"hosts":[{"mac":"52:54:00:12:34:57","ip":"10.99.0.51","name":"api-host-02"},{"mac":"52:54:00:12:34:58","ip":"10.99.0.52"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", csrf)
+	response, err = adminClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imported domain.NetworkDHCPHostImportResult
+	if err := json.NewDecoder(response.Body).Decode(&imported); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || imported.Imported != 2 || imported.Skipped != 0 || len(imported.Network.Addresses) != 1 || len(imported.Network.Addresses[0].Hosts) != 2 {
+		t.Fatalf("import DHCP hosts status=%d result=%+v", response.StatusCode, imported)
+	}
+
+	response, err = adminClient.Get(server.URL + "/api/v1/networks/api-net-01/hosts/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportedHosts := readBody(response)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(exportedHosts, "52:54:00:12:34:57,10.99.0.51,api-host-02") || !strings.Contains(exportedHosts, "52:54:00:12:34:58,10.99.0.52") {
+		t.Fatalf("export DHCP hosts status=%d body=%s", response.StatusCode, exportedHosts)
+	}
+
 	request, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/v1/networks/api-net-01", nil)
 	request.Header.Set("X-CSRF-Token", csrf)
 	response, err = adminClient.Do(request)
@@ -1512,7 +1539,7 @@ func TestNetworkManagementAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if events.Total != 6 {
+	if events.Total != 7 {
 		t.Fatalf("network audit events = %+v", events)
 	}
 	actions := make(map[string]bool, len(events.Items))
@@ -1522,7 +1549,7 @@ func TestNetworkManagementAPI(t *testing.T) {
 			t.Fatalf("network audit event = %+v", event)
 		}
 	}
-	for _, action := range []string{"network.create", "network.start", "network.stop", "network.delete", "network.dhcp.host.add", "network.dhcp.host.delete"} {
+	for _, action := range []string{"network.create", "network.start", "network.stop", "network.delete", "network.dhcp.host.add", "network.dhcp.host.delete", "network.dhcp.host.import"} {
 		if !actions[action] {
 			t.Fatalf("missing audit action %s in %+v", action, events.Items)
 		}

@@ -155,3 +155,23 @@ func TestListAuditEventsOrdersSameSecondByID(t *testing.T) {
 		t.Fatalf("pagination = %d/%d", result.Page, result.PageSize)
 	}
 }
+
+func TestDeleteAuditEventsBefore(t *testing.T) {
+	store := openTestDB(t)
+	ctx := context.Background()
+	for _, timestamp := range []time.Time{time.Unix(1_700_000_000, 0), time.Unix(1_700_000_100, 0), time.Unix(1_700_000_200, 0)} {
+		if err := store.RecordAudit(ctx, domain.AuditEvent{
+			OccurredAt: timestamp, Actor: "admin", Role: domain.RoleAdmin, Action: "vm.start", TargetKind: "vm", TargetID: "vm-a", Result: "success",
+		}); err != nil {
+			t.Fatalf("RecordAudit() error = %v", err)
+		}
+	}
+	deleted, err := store.DeleteAuditEventsBefore(ctx, time.Unix(1_700_000_150, 0))
+	if err != nil || deleted != 2 {
+		t.Fatalf("DeleteAuditEventsBefore() = %d, %v", deleted, err)
+	}
+	remaining, err := store.ListAuditEvents(ctx, domain.AuditEventQuery{Page: 1, PageSize: 20})
+	if err != nil || remaining.Total != 1 || !remaining.Items[0].OccurredAt.Equal(time.Unix(1_700_000_200, 0)) {
+		t.Fatalf("remaining events = %+v, %v", remaining, err)
+	}
+}

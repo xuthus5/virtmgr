@@ -190,6 +190,8 @@ type BackupSchedule struct {
 	TargetPool     string     `json:"targetPool"`
 	Name           string     `json:"name"`
 	IntervalHours  int        `json:"intervalHours"`
+	ScheduleMode   string     `json:"scheduleMode"`
+	DailyTime      string     `json:"dailyTime"`
 	RetentionCount int        `json:"retentionCount"`
 	RetentionDays  int        `json:"retentionDays"`
 	Enabled        bool       `json:"enabled"`
@@ -206,6 +208,8 @@ type BackupScheduleSpec struct {
 	RepositoryID   string `json:"repositoryId"`
 	Name           string `json:"name"`
 	IntervalHours  int    `json:"intervalHours"`
+	ScheduleMode   string `json:"scheduleMode"`
+	DailyTime      string `json:"dailyTime"`
 	RetentionCount int    `json:"retentionCount"`
 	RetentionDays  int    `json:"retentionDays"`
 	Enabled        bool   `json:"enabled"`

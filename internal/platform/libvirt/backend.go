@@ -22,6 +22,10 @@ type Backend interface {
 	DefineVMXML(ctx context.Context, uuid, xmlText string) (domain.VMXML, error)
 	UpdateVMResources(ctx context.Context, uuid string, spec domain.VMResourcesSpec) (domain.VM, error)
 	ResizeVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskResizeSpec) (domain.VM, error)
+	AttachVMDisk(ctx context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error)
+	DetachVMDisk(ctx context.Context, uuid, target string) (domain.VM, error)
+	AttachVMNetwork(ctx context.Context, uuid string, spec domain.VMNetworkAttachSpec) (domain.VM, error)
+	DetachVMNetwork(ctx context.Context, uuid, mac string) (domain.VM, error)
 	SetVMAutostart(ctx context.Context, uuid string, enabled bool) error
 	AttachHostDevice(ctx context.Context, uuid, deviceName string) (domain.VM, error)
 	DetachHostDevice(ctx context.Context, uuid, deviceName string) (domain.VM, error)

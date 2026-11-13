@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Plus, RefreshCw, Router, ScrollText, Square, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Download, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Plus, RefreshCw, Router, ScrollText, Square, Trash2, Upload } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { NetworkAddress, NetworkDHCPHost, NetworkDHCPHostInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
@@ -95,7 +95,9 @@ export function NetworksPage() {
   const [hostsNetwork, setHostsNetwork] = useState<string | null>(null);
   const [hostForm, setHostForm] = useState<HostFormState>(initialHostForm);
   const [hostError, setHostError] = useState("");
+  const [hostTransfer, setHostTransfer] = useState<"import" | "export" | "">("");
   const [hostDeleteTarget, setHostDeleteTarget] = useState<{ network: VirtualNetwork; host: NetworkDHCPHost } | null>(null);
+  const hostFileInput = useRef<HTMLInputElement>(null);
   const networks = query.data?.items ?? [];
   const leasesQuery = useNetworkLeasesQuery(leasesNetwork);
   const leases = leasesQuery.data?.items ?? [];
@@ -210,6 +212,44 @@ export function NetworksPage() {
 
   function updateHostForm<K extends keyof HostFormState>(key: K, value: HostFormState[K]) {
     setHostForm((form) => ({ ...form, [key]: value }));
+  }
+
+  async function exportHosts(network: string) {
+    setHostError("");
+    setHostTransfer("export");
+    try {
+      const { blob, filename } = await api.exportNetworkDHCPHosts(network);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setSuccessMessage(`网络 ${network} 的静态主机已导出：${filename}`);
+    } catch (cause) {
+      setHostError(actionError(cause, "导出静态主机失败，请稍后重试。"));
+    } finally {
+      setHostTransfer("");
+    }
+  }
+
+  async function importHosts(network: string, file: File) {
+    setHostError("");
+    if (file.size > 1 << 20) {
+      setHostError("CSV 文件不能超过 1 MiB。");
+      return;
+    }
+    setHostTransfer("import");
+    try {
+      const result = await api.importNetworkDHCPHosts(network, await file.text());
+      setSuccessMessage(`网络 ${network} 静态主机导入完成：新增 ${result.imported} 条，跳过 ${result.skipped} 条。`);
+      void queryClient.invalidateQueries({ queryKey: networksQueryKey });
+    } catch (cause) {
+      setHostError(actionError(cause, "导入静态主机失败，请检查 CSV 格式后重试。"));
+    } finally {
+      setHostTransfer("");
+      if (hostFileInput.current) hostFileInput.current.value = "";
+    }
   }
 
   function submitCreate(event: FormEvent<HTMLFormElement>) {
@@ -655,7 +695,16 @@ export function NetworksPage() {
                         : "网络未激活：条目会写入持久配置，并在网络下次启动时生效。"}
                     </CardDescription>
                   </div>
-                  <Badge variant={hostsNetworkRecord?.active ? "success" : "secondary"}>{hostsNetworkRecord?.active ? "实时生效" : "待启动生效"}</Badge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={hostsNetworkRecord?.active ? "success" : "secondary"}>{hostsNetworkRecord?.active ? "实时生效" : "待启动生效"}</Badge>
+                    <Button type="button" variant="outline" size="sm" data-testid={`network-hosts-export-${hostsNetwork}`} disabled={hostTransfer !== ""} onClick={() => void exportHosts(hostsNetwork)}>
+                      {hostTransfer === "export" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}导出 CSV
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" data-testid={`network-hosts-import-${hostsNetwork}`} disabled={!canManage || hostTransfer !== "" || !hostsHaveDHCP} title={disabledReason || "导入 CSV 静态主机"} onClick={() => hostFileInput.current?.click()}>
+                      {hostTransfer === "import" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}导入 CSV
+                    </Button>
+                    <input ref={hostFileInput} type="file" accept=".csv,text/csv" className="sr-only" data-testid={`network-hosts-import-file-${hostsNetwork}`} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importHosts(hostsNetwork, file); }} />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -686,7 +735,7 @@ export function NetworksPage() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs text-muted-foreground">IP 必须位于当前子网内，且不能是网关、网络地址或广播地址。</p>
+                      <p className="text-xs text-muted-foreground">IP 必须位于当前子网内，且不能是网关、网络地址或广播地址。CSV 列为 <span className="font-mono">mac,ip,name</span>，同名同 IP 条目会跳过。</p>
                       <Button type="submit" size="sm" data-testid="network-host-submit" disabled={addHostMutation.isPending}>
                         {addHostMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                         添加静态主机

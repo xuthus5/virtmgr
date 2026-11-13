@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, HardDrive, LoaderCircle, Maximize2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { Disk, Role, VM } from "@/api/types";
 import {
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   defaultDiskCapacityGiB,
@@ -26,6 +27,7 @@ import {
 import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { formatBytes } from "@/lib/utils";
+import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 
 export function VMDisksCard({ vm, role, readOnly }: {
   vm: VM;
@@ -37,6 +39,20 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const [capacityGiB, setCapacityGiB] = useState("");
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [pool, setPool] = useState("");
+  const [volume, setVolume] = useState("");
+  const [bus, setBus] = useState("virtio");
+  const [target, setTarget] = useState("");
+  const [attachError, setAttachError] = useState("");
+  const [detachTarget, setDetachTarget] = useState<string | null>(null);
+  const poolsQuery = useStoragePoolsQuery(attachOpen);
+  const activePools = (poolsQuery.data?.items ?? []).filter((item) => item.state === "active");
+  const selectedPool = pool || activePools[0]?.name || "";
+  const volumesQuery = useStorageVolumesQuery(selectedPool);
+  const eligibleVolumes = (volumesQuery.data?.items ?? []).filter((item) => item.format === "qcow2" || item.format === "raw");
+  const selectedVolume = eligibleVolumes.some((item) => item.name === volume) ? volume : eligibleVolumes[0]?.name || "";
+  const rootTarget = vm.disks.find((disk) => disk.device === "disk" && !disk.readOnly && disk.source)?.target || "";
 
   const mutation = useMutation({
     mutationFn: (input: { target: string; capacityBytes: number }) => api.resizeVMDisk(vm.uuid, input.target, { capacityBytes: input.capacityBytes }),
@@ -52,6 +68,35 @@ export function VMDisksCard({ vm, role, readOnly }: {
     onError: (error) => {
       setFormError(error instanceof ApiError ? error.message : "磁盘扩容失败，请稍后重试。");
     },
+  });
+
+  const attachMutation = useMutation({
+    mutationFn: () => api.attachVMDisk(vm.uuid, { pool: selectedPool, volume: selectedVolume, bus: bus as "virtio" | "sata" | "scsi", ...(target.trim() ? { target: target.trim() } : {}) }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      setAttachOpen(false);
+      setVolume("");
+      setTarget("");
+      setAttachError("");
+      setNotice({ tone: "success", text: `已从 ${selectedPool}/${selectedVolume} 附加磁盘。` });
+    },
+    onError: (cause) => setAttachError(cause instanceof ApiError ? cause.message : "附加磁盘失败，请稍后重试。"),
+  });
+
+  const detachMutation = useMutation({
+    mutationFn: (diskTarget: string) => api.detachVMDisk(vm.uuid, diskTarget),
+    onSuccess: (updated, diskTarget) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      setDetachTarget(null);
+      setNotice({ tone: "success", text: `磁盘 ${diskTarget} 已移除。` });
+    },
+    onError: (cause) => setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "移除磁盘失败，请稍后重试。" }),
   });
 
   function openResize(disk: Disk) {
@@ -80,7 +125,12 @@ export function VMDisksCard({ vm, role, readOnly }: {
             <CardTitle className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-primary" />磁盘设备</CardTitle>
             <CardDescription>磁盘目标、总线、格式、容量和 libvirt 数据源。</CardDescription>
           </div>
-          <Badge variant="outline">仅支持扩容</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">支持热插拔</Badge>
+            <Button size="sm" variant="outline" data-testid="vm-disk-attach-open" disabled={!role || role === "viewer" || readOnly} title={readOnly ? "系统当前处于只读模式" : role === "viewer" ? "当前账号没有磁盘操作权限" : "附加存储卷"} onClick={() => { setAttachError(""); setNotice(null); setAttachOpen(true); }}>
+              <Plus className="h-4 w-4" />附加磁盘
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 p-0">
@@ -126,16 +176,29 @@ export function VMDisksCard({ vm, role, readOnly }: {
                     <TableCell><Badge variant={disk.readOnly ? "secondary" : "outline"}>{disk.readOnly ? "只读" : "读写"}</Badge></TableCell>
                     <TableCell className="text-right">
                       {disk.device === "disk" ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          data-testid={`vm-disk-resize-${disk.target}`}
-                          disabled={Boolean(disabledReason) || mutation.isPending}
-                          title={disabledReason || `扩容磁盘 ${disk.target}`}
-                          onClick={() => openResize(disk)}
-                        >
-                          <Maximize2 className="h-3.5 w-3.5" />扩容
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-testid={`vm-disk-resize-${disk.target}`}
+                            disabled={Boolean(disabledReason) || mutation.isPending}
+                            title={disabledReason || `扩容磁盘 ${disk.target}`}
+                            onClick={() => openResize(disk)}
+                          >
+                            <Maximize2 className="h-3.5 w-3.5" />扩容
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            data-testid={`vm-disk-detach-${disk.target}`}
+                            disabled={Boolean(disabledReason) || detachMutation.isPending || disk.target === rootTarget}
+                            title={disk.target === rootTarget ? "不能移除主系统磁盘" : disabledReason || "移除磁盘"}
+                            aria-label={`移除磁盘 ${disk.target}`}
+                            onClick={() => { setNotice(null); setDetachTarget(disk.target); }}
+                          >
+                            <Unplug className="h-4 w-4" />
+                          </Button>
+                        </div>
                       ) : <span className="text-muted-foreground">-</span>}
                     </TableCell>
                   </TableRow>
@@ -194,6 +257,45 @@ export function VMDisksCard({ vm, role, readOnly }: {
             <Button data-testid="vm-disk-resize-submit" disabled={mutation.isPending || !capacityGiB.trim()} onClick={submitResize}>
               {mutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Maximize2 className="h-4 w-4" />}
               {mutation.isPending ? "正在扩容..." : "确认扩容"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Modal open={attachOpen} onClose={() => { if (!attachMutation.isPending) setAttachOpen(false); }} title="附加存储卷" description="从活跃存储池选择 qcow2/raw 卷。运行中的虚拟机使用热插拔，关机虚拟机写入持久配置。" testId="vm-disk-attach-modal" footer={<><Button variant="ghost" disabled={attachMutation.isPending} onClick={() => setAttachOpen(false)}>取消</Button><Button data-testid="vm-disk-attach-submit" disabled={attachMutation.isPending || !selectedPool || !selectedVolume} onClick={() => attachMutation.mutate()}>{attachMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{attachMutation.isPending ? "正在附加..." : "确认附加"}</Button></>}>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="vm-disk-attach-pool">存储池</Label>
+            <select id="vm-disk-attach-pool" data-testid="vm-disk-attach-pool" value={selectedPool} onChange={(event) => setPool(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+              {activePools.map((item) => <option key={item.name} value={item.name}>{item.name} · {formatBytes(item.availableBytes)} 可用</option>)}
+            </select>
+            {!activePools.length && !poolsQuery.isLoading ? <p className="text-xs text-destructive">没有可用活跃存储池。</p> : null}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vm-disk-attach-volume">存储卷</Label>
+            <select id="vm-disk-attach-volume" data-testid="vm-disk-attach-volume" value={selectedVolume} onChange={(event) => setVolume(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+              {eligibleVolumes.map((item) => <option key={item.name} value={item.name}>{item.name} · {item.format} · {formatBytes(item.capacityBytes)}</option>)}
+            </select>
+            {!eligibleVolumes.length && selectedPool && !volumesQuery.isLoading ? <p className="text-xs text-muted-foreground">该存储池没有 qcow2/raw 卷。</p> : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="vm-disk-attach-bus">磁盘总线</Label><select id="vm-disk-attach-bus" data-testid="vm-disk-attach-bus" value={bus} onChange={(event) => setBus(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="virtio">virtio</option><option value="sata">sata</option><option value="scsi">scsi</option></select></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-attach-target">目标设备（可选）</Label><Input id="vm-disk-attach-target" data-testid="vm-disk-attach-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="留空自动分配，例如 vdb" /></div>
+          </div>
+          {attachError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{attachError}</p> : null}
+        </div>
+      </Modal>
+
+      <AlertDialog open={detachTarget !== null} onOpenChange={(open) => { if (!open && !detachMutation.isPending) setDetachTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>移除磁盘 {detachTarget}？</AlertDialogTitle>
+            <AlertDialogDescription>将从 <span className="font-medium text-foreground">{vm.name}</span> 移除该磁盘设备。存储卷本身不会被删除；运行中的虚拟机将尝试热拔除。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={detachMutation.isPending}>取消</AlertDialogCancel>
+            <Button variant="destructive" data-testid="vm-disk-detach-submit" disabled={detachMutation.isPending} onClick={() => { if (detachTarget) detachMutation.mutate(detachTarget); }}>
+              {detachMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}确认移除
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

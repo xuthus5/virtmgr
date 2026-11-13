@@ -10,12 +10,17 @@ describe("snapshot policy form model", () => {
   it("normalizes a valid form into the API input", () => {
     const result = snapshotPolicyInputFromForm({
       name: " nightly ",
+      scheduleMode: "interval",
       intervalMinutes: "60",
+      dailyTime: "02:00",
       retention: "3",
       enabled: true,
     });
     expect(result.error).toBe("");
-    expect(result.input).toEqual({ name: "nightly", intervalMinutes: 60, retention: 3, enabled: true });
+    expect(result.input).toEqual({ name: "nightly", intervalMinutes: 60, scheduleMode: "interval", dailyTime: "02:00", retention: 3, enabled: true });
+    const daily = snapshotPolicyInputFromForm({ ...initialSnapshotPolicyForm(), name: "nightly", scheduleMode: "daily", dailyTime: "03:30" });
+    expect(daily.input).toEqual({ name: "nightly", intervalMinutes: 1440, scheduleMode: "daily", dailyTime: "03:30", retention: 3, enabled: true });
+    expect(snapshotPolicyInputFromForm({ ...initialSnapshotPolicyForm(), name: "nightly", scheduleMode: "daily", dailyTime: "25:00" }).error).toContain("HH:MM");
   });
 
   it("rejects unsafe names and out-of-range schedule values", () => {
@@ -31,6 +36,8 @@ describe("snapshot policy form model", () => {
       vmUuid: "vm-a",
       name: "weekly",
       intervalMinutes: 120,
+      scheduleMode: "interval",
+      dailyTime: "02:00",
       retention: 5,
       enabled: false,
       nextRunAt: "2026-05-01T10:00:00Z",
@@ -39,7 +46,9 @@ describe("snapshot policy form model", () => {
     };
     expect(snapshotPolicyFormFromPolicy(policy)).toEqual({
       name: "weekly",
+      scheduleMode: "interval",
       intervalMinutes: "120",
+      dailyTime: "02:00",
       retention: "5",
       enabled: false,
     });

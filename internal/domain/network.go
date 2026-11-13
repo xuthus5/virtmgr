@@ -24,6 +24,16 @@ type NetworkDHCPHostCreateSpec struct {
 	Name string `json:"name,omitempty"`
 }
 
+type NetworkDHCPHostImportSpec struct {
+	Hosts []NetworkDHCPHostCreateSpec `json:"hosts"`
+}
+
+type NetworkDHCPHostImportResult struct {
+	Network  VirtualNetwork `json:"network"`
+	Imported int            `json:"imported"`
+	Skipped  int            `json:"skipped"`
+}
+
 type VirtualNetwork struct {
 	Name        string           `json:"name"`
 	UUID        string           `json:"uuid,omitempty"`

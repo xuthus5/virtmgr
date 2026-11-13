@@ -50,21 +50,22 @@ All screenshots use the built-in demo backend, not production host data.
 | Area | Capabilities |
 |---|---|
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
-| Virtual machines | Search and filter domains; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
-| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and optional interactive Cloud-init builder with live YAML preview and source editing |
-| VM details | Hardware summary, live CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, Guest Agent information, snapshots, and domain XML |
+| Virtual machines | Search and filter domains by state, tag, and owner; persist filters locally and favorite frequently used VMs; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
+| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
+| VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, Guest Agent information, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
-| VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, and disk expansion |
+| VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
-| Snapshots | Create, revert, delete, and schedule per-VM snapshots with retention policies |
-| Backups | Central cold-backup catalog, integrity verification, restore as a new VM, schedules, retention, pinning, and libvirt pool repositories |
+| Snapshots | Create, revert, delete, and schedule per-VM snapshots with interval or daily-time retention policies |
+| Backups | Central cold-backup catalog, manual integrity checks, restore as a new VM, interval/daily schedules, retention, pinning, failed-task retry, and task SSE state |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; stream ISO, qcow2, and raw image uploads; protect in-use volumes |
-| Networking | NAT and isolated networks, bridge details, IPv4/DHCP configuration, live leases, static DHCP hosts, create/edit/start/stop/delete |
+| Networking | NAT and isolated networks, bridge details, IPv4/DHCP configuration, live leases, static DHCP hosts with CSV import/export, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
-| Observability | SSE event stream, task center with progress and failures, host and VM resource trends, virtual disk I/O and per-NIC metrics, structured logs, health endpoints |
-| Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable audit trail, CSP and security headers |
-| User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, accessible dialogs, and explicit confirmation for destructive actions |
+| Observability | SSE events and task state, backup retry, seven-day host/running-VM history, Prometheus `/metrics`, CPU/memory threshold Webhook alerts, structured logs, and health endpoints |
+| Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable/retention-managed audit trail, CSP and security headers |
+| System management | Version/commit/build time, online SQLite export, audit retention, and global read-only settings |
+| User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, locally persisted list filters and favorites, accessible dialogs, and explicit confirmation for destructive actions |
 | Templates | Reusable VM specifications, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
 
 ## Architecture
@@ -223,6 +224,29 @@ Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve We
 
 Do not expose a writable VirtMgr instance directly to the public internet without TLS, a firewall, and a strong administrator password.
 
+## Container deployment
+
+The repository includes a multi-stage image and a Compose example. The container runs as an unprivileged user and mounts the host libvirt socket plus a persistent data volume.
+
+```bash
+cd deploy/docker
+cat > .env <<'EOF'
+VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
+VIRTMGR_READ_ONLY=true
+VIRTMGR_COOKIE_SECURE=false
+LIBVIRT_GID=640
+TZ=Asia/Shanghai
+EOF
+
+# Docker Compose
+docker compose up -d --build
+
+# or Podman Compose
+podman compose up -d --build
+```
+
+Set `LIBVIRT_GID` to the group ID that owns `/var/run/libvirt/libvirt-sock` on the host (`stat -c '%g' /var/run/libvirt/libvirt-sock`). For native TLS, uncomment the certificate mount in Compose and set `VIRTMGR_TLS_CERT_FILE` / `VIRTMGR_TLS_KEY_FILE`. If backup or storage features need direct access to host storage paths, mount those directories at the same paths; do not use `--privileged`.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -327,7 +351,7 @@ internal/domain/          Domain types, validation, and error contracts
 internal/modules/         Feature modules with http/app layers
 internal/platform/        libvirt, SQLite, auth context, metrics, tasks, config
 web/                      React + TypeScript + Vite + Tailwind UI
-deploy/                   systemd unit and environment example
+deploy/                   systemd, container image, Compose, and environment examples
 docs/                     Architecture documentation and screenshots
 scripts/                  Development and E2E helpers
 .github/workflows/        Release binary pipeline
@@ -338,16 +362,18 @@ scripts/                  Development and E2E helpers
 - One VirtMgr instance manages one libvirt endpoint. Cross-host scheduling, migration, and multi-cluster inventory are not implemented.
 - Linux with KVM/QEMU and the libvirt Go binding is the supported runtime. Building requires CGO and libvirt development headers.
 - Graphical consoles currently support VNC only; SPICE is not supported. Serial consoles support libvirt PTY devices, with one active browser session per serial device.
-- Container deployment is not an official deployment path yet; the supported production shape is a host binary managed by systemd.
+- Container deployment requires the host libvirt socket and a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
+- Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
 - VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.
 - Modern Chrome, Edge, Firefox, and Safari are recommended.
 
 ## Documentation
 
 - [Architecture design](docs/architecture-design.md) — product boundaries, architecture, data model, routes, security, and deployment details (Chinese)
-- [Product gap analysis](docs/product-gap-analysis.md) — comparison with mainstream tools, single-host roadmap, and first-batch implementation status (Chinese)
+- [Product gap analysis](docs/product-gap-analysis.md) — comparison with mainstream tools, single-host roadmap, and implemented capability status (Chinese)
 - [Backup and restore design](docs/backup-design.md) — implemented cold-backup catalog, restore, scheduling, and retention model (Chinese)
+- [Container image](deploy/docker/Dockerfile) and [Compose example](deploy/docker/compose.yaml) — libvirt socket and unprivileged runtime
 - [Release workflow](.github/workflows/release.yml) — amd64/arm64 binary build and release attachment
 - [Environment example](deploy/virtmgr.env.example) — production-oriented variable template
 - [systemd unit](deploy/virtmgr.service) — hardened service definition

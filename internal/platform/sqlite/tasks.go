@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -18,14 +19,37 @@ func (s *Store) CreateTask(ctx context.Context, task domain.Task) error {
 	if updatedAt.IsZero() {
 		updatedAt = createdAt
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks(id, kind, target_kind, target_id, status, progress, step, error, actor, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	metadata, err := encodeTaskMetadata(task.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO tasks(id, kind, target_kind, target_id, status, progress, step, error, metadata_json, actor, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Kind, task.TargetKind, task.TargetID, string(task.Status), task.Progress,
-		task.Step, task.Error, task.Actor, createdAt.UTC().Unix(), updatedAt.UTC().Unix(),
+		task.Step, task.Error, metadata, task.Actor, createdAt.UTC().Unix(), updatedAt.UTC().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SetTaskMetadata(ctx context.Context, id string, metadata map[string]any) error {
+	encoded, err := encodeTaskMetadata(metadata)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE tasks SET metadata_json = ? WHERE id = ?`, encoded, id)
+	if err != nil {
+		return fmt.Errorf("update task metadata: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count updated task metadata: %w", err)
+	}
+	if affected == 0 {
+		return domain.ErrNotFound
 	}
 	return nil
 }
@@ -56,13 +80,14 @@ func (s *Store) UpdateTask(ctx context.Context, task domain.Task) error {
 func (s *Store) GetTask(ctx context.Context, id string) (domain.Task, error) {
 	var task domain.Task
 	var status string
+	var metadataJSON string
 	var createdAt int64
 	var updatedAt int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, kind, target_kind, target_id, status, progress, step, error, actor, created_at, updated_at
+		SELECT id, kind, target_kind, target_id, status, progress, step, error, metadata_json, actor, created_at, updated_at
 		FROM tasks WHERE id = ?`, id).Scan(
 		&task.ID, &task.Kind, &task.TargetKind, &task.TargetID, &status, &task.Progress,
-		&task.Step, &task.Error, &task.Actor, &createdAt, &updatedAt,
+		&task.Step, &task.Error, &metadataJSON, &task.Actor, &createdAt, &updatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return domain.Task{}, domain.ErrNotFound
@@ -71,6 +96,7 @@ func (s *Store) GetTask(ctx context.Context, id string) (domain.Task, error) {
 		return domain.Task{}, fmt.Errorf("get task: %w", err)
 	}
 	task.Status = domain.TaskStatus(status)
+	task.Metadata = decodeTaskMetadata(metadataJSON)
 	task.CreatedAt = time.Unix(createdAt, 0).UTC()
 	task.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return task, nil
@@ -90,7 +116,7 @@ func (s *Store) ListTasks(ctx context.Context, input domain.TaskQuery) (domain.T
 	}
 	offset := (query.Page - 1) * query.PageSize
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, kind, target_kind, target_id, status, progress, step, error, actor, created_at, updated_at
+		SELECT id, kind, target_kind, target_id, status, progress, step, error, metadata_json, actor, created_at, updated_at
 		FROM tasks`+where+`
 		ORDER BY created_at DESC, id DESC
 		LIMIT ? OFFSET ?`, append(args, query.PageSize, offset)...)
@@ -102,15 +128,17 @@ func (s *Store) ListTasks(ctx context.Context, input domain.TaskQuery) (domain.T
 	for rows.Next() {
 		var task domain.Task
 		var status string
+		var metadataJSON string
 		var createdAt int64
 		var updatedAt int64
 		if err := rows.Scan(
 			&task.ID, &task.Kind, &task.TargetKind, &task.TargetID, &status, &task.Progress,
-			&task.Step, &task.Error, &task.Actor, &createdAt, &updatedAt,
+			&task.Step, &task.Error, &metadataJSON, &task.Actor, &createdAt, &updatedAt,
 		); err != nil {
 			return domain.TaskList{}, fmt.Errorf("scan task: %w", err)
 		}
 		task.Status = domain.TaskStatus(status)
+		task.Metadata = decodeTaskMetadata(metadataJSON)
 		task.CreatedAt = time.Unix(createdAt, 0).UTC()
 		task.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 		items = append(items, task)
@@ -119,6 +147,28 @@ func (s *Store) ListTasks(ctx context.Context, input domain.TaskQuery) (domain.T
 		return domain.TaskList{}, fmt.Errorf("iterate tasks: %w", err)
 	}
 	return domain.TaskList{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize}, nil
+}
+
+func encodeTaskMetadata(metadata map[string]any) (string, error) {
+	if len(metadata) == 0 {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode task metadata: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func decodeTaskMetadata(encoded string) map[string]any {
+	if encoded == "" || encoded == "{}" {
+		return nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(encoded), &metadata); err != nil {
+		return nil
+	}
+	return metadata
 }
 
 func (s *Store) MarkRunningTasksInterrupted(ctx context.Context, now time.Time) (int64, error) {

@@ -373,6 +373,49 @@ func TestDemoBackendUploadStorageVolume(t *testing.T) {
 	}
 }
 
+func TestDemoBackendHotplugLifecycle(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	const uuid = "11111111-1111-4111-8111-111111111111"
+	before, err := backend.GetVM(ctx, uuid)
+	if err != nil {
+		t.Fatalf("GetVM() error = %v", err)
+	}
+	if _, err := backend.CreateStorageVolume(ctx, "default", domain.StorageVolumeCreateSpec{
+		Name: "hotplug-test.qcow2", Format: "qcow2", CapacityBytes: 5 << 30,
+	}); err != nil {
+		t.Fatalf("CreateStorageVolume() error = %v", err)
+	}
+	attached, err := backend.AttachVMDisk(ctx, uuid, domain.VMDiskAttachSpec{Pool: "default", Volume: "hotplug-test.qcow2"})
+	if err != nil {
+		t.Fatalf("AttachVMDisk() error = %v", err)
+	}
+	if len(attached.Disks) != len(before.Disks)+1 {
+		t.Fatalf("attached disks = %+v", attached.Disks)
+	}
+	target := attached.Disks[len(attached.Disks)-1].Target
+	if _, err := backend.DetachVMDisk(ctx, uuid, before.Disks[0].Target); !errors.Is(err, domain.ErrActionNotAllowed) {
+		t.Fatalf("detach primary disk error = %v", err)
+	}
+	detached, err := backend.DetachVMDisk(ctx, uuid, target)
+	if err != nil || len(detached.Disks) != len(before.Disks) {
+		t.Fatalf("DetachVMDisk() = %+v, %v", detached.Disks, err)
+	}
+
+	withNetwork, err := backend.AttachVMNetwork(ctx, uuid, domain.VMNetworkAttachSpec{Network: "default", Model: domain.VMNICModelVirtio})
+	if err != nil || len(withNetwork.Interfaces) != len(before.Interfaces)+1 {
+		t.Fatalf("AttachVMNetwork() = %+v, %v", withNetwork.Interfaces, err)
+	}
+	mac := withNetwork.Interfaces[len(withNetwork.Interfaces)-1].MAC
+	withoutNetwork, err := backend.DetachVMNetwork(ctx, uuid, mac)
+	if err != nil || len(withoutNetwork.Interfaces) != len(before.Interfaces) {
+		t.Fatalf("DetachVMNetwork() = %+v, %v", withoutNetwork.Interfaces, err)
+	}
+	if _, err := backend.DetachVMNetwork(ctx, uuid, before.Interfaces[0].MAC); !errors.Is(err, domain.ErrActionNotAllowed) {
+		t.Fatalf("detach last network error = %v", err)
+	}
+}
+
 func TestDemoBackendSnapshotLifecycle(t *testing.T) {
 	backend := NewDemo()
 	ctx := context.Background()

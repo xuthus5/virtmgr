@@ -486,10 +486,10 @@ func (s *Store) CreateBackupSchedule(ctx context.Context, item domain.BackupSche
 	}
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO backup_schedules(
-			vm_uuid, repository_id, target_pool, name, interval_hours, retention_count,
+			vm_uuid, repository_id, target_pool, name, interval_hours, schedule_mode, daily_time, retention_count,
 			retention_days, enabled, last_run_at, next_run_at, last_backup_id, last_error, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.VMUUID, item.RepositoryID, item.TargetPool, item.Name, item.IntervalHours,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.VMUUID, item.RepositoryID, item.TargetPool, item.Name, item.IntervalHours, item.ScheduleMode, item.DailyTime,
 		item.RetentionCount, item.RetentionDays, boolInt(item.Enabled), timePtrUnix(item.LastRunAt),
 		item.NextRunAt.UTC().Unix(), item.LastBackupID, item.LastError, now.Unix(), updated.Unix())
 	if err != nil {
@@ -508,11 +508,11 @@ func (s *Store) CreateBackupSchedule(ctx context.Context, item domain.BackupSche
 func (s *Store) UpdateBackupSchedule(ctx context.Context, item domain.BackupSchedule) (domain.BackupSchedule, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE backup_schedules SET
-			repository_id = ?, target_pool = ?, name = ?, interval_hours = ?, retention_count = ?,
+			repository_id = ?, target_pool = ?, name = ?, interval_hours = ?, schedule_mode = ?, daily_time = ?, retention_count = ?,
 			retention_days = ?, enabled = ?, last_run_at = ?, next_run_at = ?, last_backup_id = ?,
 			last_error = ?, updated_at = ?
 		WHERE id = ?`,
-		item.RepositoryID, item.TargetPool, item.Name, item.IntervalHours, item.RetentionCount,
+		item.RepositoryID, item.TargetPool, item.Name, item.IntervalHours, item.ScheduleMode, item.DailyTime, item.RetentionCount,
 		item.RetentionDays, boolInt(item.Enabled), timePtrUnix(item.LastRunAt), item.NextRunAt.UTC().Unix(),
 		item.LastBackupID, item.LastError, time.Now().UTC().Unix(), item.ID)
 	if err != nil {
@@ -574,7 +574,7 @@ func (s *Store) ListDueBackupSchedules(ctx context.Context, now time.Time, limit
 }
 
 const backupScheduleColumns = `s.id, s.vm_uuid, s.repository_id, COALESCE(r.name, ''), s.target_pool,
-	s.name, s.interval_hours, s.retention_count, s.retention_days, s.enabled, s.last_run_at,
+	s.name, s.interval_hours, s.schedule_mode, s.daily_time, s.retention_count, s.retention_days, s.enabled, s.last_run_at,
 	s.next_run_at, s.last_backup_id, s.last_error, s.created_at, s.updated_at`
 
 type rowScanner interface {
@@ -631,7 +631,7 @@ func scanBackupSchedule(scanner rowScanner) (domain.BackupSchedule, error) {
 	var updatedAt int64
 	if err := scanner.Scan(
 		&item.ID, &item.VMUUID, &item.RepositoryID, &item.RepositoryName, &item.TargetPool,
-		&item.Name, &item.IntervalHours, &item.RetentionCount, &item.RetentionDays, &enabled,
+		&item.Name, &item.IntervalHours, &item.ScheduleMode, &item.DailyTime, &item.RetentionCount, &item.RetentionDays, &enabled,
 		&lastRunAt, &nextRunAt, &item.LastBackupID, &item.LastError, &createdAt, &updatedAt,
 	); err != nil {
 		return domain.BackupSchedule{}, err

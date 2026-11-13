@@ -484,14 +484,14 @@ function SchedulesPanel({ role, readOnly, onTask, onNotice }: {
         {!query.isLoading && !query.isError && items.length === 0 ? <div className="px-5 py-16 text-center" data-testid="backup-schedules-empty"><CalendarClock className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 font-medium">还没有定时计划</p><p className="mt-1 text-sm text-muted-foreground">为关机虚拟机设置周期备份和保留策略。</p></div> : null}
         {items.length ? <Table className="min-w-[1050px]"><TableHeader><TableRow><TableHead>计划 / 虚拟机</TableHead><TableHead>频率</TableHead><TableHead>保留</TableHead><TableHead>下次执行</TableHead><TableHead>最近结果</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{items.map((schedule) => <TableRow key={schedule.id} data-testid={`backup-schedule-row-${schedule.id}`}>
           <TableCell><p className="font-medium">{schedule.name}</p><p className="text-xs text-muted-foreground">{schedule.vmName || schedule.vmUuid} · {schedule.repositoryName || schedule.targetPool}</p></TableCell>
-          <TableCell>每 {schedule.intervalHours} 小时</TableCell>
+          <TableCell>{schedule.scheduleMode === "daily" ? `每日 ${schedule.dailyTime || "02:00"}` : `每 ${schedule.intervalHours} 小时`}</TableCell>
           <TableCell>{schedule.retentionCount} 份{schedule.retentionDays ? ` / ${schedule.retentionDays} 天` : ""}</TableCell>
           <TableCell className="whitespace-nowrap text-xs">{formatTime(schedule.nextRunAt)}</TableCell>
           <TableCell><span className="text-xs">{formatTime(schedule.lastRunAt)}</span>{schedule.lastError ? <p className="mt-1 max-w-56 truncate text-xs text-destructive" title={schedule.lastError}>{schedule.lastError}</p> : null}</TableCell>
           <TableCell><Badge variant={schedule.enabled ? "success" : "secondary"}>{schedule.enabled ? "已启用" : "已暂停"}</Badge></TableCell>
           <TableCell><div className="flex flex-wrap justify-end gap-1">
             <Button variant="ghost" size="sm" data-testid={`backup-schedule-edit-${schedule.id}`} disabled={Boolean(disabledReason)} title={disabledReason || "编辑计划"} onClick={() => { setEditing(schedule); setFormOpen(true); }}>编辑</Button>
-            <Button variant="ghost" size="sm" data-testid={`backup-schedule-toggle-${schedule.id}`} disabled={Boolean(disabledReason)} title={disabledReason || (schedule.enabled ? "暂停计划" : "启用计划")} onClick={async () => { try { await api.updateBackupSchedule(schedule.id, { repositoryId: schedule.repositoryId, name: schedule.name, intervalHours: schedule.intervalHours, retentionCount: schedule.retentionCount, retentionDays: schedule.retentionDays, enabled: !schedule.enabled }); await refresh(); onNotice({ tone: "success", text: schedule.enabled ? "计划已暂停。" : "计划已启用。" }); } catch (cause) { onNotice({ tone: "error", text: errorText(cause, "更新计划失败") }); } }}>{schedule.enabled ? "暂停" : "启用"}</Button>
+            <Button variant="ghost" size="sm" data-testid={`backup-schedule-toggle-${schedule.id}`} disabled={Boolean(disabledReason)} title={disabledReason || (schedule.enabled ? "暂停计划" : "启用计划")} onClick={async () => { try { await api.updateBackupSchedule(schedule.id, { repositoryId: schedule.repositoryId, name: schedule.name, intervalHours: schedule.intervalHours, scheduleMode: schedule.scheduleMode ?? "interval", dailyTime: schedule.dailyTime || "02:00", retentionCount: schedule.retentionCount, retentionDays: schedule.retentionDays, enabled: !schedule.enabled }); await refresh(); onNotice({ tone: "success", text: schedule.enabled ? "计划已暂停。" : "计划已启用。" }); } catch (cause) { onNotice({ tone: "error", text: errorText(cause, "更新计划失败") }); } }}>{schedule.enabled ? "暂停" : "启用"}</Button>
             <Button variant="ghost" size="sm" data-testid={`backup-schedule-run-${schedule.id}`} disabled={Boolean(disabledReason)} title={disabledReason || "立即执行一次"} onClick={async () => { try { const task = await api.runBackupSchedule(schedule.id); await refresh(); onTask(task.id, "执行定时备份"); } catch (cause) { onNotice({ tone: "error", text: errorText(cause, "立即执行失败") }); } }}>立即执行</Button>
             <Button variant="ghost" size="sm" data-testid={`backup-schedule-delete-${schedule.id}`} disabled={Boolean(disabledReason)} title={disabledReason || "删除计划"} onClick={() => setDeleteTarget(schedule)}><Trash2 className="h-4 w-4" />删除</Button>
           </div></TableCell>
@@ -513,12 +513,12 @@ function ScheduleFormModal({ open, onClose, editing, repositories, vms, onSaved,
   onSaved: () => Promise<void>;
   onError: (cause: unknown) => void;
 }) {
-  const [form, setForm] = useState<BackupScheduleInput>({ vmUuid: "", repositoryId: "", name: "", intervalHours: 24, retentionCount: 7, retentionDays: 30, enabled: true });
+  const [form, setForm] = useState<BackupScheduleInput>({ vmUuid: "", repositoryId: "", name: "", intervalHours: 24, scheduleMode: "interval", dailyTime: "02:00", retentionCount: 7, retentionDays: 30, enabled: true });
   const [error, setError] = useState("");
   useEffect(() => {
     if (!open) return;
-    if (editing) setForm({ vmUuid: editing.vmUuid, repositoryId: editing.repositoryId, name: editing.name, intervalHours: editing.intervalHours, retentionCount: editing.retentionCount, retentionDays: editing.retentionDays, enabled: editing.enabled });
-    else setForm({ vmUuid: vms[0]?.uuid ?? "", repositoryId: repositories.find((item) => item.isDefault)?.id ?? repositories[0]?.id ?? "", name: "", intervalHours: 24, retentionCount: 7, retentionDays: 30, enabled: true });
+    if (editing) setForm({ vmUuid: editing.vmUuid, repositoryId: editing.repositoryId, name: editing.name, intervalHours: editing.intervalHours, scheduleMode: editing.scheduleMode ?? "interval", dailyTime: editing.dailyTime || "02:00", retentionCount: editing.retentionCount, retentionDays: editing.retentionDays, enabled: editing.enabled });
+    else setForm({ vmUuid: vms[0]?.uuid ?? "", repositoryId: repositories.find((item) => item.isDefault)?.id ?? repositories[0]?.id ?? "", name: "", intervalHours: 24, scheduleMode: "interval", dailyTime: "02:00", retentionCount: 7, retentionDays: 30, enabled: true });
     setError("");
   }, [editing, open, repositories, vms]);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -526,7 +526,7 @@ function ScheduleFormModal({ open, onClose, editing, repositories, vms, onSaved,
     if (!form.vmUuid || !form.repositoryId || !form.name.trim()) { setError("请选择虚拟机、存储库并填写计划名称。"); return; }
     try {
       if (editing) {
-        await api.updateBackupSchedule(editing.id, { repositoryId: form.repositoryId, name: form.name.trim(), intervalHours: form.intervalHours, retentionCount: form.retentionCount, retentionDays: form.retentionDays, enabled: form.enabled });
+        await api.updateBackupSchedule(editing.id, { repositoryId: form.repositoryId, name: form.name.trim(), intervalHours: form.intervalHours, scheduleMode: form.scheduleMode, dailyTime: form.dailyTime, retentionCount: form.retentionCount, retentionDays: form.retentionDays, enabled: form.enabled });
       } else {
         await api.createBackupSchedule({ ...form, name: form.name.trim() });
       }
@@ -536,13 +536,18 @@ function ScheduleFormModal({ open, onClose, editing, repositories, vms, onSaved,
       onError(cause);
     }
   }
-  return <Modal open={open} onClose={onClose} title={editing ? "编辑定时计划" : "新建定时计划"} description="首期使用固定间隔，不引入 Cron 表达式；时区跟随宿主机。" testId="backup-schedule-modal" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button form="backup-schedule-form" type="submit">{editing ? "保存修改" : "创建计划"}</Button></>}>
+  return <Modal open={open} onClose={onClose} title={editing ? "编辑定时计划" : "新建定时计划"} description="支持固定间隔或每日时刻；不引入 Cron 表达式，时区跟随宿主机。" testId="backup-schedule-modal" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button form="backup-schedule-form" type="submit">{editing ? "保存修改" : "创建计划"}</Button></>}>
     <form id="backup-schedule-form" className="space-y-4" onSubmit={(event) => void submit(event)}>
       <div className="space-y-2"><Label htmlFor="schedule-vm">虚拟机</Label><select id="schedule-vm" data-testid="backup-schedule-vm" disabled={Boolean(editing)} value={form.vmUuid} onChange={(event) => setForm({ ...form, vmUuid: event.target.value })} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm disabled:opacity-60">{vms.map((vm) => <option key={vm.uuid} value={vm.uuid}>{vm.name}</option>)}</select></div>
       <div className="space-y-2"><Label htmlFor="schedule-name">计划名称</Label><Input id="schedule-name" data-testid="backup-schedule-name" value={form.name} maxLength={32} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 daily-backup" /></div>
       <div className="space-y-2"><Label htmlFor="schedule-repository">备份存储库</Label><select id="schedule-repository" data-testid="backup-schedule-repository" value={form.repositoryId} onChange={(event) => setForm({ ...form, repositoryId: event.target.value })} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">{repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.name} · {repository.poolName}</option>)}</select></div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="space-y-2"><Label htmlFor="schedule-interval">间隔（小时）</Label><Input id="schedule-interval" data-testid="backup-schedule-interval" type="number" min={1} max={168} value={form.intervalHours} onChange={(event) => setForm({ ...form, intervalHours: Number(event.target.value) })} /></div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2"><Label htmlFor="schedule-mode">调度方式</Label><select id="schedule-mode" data-testid="backup-schedule-mode" value={form.scheduleMode} onChange={(event) => setForm({ ...form, scheduleMode: event.target.value === "daily" ? "daily" : "interval" })} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="interval">固定间隔</option><option value="daily">每日时刻</option></select></div>
+        {form.scheduleMode === "daily"
+          ? <div className="space-y-2"><Label htmlFor="schedule-daily-time">每日执行时间</Label><Input id="schedule-daily-time" data-testid="backup-schedule-daily-time" type="time" value={form.dailyTime} onChange={(event) => setForm({ ...form, dailyTime: event.target.value })} /></div>
+          : <div className="space-y-2"><Label htmlFor="schedule-interval">间隔（小时）</Label><Input id="schedule-interval" data-testid="backup-schedule-interval" type="number" min={1} max={168} value={form.intervalHours} onChange={(event) => setForm({ ...form, intervalHours: Number(event.target.value) })} /></div>}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2"><Label htmlFor="schedule-retention">保留份数</Label><Input id="schedule-retention" data-testid="backup-schedule-retention" type="number" min={1} max={50} value={form.retentionCount} onChange={(event) => setForm({ ...form, retentionCount: Number(event.target.value) })} /></div>
         <div className="space-y-2"><Label htmlFor="schedule-days">最大保留天数</Label><Input id="schedule-days" data-testid="backup-schedule-days" type="number" min={0} max={3650} value={form.retentionDays} onChange={(event) => setForm({ ...form, retentionDays: Number(event.target.value) })} /></div>
       </div>

@@ -25,6 +25,13 @@ type updateXMLInput struct {
 	XML string `json:"xml"`
 }
 
+type attachDiskInput struct {
+	Pool   string `json:"pool"`
+	Volume string `json:"volume"`
+	Target string `json:"target,omitempty"`
+	domain.VMDiskBus
+}
+
 func New(service *vmsapp.Service) *Handler {
 	return &Handler{service: service}
 }
@@ -33,6 +40,8 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	result, err := h.service.List(r.Context(), domain.ListQuery{
 		Query: r.URL.Query().Get("q"),
 		State: r.URL.Query().Get("state"),
+		Tag:   r.URL.Query().Get("tag"),
+		Owner: r.URL.Query().Get("owner"),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -48,6 +57,36 @@ func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) GetMetadata(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	result, err := h.service.GetMetadata(r.Context(), chi.URLParam(r, "uuid"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) UpdateMetadata(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMMetadataSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	result, err := h.service.UpdateMetadata(r.Context(), vmsapp.VMMetadataCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
 func (h *Handler) GetXML(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -269,6 +308,82 @@ func (h *Handler) ResizeDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, vm)
 }
 
+func (h *Handler) AttachDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input attachDiskInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.AttachDisk(r.Context(), vmsapp.AttachDiskCommand{
+		UUID:    chi.URLParam(r, "uuid"),
+		Spec:    domain.VMDiskAttachSpec{Pool: input.Pool, Volume: input.Volume, Target: input.Target, Bus: input.VMDiskBus},
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) DetachDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.DetachDisk(r.Context(), vmsapp.DetachDiskCommand{
+		UUID: chi.URLParam(r, "uuid"), Target: chi.URLParam(r, "target"), Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) AttachNetwork(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMNetworkAttachSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.AttachNetwork(r.Context(), vmsapp.AttachNetworkCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) DetachNetwork(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.DetachNetwork(r.Context(), vmsapp.DetachNetworkCommand{
+		UUID: chi.URLParam(r, "uuid"), MAC: chi.URLParam(r, "mac"), Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
 func (h *Handler) AttachHostDevice(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var input hostDeviceInput
 	if err := httpx.DecodeJSON(r, &input); err != nil {
@@ -446,6 +561,11 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Patch("/vms/{uuid}/autostart", h.SetAutostart)
 		mutating.Patch("/vms/{uuid}/resources", h.UpdateResources)
 		mutating.Patch("/vms/{uuid}/disks/{target}", h.ResizeDisk)
+		mutating.Put("/vms/{uuid}/metadata", h.UpdateMetadata)
+		mutating.Post("/vms/{uuid}/disks", h.AttachDisk)
+		mutating.Delete("/vms/{uuid}/disks/{target}", h.DetachDisk)
+		mutating.Post("/vms/{uuid}/network-interfaces", h.AttachNetwork)
+		mutating.Delete("/vms/{uuid}/network-interfaces/{mac}", h.DetachNetwork)
 		mutating.Post("/vms/{uuid}/actions/{action}", h.Action)
 		mutating.Post("/vms/{uuid}/devices", h.AttachHostDevice)
 		mutating.Delete("/vms/{uuid}/devices/{device}", h.DetachHostDevice)
@@ -455,6 +575,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/console-token", h.IssueConsoleToken)
 		mutating.Post("/vms/{uuid}/console/send-key", h.SendConsoleKey)
 	})
+	r.Get("/vms/{uuid}/metadata", h.GetMetadata)
 }
 
 func exportFilename(name string) string {

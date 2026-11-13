@@ -79,6 +79,8 @@ export function VMSnapshotPoliciesCard({ uuid, canMutate, disabledReason }: {
     mutationFn: (policy: SnapshotPolicy) => api.updateSnapshotPolicy(policy.id, {
       name: policy.name,
       intervalMinutes: policy.intervalMinutes,
+      scheduleMode: policy.scheduleMode ?? "interval",
+      dailyTime: policy.dailyTime || "02:00",
       retention: policy.retention,
       enabled: !policy.enabled,
     }),
@@ -181,7 +183,7 @@ export function VMSnapshotPoliciesCard({ uuid, canMutate, disabledReason }: {
 
         {formOpen && canMutate ? (
           <form onSubmit={submitForm} className="border-y bg-muted/20 p-4" data-testid="vm-snapshot-policy-form">
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)]">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <div className="space-y-2">
                 <Label htmlFor="vm-snapshot-policy-name">策略名称</Label>
                 <Input
@@ -193,15 +195,27 @@ export function VMSnapshotPoliciesCard({ uuid, canMutate, disabledReason }: {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="vm-snapshot-policy-interval">间隔（分钟）</Label>
-                <Input
-                  id="vm-snapshot-policy-interval"
-                  type="number"
-                  min={5}
-                  max={10080}
-                  value={form.intervalMinutes}
-                  onChange={(event) => setForm((current) => ({ ...current, intervalMinutes: event.target.value }))}
-                />
+                <Label htmlFor="vm-snapshot-policy-mode">调度方式</Label>
+                <select id="vm-snapshot-policy-mode" value={form.scheduleMode} onChange={(event) => setForm((current) => ({ ...current, scheduleMode: event.target.value === "daily" ? "daily" : "interval" }))} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <option value="interval">固定间隔</option>
+                  <option value="daily">每日时刻</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                {form.scheduleMode === "daily" ? <>
+                  <Label htmlFor="vm-snapshot-policy-daily-time">每日执行时间</Label>
+                  <Input id="vm-snapshot-policy-daily-time" type="time" value={form.dailyTime} onChange={(event) => setForm((current) => ({ ...current, dailyTime: event.target.value }))} />
+                </> : <>
+                  <Label htmlFor="vm-snapshot-policy-interval">间隔（分钟）</Label>
+                  <Input
+                    id="vm-snapshot-policy-interval"
+                    type="number"
+                    min={5}
+                    max={10080}
+                    value={form.intervalMinutes}
+                    onChange={(event) => setForm((current) => ({ ...current, intervalMinutes: event.target.value }))}
+                  />
+                </>}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="vm-snapshot-policy-retention">保留快照数</Label>
@@ -264,7 +278,7 @@ export function VMSnapshotPoliciesCard({ uuid, canMutate, disabledReason }: {
                       <p className="font-medium">{policy.name}</p>
                       <p className="font-mono text-[10px] text-muted-foreground">#{policy.id}</p>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{policy.intervalMinutes} 分钟</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{policy.scheduleMode === "daily" ? `每日 ${policy.dailyTime || "02:00"}` : `${policy.intervalMinutes} 分钟`}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{policy.retention} 份</TableCell>
                     <TableCell>{policy.enabled ? <Badge variant="success">已启用</Badge> : <Badge variant="secondary">已禁用</Badge>}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatSnapshotPolicyTime(policy.lastRunAt)}</TableCell>

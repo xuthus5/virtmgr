@@ -310,6 +310,116 @@ func (d *DemoBackend) ResizeVMDisk(_ context.Context, uuid, target string, spec 
 	return cloneVM(vm), nil
 }
 
+func (d *DemoBackend) AttachVMDisk(_ context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	volume, found := d.demoVolumeLocked(strings.TrimSpace(spec.Pool), strings.TrimSpace(spec.Volume))
+	if !found {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	bus := spec.Bus
+	if bus == "" {
+		bus = domain.VMDiskBusVirtio
+	}
+	target := strings.TrimSpace(spec.Target)
+	if target == "" {
+		var err error
+		target, err = nextHotplugDiskTarget(vm.Disks, bus)
+		if err != nil {
+			return domain.VM{}, err
+		}
+	}
+	if !hotplugTargetPattern.MatchString(target) || diskTargetInUse(vm.Disks, target) {
+		return domain.VM{}, domain.ErrConflict
+	}
+	vm.Disks = append(vm.Disks, domain.Disk{
+		Type: "file", Device: "disk", Target: target, Bus: string(bus), Format: volume.Format,
+		Source: volume.Path, CapacityBytes: volume.CapacityBytes, AllocationBytes: volume.AllocationBytes,
+	})
+	d.vms[uuid] = vm
+	d.publish("domain.disk.attached", "info", "vm", uuid, vm.Name, "磁盘 "+target+" 已附加")
+	return cloneVM(vm), nil
+}
+
+func (d *DemoBackend) DetachVMDisk(_ context.Context, uuid, target string) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	if root, ok := firstWritableDisk(vm.Disks); ok && root.Target == target {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	for index, disk := range vm.Disks {
+		if disk.Target != target || disk.Device != "disk" || disk.ReadOnly {
+			continue
+		}
+		vm.Disks = append(vm.Disks[:index], vm.Disks[index+1:]...)
+		d.vms[uuid] = vm
+		d.publish("domain.disk.detached", "warning", "vm", uuid, vm.Name, "磁盘 "+target+" 已移除")
+		return cloneVM(vm), nil
+	}
+	return domain.VM{}, domain.ErrNotFound
+}
+
+func (d *DemoBackend) AttachVMNetwork(_ context.Context, uuid string, spec domain.VMNetworkAttachSpec) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent || strings.TrimSpace(spec.Network) == "" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	model := spec.Model
+	if model == "" {
+		model = domain.VMNICModelVirtio
+	}
+	generated, err := newDemoUUID()
+	if err != nil {
+		return domain.VM{}, err
+	}
+	mac := fmt.Sprintf("52:54:00:%s:%s:%s", generated[:2], generated[2:4], generated[4:6])
+	vm.Interfaces = append(vm.Interfaces, domain.NetworkInterface{Type: "network", Source: spec.Network, Model: string(model), MAC: mac})
+	d.vms[uuid] = vm
+	d.publish("vm.network.attached", "info", "vm", uuid, vm.Name, "网卡 "+spec.Network+" 已附加")
+	return cloneVM(vm), nil
+}
+
+func (d *DemoBackend) DetachVMNetwork(_ context.Context, uuid, mac string) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent || len(vm.Interfaces) <= 1 {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	for index, networkInterface := range vm.Interfaces {
+		if !strings.EqualFold(networkInterface.MAC, mac) {
+			continue
+		}
+		vm.Interfaces = append(vm.Interfaces[:index], vm.Interfaces[index+1:]...)
+		d.vms[uuid] = vm
+		d.publish("vm.network.detached", "warning", "vm", uuid, vm.Name, "网卡 "+mac+" 已移除")
+		return cloneVM(vm), nil
+	}
+	return domain.VM{}, domain.ErrNotFound
+}
+
 func (d *DemoBackend) SetVMAutostart(_ context.Context, uuid string, enabled bool) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

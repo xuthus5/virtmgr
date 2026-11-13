@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Ban, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, ListChecks, LoaderCircle, XCircle } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Ban, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, ListChecks, LoaderCircle, RotateCcw, Wifi, WifiOff, XCircle } from "lucide-react";
+import { ApiError, api } from "@/api/client";
 import type { Task, TaskStatus } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,7 +86,7 @@ function StatusBadge({ status }: { status: TaskStatus }) {
   return <Badge variant={variant} className="whitespace-nowrap">{icon}{statusLabels[status]}</Badge>;
 }
 
-function TaskRow({ task }: { task: Task }) {
+function TaskRow({ task, onRetry, retrying }: { task: Task; onRetry: (task: Task) => void; retrying: boolean }) {
   const vmUUID = taskVMUUID(task);
   const progressClass = task.status === "failed" ? "bg-destructive" : task.status === "succeeded" ? "bg-success" : task.status === "interrupted" ? "bg-muted-foreground" : "bg-primary";
   return (
@@ -109,13 +111,24 @@ function TaskRow({ task }: { task: Task }) {
       </TableCell>
       <TableCell><span className="font-mono text-xs">{task.actor}</span></TableCell>
       <TableCell><p className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTime(task.updatedAt)}</p><p className="text-[10px] text-muted-foreground">{formatDuration(task)}</p></TableCell>
+      <TableCell className="text-right">
+        {task.kind === "vm.backup" && (task.status === "failed" || task.status === "interrupted") ? (
+          <Button variant="outline" size="sm" data-testid={`task-retry-${task.id}`} disabled={retrying} onClick={() => onRetry(task)}>
+            {retrying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}重试
+          </Button>
+        ) : <span className="text-xs text-muted-foreground">-</span>}
+      </TableCell>
     </TableRow>
   );
 }
 
 export function TasksPage() {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<"" | TaskStatus>("");
   const [page, setPage] = useState(1);
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [retryingID, setRetryingID] = useState("");
   const query = useTasksQuery({ status: status || undefined, page, pageSize });
   const tasks = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
@@ -124,19 +137,50 @@ export function TasksPage() {
   const lastItem = Math.min(page * pageSize, total);
   const running = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
 
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return;
+    const source = new EventSource("/api/v1/tasks/stream");
+    source.addEventListener("open", () => setStreamConnected(true));
+    source.addEventListener("tasks", () => {
+      setStreamConnected(true);
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    });
+    source.addEventListener("error", () => setStreamConnected(false));
+    return () => source.close();
+  }, [queryClient]);
+
+  const retryMutation = useMutation({
+    mutationFn: (task: Task) => api.retryTask(task.id),
+    onSuccess: (task) => {
+      setRetryingID("");
+      setNotice({ tone: "success", text: `已创建重试任务 ${task.id}。` });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+    onError: (cause, task) => {
+      setRetryingID("");
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : `重试任务 ${task.id} 失败。` });
+    },
+  });
+
+  function retry(task: Task) {
+    setRetryingID(task.id);
+    setNotice(null);
+    retryMutation.mutate(task);
+  }
+
   return (
     <>
       <PageHeader
         title="任务中心"
         breadcrumb="总览 / 任务中心"
         description="跟踪虚拟机、存储和网络长任务的进度、步骤与失败原因。"
-        actions={<Badge variant={running ? "warning" : "outline"}>{running ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}{running ? `${running} 个任务执行中` : "当前页无运行任务"}</Badge>}
+        actions={<div className="flex flex-wrap items-center gap-2"><Badge variant={streamConnected ? "success" : "outline"}>{streamConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}{streamConnected ? "实时更新" : "轮询回退"}</Badge><Badge variant={running ? "warning" : "outline"}>{running ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}{running ? `${running} 个任务执行中` : "当前页无运行任务"}</Badge></div>}
       />
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><ListChecks className="h-4 w-4 text-primary" />任务记录</CardTitle>
-          <CardDescription>任务持久化在 SQLite 中，页面每 5 秒刷新。服务重启时未完成任务会标记为已中断。</CardDescription>
+          <CardDescription>任务持久化在 SQLite 中，优先通过 SSE 实时更新，并在连接异常时回退到 5 秒轮询。失败的备份任务可从当前页重试。</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center" data-testid="tasks-filters">
@@ -150,6 +194,7 @@ export function TasksPage() {
             </select>
             <p className="text-xs text-muted-foreground md:ml-auto" data-testid="tasks-total">共 {total} 个任务</p>
           </div>
+          {notice ? <p role="status" data-testid="tasks-notice" className={notice.tone === "success" ? "border-b border-success/30 bg-success/10 px-4 py-2 text-sm text-success" : "border-b border-destructive/30 bg-destructive/5 px-4 py-2 text-sm text-destructive"}>{notice.text}</p> : null}
 
           {query.isLoading ? <LoadingState label="正在读取任务" /> : null}
           {query.isError ? <ErrorState message={query.error instanceof Error ? query.error.message : "无法读取任务"} onRetry={() => void query.refetch()} className="m-4" /> : null}
@@ -161,8 +206,8 @@ export function TasksPage() {
             </div>
           ) : null}
           {tasks.length ? <Table className="min-w-[960px]">
-            <TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead>目标</TableHead><TableHead>进度</TableHead><TableHead>操作者</TableHead><TableHead>更新时间</TableHead></TableRow></TableHeader>
-            <TableBody>{tasks.map((task) => <TaskRow key={task.id} task={task} />)}</TableBody>
+            <TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead>目标</TableHead><TableHead>进度</TableHead><TableHead>操作者</TableHead><TableHead>更新时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+            <TableBody>{tasks.map((task) => <TaskRow key={task.id} task={task} onRetry={retry} retrying={retryingID === task.id} />)}</TableBody>
           </Table> : null}
           {query.data ? <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center" data-testid="tasks-pagination">
             <p className="text-xs text-muted-foreground">显示 {firstItem}-{lastItem}，共 {total} 条</p>

@@ -16,17 +16,18 @@ const (
 )
 
 type Task struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`
-	TargetKind string     `json:"targetKind"`
-	TargetID   string     `json:"targetId"`
-	Status     TaskStatus `json:"status"`
-	Progress   int        `json:"progress"`
-	Step       string     `json:"step"`
-	Error      string     `json:"error,omitempty"`
-	Actor      string     `json:"actor"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
+	ID         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	TargetKind string         `json:"targetKind"`
+	TargetID   string         `json:"targetId"`
+	Status     TaskStatus     `json:"status"`
+	Progress   int            `json:"progress"`
+	Step       string         `json:"step"`
+	Error      string         `json:"error,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	Actor      string         `json:"actor"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
 }
 
 type TaskQuery struct {

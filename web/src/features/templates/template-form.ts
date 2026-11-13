@@ -12,6 +12,8 @@ export type TemplateFormState = {
   secureBoot: boolean;
   cloudInit: boolean;
   cloudInitUserData: string;
+  cloudInitNetworkConfig: string;
+  cloudInitVendorData: string;
   autostart: boolean;
   start: boolean;
 };
@@ -28,6 +30,8 @@ export const initialTemplateForm: TemplateFormState = {
   secureBoot: false,
   cloudInit: false,
   cloudInitUserData: "",
+  cloudInitNetworkConfig: "",
+  cloudInitVendorData: "",
   autostart: false,
   start: false,
 };
@@ -45,6 +49,8 @@ export function templateToForm(template: VMTemplate): TemplateFormState {
     secureBoot: template.secureBoot,
     cloudInit: template.cloudInit,
     cloudInitUserData: template.cloudInitUserData ?? "",
+    cloudInitNetworkConfig: template.cloudInitNetworkConfig ?? "",
+    cloudInitVendorData: template.cloudInitVendorData ?? "",
     autostart: template.autostart,
     start: template.start,
   };
@@ -63,6 +69,8 @@ export function formToTemplateInput(form: TemplateFormState): VMTemplateInput {
     secureBoot: form.secureBoot,
     cloudInit: form.cloudInit,
     cloudInitUserData: form.cloudInit ? form.cloudInitUserData : undefined,
+    cloudInitNetworkConfig: form.cloudInit ? form.cloudInitNetworkConfig : undefined,
+    cloudInitVendorData: form.cloudInit ? form.cloudInitVendorData : undefined,
     autostart: form.autostart,
     start: form.start,
   };
@@ -80,6 +88,8 @@ export type TemplateVMCreateDefaults = {
   autostart: boolean;
   start: boolean;
   cloudInitUserData: string;
+  cloudInitNetworkConfig: string;
+  cloudInitVendorData: string;
 };
 
 export function templateVMCreateDefaults(template: VMTemplate): TemplateVMCreateDefaults {
@@ -93,6 +103,8 @@ export function templateVMCreateDefaults(template: VMTemplate): TemplateVMCreate
     secureBoot: template.secureBoot,
     cloudInit: template.cloudInit,
     cloudInitUserData: template.cloudInit ? template.cloudInitUserData ?? "" : "",
+    cloudInitNetworkConfig: template.cloudInit ? template.cloudInitNetworkConfig ?? "" : "",
+    cloudInitVendorData: template.cloudInit ? template.cloudInitVendorData ?? "" : "",
     autostart: template.autostart,
     start: template.start,
   };

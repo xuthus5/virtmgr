@@ -13,7 +13,11 @@ import (
 
 func TestBuildCloudInitISO(t *testing.T) {
 	const userData = "#cloud-config\nruncmd:\n  - echo virtmgr-cloud-init-ok\n"
-	data, err := buildCloudInitISO("vm-01", userData)
+	data, err := buildCloudInitISO("vm-01", domain.CloudInitSpec{
+		UserData:      userData,
+		NetworkConfig: "version: 2\nethernets:\n  eth0:\n    addresses: [192.0.2.10/24]\n",
+		VendorData:    "vendor: true\n",
+	})
 	if err != nil {
 		t.Fatalf("buildCloudInitISO() error = %v", err)
 	}
@@ -50,13 +54,21 @@ func TestBuildCloudInitISO(t *testing.T) {
 	if !strings.Contains(string(readUserData), "virtmgr-cloud-init-ok") {
 		t.Fatalf("user-data = %q", readUserData)
 	}
+	networkConfig, err := fs.ReadFile("network-config")
+	if err != nil || !strings.Contains(string(networkConfig), "192.0.2.10/24") {
+		t.Fatalf("network-config = %q error = %v", networkConfig, err)
+	}
+	vendorData, err := fs.ReadFile("vendor-data")
+	if err != nil || !strings.Contains(string(vendorData), "vendor: true") {
+		t.Fatalf("vendor-data = %q error = %v", vendorData, err)
+	}
 }
 
 func TestBuildCloudInitISORejectsEmptyInput(t *testing.T) {
-	if _, err := buildCloudInitISO("", "#cloud-config\n"); err == nil {
+	if _, err := buildCloudInitISO("", domain.CloudInitSpec{UserData: "#cloud-config\n"}); err == nil {
 		t.Fatal("buildCloudInitISO() accepted empty VM name")
 	}
-	if _, err := buildCloudInitISO("vm-01", "  "); err == nil {
+	if _, err := buildCloudInitISO("vm-01", domain.CloudInitSpec{UserData: "  "}); err == nil {
 		t.Fatal("buildCloudInitISO() accepted empty user data")
 	}
 }

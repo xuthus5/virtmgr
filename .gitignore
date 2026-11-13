@@ -1,4 +1,5 @@
 /bin/
+/backups/
 /dist/
 web/dist/*
 !web/dist/.gitkeep

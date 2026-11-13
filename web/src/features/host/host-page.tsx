@@ -10,7 +10,9 @@ import { StatusBadge } from "@/components/feedback/status-badge";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
 import { useHostDevicesQuery } from "@/features/host/use-host-devices-query";
+import { AlertRulesCard } from "@/features/host/alert-rules-card";
 import { useHostMetricsQuery, useHostQuery } from "@/features/host/use-host-query";
+import { MetricHistoryCard } from "@/features/metrics/metric-history-card";
 import { ResourceTrendCard } from "@/features/metrics/resource-trend-card";
 import { formatBytes, percent } from "@/lib/utils";
 
@@ -70,6 +72,11 @@ export function HostPage() {
           testId="host-metrics"
           historyKey="host"
         />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <MetricHistoryCard scope="host" targetId="host" title="宿主机历史趋势" description="宿主机 CPU、内存、磁盘和网络的服务端分钟级采样。" testId="host-metric-history" />
+        <AlertRulesCard />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">

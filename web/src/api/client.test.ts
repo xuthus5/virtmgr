@@ -135,6 +135,40 @@ describe("api client", () => {
     expect(pool.state).toBe("inactive");
   });
 
+  it("exports and imports static DHCP hosts as CSV", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        user: { id: 1, username: "admin", role: "admin", disabled: false, createdAt: "2026-01-01T00:00:00Z" },
+        authMode: "local",
+        readOnly: false,
+        csrfToken: "csrf-network",
+        expiresAt: "2026-01-01T01:00:00Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response("mac,ip,name\n52:54:00:12:34:56,192.168.122.50,web-01\n", {
+        status: 200,
+        headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="virtmgr-default-dhcp-hosts.csv"' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        network: { name: "default", active: true, persistent: true, autostart: false, addresses: [] },
+        imported: 1,
+        skipped: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.login("admin", "secret");
+    const exported = await api.exportNetworkDHCPHosts("default");
+    const imported = await api.importNetworkDHCPHosts("default", "mac,ip,name\n52:54:00:AB:CD:EF,192.168.122.60,db-01\n");
+
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/networks/default/hosts/export");
+    expect(exported.filename).toBe("virtmgr-default-dhcp-hosts.csv");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/v1/networks/default/hosts/import");
+    const init = fetchMock.mock.calls[2][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect((init.headers as Headers).get("Content-Type")).toBe("text/csv; charset=utf-8");
+    expect((init.headers as Headers).get("X-CSRF-Token")).toBe("csrf-network");
+    expect(imported.imported).toBe(1);
+  });
+
   it("creates an asynchronous VM clone task with CSRF", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -286,8 +320,8 @@ describe("api client", () => {
 
     await api.login("admin", "secret");
     const list = await api.snapshotPolicies("uuid-a");
-    const created = await api.createSnapshotPolicy("uuid-a", { name: "nightly", intervalMinutes: 60, retention: 3, enabled: true });
-    const changed = await api.updateSnapshotPolicy(7, { name: "nightly", intervalMinutes: 120, retention: 5, enabled: false });
+    const created = await api.createSnapshotPolicy("uuid-a", { name: "nightly", intervalMinutes: 60, scheduleMode: "interval", dailyTime: "02:00", retention: 3, enabled: true });
+    const changed = await api.updateSnapshotPolicy(7, { name: "nightly", intervalMinutes: 120, scheduleMode: "interval", dailyTime: "02:00", retention: 5, enabled: false });
     const run = await api.runSnapshotPolicy(7);
     await api.deleteSnapshotPolicy(7);
 
@@ -305,7 +339,7 @@ describe("api client", () => {
       expect((init.headers as Headers).get("X-CSRF-Token")).toBe("csrf-token");
     }
     expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe("PATCH");
-    expect((fetchMock.mock.calls[3][1] as RequestInit).body).toBe('{"name":"nightly","intervalMinutes":120,"retention":5,"enabled":false}');
+    expect((fetchMock.mock.calls[3][1] as RequestInit).body).toBe('{"name":"nightly","intervalMinutes":120,"scheduleMode":"interval","dailyTime":"02:00","retention":5,"enabled":false}');
     expect((fetchMock.mock.calls[5][1] as RequestInit).method).toBe("DELETE");
   });
 

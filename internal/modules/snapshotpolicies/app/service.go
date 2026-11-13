@@ -140,7 +140,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Sna
 	if command.VMUUID == "" {
 		return domain.SnapshotPolicy{}, domain.ErrInvalidInput
 	}
-	detail := map[string]any{"vmUuid": command.VMUUID, "name": spec.Name, "intervalMinutes": spec.IntervalMinutes, "retention": spec.Retention, "enabled": spec.Enabled}
+	detail := map[string]any{"vmUuid": command.VMUUID, "name": spec.Name, "intervalMinutes": spec.IntervalMinutes, "scheduleMode": spec.ScheduleMode, "dailyTime": spec.DailyTime, "retention": spec.Retention, "enabled": spec.Enabled}
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.SnapshotPolicy{}, s.mutationFailure(ctx, command.Request, "vm.snapshot_policy.create", command.VMUUID, detail, domain.ErrForbidden)
 	}
@@ -162,8 +162,9 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Sna
 	now := s.now().UTC()
 	policy, err := s.repository.CreateSnapshotPolicy(ctx, domain.SnapshotPolicy{
 		VMUUID: command.VMUUID, Name: spec.Name, IntervalMinutes: spec.IntervalMinutes,
+		ScheduleMode: spec.ScheduleMode, DailyTime: spec.DailyTime,
 		Retention: spec.Retention, Enabled: spec.Enabled,
-		NextRunAt: now.Add(time.Duration(spec.IntervalMinutes) * time.Minute),
+		NextRunAt: domain.NextScheduleTime(now, spec.ScheduleMode, time.Duration(spec.IntervalMinutes)*time.Minute, spec.DailyTime),
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -188,7 +189,7 @@ func (s *Service) Update(ctx context.Context, command UpdateCommand) (domain.Sna
 	if err != nil {
 		return domain.SnapshotPolicy{}, err
 	}
-	detail := map[string]any{"policyId": policy.ID, "name": spec.Name, "intervalMinutes": spec.IntervalMinutes, "retention": spec.Retention, "enabled": spec.Enabled}
+	detail := map[string]any{"policyId": policy.ID, "name": spec.Name, "intervalMinutes": spec.IntervalMinutes, "scheduleMode": spec.ScheduleMode, "dailyTime": spec.DailyTime, "retention": spec.Retention, "enabled": spec.Enabled}
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.SnapshotPolicy{}, s.mutationFailure(ctx, command.Request, "vm.snapshot_policy.update", policy.VMUUID, detail, domain.ErrForbidden)
 	}
@@ -198,9 +199,11 @@ func (s *Service) Update(ctx context.Context, command UpdateCommand) (domain.Sna
 	now := s.now().UTC()
 	policy.Name = spec.Name
 	policy.IntervalMinutes = spec.IntervalMinutes
+	policy.ScheduleMode = spec.ScheduleMode
+	policy.DailyTime = spec.DailyTime
 	policy.Retention = spec.Retention
 	policy.Enabled = spec.Enabled
-	policy.NextRunAt = now.Add(time.Duration(spec.IntervalMinutes) * time.Minute)
+	policy.NextRunAt = domain.NextScheduleTime(now, spec.ScheduleMode, time.Duration(spec.IntervalMinutes)*time.Minute, spec.DailyTime)
 	policy.UpdatedAt = now
 	updated, err := s.repository.UpdateSnapshotPolicy(ctx, policy)
 	if err != nil {
@@ -384,13 +387,26 @@ func (s *Service) failedRun(ctx context.Context, request MutationContext, policy
 }
 
 func nextRun(policy domain.SnapshotPolicy, now time.Time) time.Time {
-	return now.Add(time.Duration(policy.IntervalMinutes) * time.Minute)
+	return domain.NextScheduleTime(now, policy.ScheduleMode, time.Duration(policy.IntervalMinutes)*time.Minute, policy.DailyTime)
 }
 
 func normalizeSpec(spec domain.SnapshotPolicySpec) (domain.SnapshotPolicySpec, error) {
 	spec.Name = strings.TrimSpace(spec.Name)
 	if !policyNamePattern.MatchString(spec.Name) {
 		return domain.SnapshotPolicySpec{}, fmt.Errorf("%w: invalid snapshot policy name", domain.ErrInvalidInput)
+	}
+	mode, err := domain.NormalizeScheduleMode(spec.ScheduleMode)
+	if err != nil {
+		return domain.SnapshotPolicySpec{}, err
+	}
+	dailyTime, err := domain.NormalizeDailyTime(spec.DailyTime)
+	if err != nil {
+		return domain.SnapshotPolicySpec{}, err
+	}
+	spec.ScheduleMode = mode
+	spec.DailyTime = dailyTime
+	if mode == domain.ScheduleModeDaily && spec.IntervalMinutes == 0 {
+		spec.IntervalMinutes = 60
 	}
 	if spec.IntervalMinutes < minInterval || spec.IntervalMinutes > maxInterval {
 		return domain.SnapshotPolicySpec{}, fmt.Errorf("%w: interval must be between %d and %d minutes", domain.ErrInvalidInput, minInterval, maxInterval)

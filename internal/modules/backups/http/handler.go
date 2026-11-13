@@ -31,6 +31,8 @@ type updateScheduleInput struct {
 	RepositoryID   string `json:"repositoryId"`
 	Name           string `json:"name"`
 	IntervalHours  int    `json:"intervalHours"`
+	ScheduleMode   string `json:"scheduleMode"`
+	DailyTime      string `json:"dailyTime"`
 	RetentionCount int    `json:"retentionCount"`
 	RetentionDays  int    `json:"retentionDays"`
 	Enabled        bool   `json:"enabled"`
@@ -270,6 +272,7 @@ func (h *Handler) UpdateSchedule(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	item, err := h.service.UpdateSchedule(r.Context(), backupsapp.ScheduleCommand{ID: id, Spec: domain.BackupScheduleSpec{
 		RepositoryID: input.RepositoryID, Name: input.Name, IntervalHours: input.IntervalHours,
+		ScheduleMode: input.ScheduleMode, DailyTime: input.DailyTime,
 		RetentionCount: input.RetentionCount, RetentionDays: input.RetentionDays, Enabled: input.Enabled,
 	}, Request: mutationContext(r, session)})
 	if err != nil {

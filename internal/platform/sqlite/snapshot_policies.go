@@ -11,7 +11,7 @@ import (
 )
 
 const snapshotPolicyColumns = `
-	id, vm_uuid, name, interval_minutes, retention, enabled,
+	id, vm_uuid, name, interval_minutes, schedule_mode, daily_time, retention, enabled,
 	last_run_at, next_run_at, last_snapshot, last_error, created_at, updated_at`
 
 func (s *Store) ListSnapshotPolicies(ctx context.Context, vmUUID string) ([]domain.SnapshotPolicy, error) {
@@ -49,10 +49,11 @@ func (s *Store) GetSnapshotPolicy(ctx context.Context, id int64) (domain.Snapsho
 func (s *Store) CreateSnapshotPolicy(ctx context.Context, policy domain.SnapshotPolicy) (domain.SnapshotPolicy, error) {
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO snapshot_policies(
-			vm_uuid, name, interval_minutes, retention, enabled,
+			vm_uuid, name, interval_minutes, schedule_mode, daily_time, retention, enabled,
 			last_run_at, next_run_at, last_snapshot, last_error, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		policy.VMUUID, policy.Name, policy.IntervalMinutes, policy.Retention, boolInt(policy.Enabled),
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		policy.VMUUID, policy.Name, policy.IntervalMinutes, policy.ScheduleMode, policy.DailyTime,
+		policy.Retention, boolInt(policy.Enabled),
 		timePtrUnix(policy.LastRunAt), policy.NextRunAt.UTC().Unix(), policy.LastSnapshot, policy.LastError,
 		policy.CreatedAt.UTC().Unix(), policy.UpdatedAt.UTC().Unix(),
 	)
@@ -72,10 +73,10 @@ func (s *Store) CreateSnapshotPolicy(ctx context.Context, policy domain.Snapshot
 func (s *Store) UpdateSnapshotPolicy(ctx context.Context, policy domain.SnapshotPolicy) (domain.SnapshotPolicy, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE snapshot_policies SET
-			name = ?, interval_minutes = ?, retention = ?, enabled = ?,
+			name = ?, interval_minutes = ?, schedule_mode = ?, daily_time = ?, retention = ?, enabled = ?,
 			last_run_at = ?, next_run_at = ?, last_snapshot = ?, last_error = ?, updated_at = ?
 		WHERE id = ?`,
-		policy.Name, policy.IntervalMinutes, policy.Retention, boolInt(policy.Enabled),
+		policy.Name, policy.IntervalMinutes, policy.ScheduleMode, policy.DailyTime, policy.Retention, boolInt(policy.Enabled),
 		timePtrUnix(policy.LastRunAt), policy.NextRunAt.UTC().Unix(), policy.LastSnapshot, policy.LastError,
 		policy.UpdatedAt.UTC().Unix(), policy.ID,
 	)
@@ -150,7 +151,7 @@ func scanSnapshotPolicy(scanner snapshotPolicyScanner) (domain.SnapshotPolicy, e
 	var createdAt int64
 	var updatedAt int64
 	if err := scanner.Scan(
-		&item.ID, &item.VMUUID, &item.Name, &item.IntervalMinutes, &item.Retention, &enabled,
+		&item.ID, &item.VMUUID, &item.Name, &item.IntervalMinutes, &item.ScheduleMode, &item.DailyTime, &item.Retention, &enabled,
 		&lastRunAt, &nextRunAt, &item.LastSnapshot, &item.LastError, &createdAt, &updatedAt,
 	); err != nil {
 		return domain.SnapshotPolicy{}, err

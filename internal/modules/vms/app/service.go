@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"virtmgr/internal/domain"
 	backupsapp "virtmgr/internal/modules/backups/app"
@@ -38,6 +39,20 @@ type Repository interface {
 	OpenConsole(ctx context.Context, uuid string, graphicsIndex uint) (io.ReadWriteCloser, error)
 	OpenSerialConsole(ctx context.Context, uuid, device string) (io.ReadWriteCloser, error)
 	SendConsoleKey(ctx context.Context, uuid string, keycodes []uint) error
+}
+
+type HotplugRepository interface {
+	AttachVMDisk(ctx context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error)
+	DetachVMDisk(ctx context.Context, uuid, target string) (domain.VM, error)
+	AttachVMNetwork(ctx context.Context, uuid string, spec domain.VMNetworkAttachSpec) (domain.VM, error)
+	DetachVMNetwork(ctx context.Context, uuid, mac string) (domain.VM, error)
+}
+
+type VMMetadataRepository interface {
+	ListVMMetadata(ctx context.Context) (map[string]domain.VMMetadata, error)
+	GetVMMetadata(ctx context.Context, uuid string) (domain.VMMetadata, error)
+	UpsertVMMetadata(ctx context.Context, item domain.VMMetadata) (domain.VMMetadata, error)
+	DeleteVMMetadata(ctx context.Context, uuid string) error
 }
 
 type AuditRecorder interface {
@@ -69,6 +84,7 @@ type Service struct {
 	metrics        MetricsProvider
 	backupService  *backupsapp.Service
 	configVersions ConfigVersionRecorder
+	metadata       VMMetadataRepository
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -113,6 +129,12 @@ func WithBackupService(service *backupsapp.Service) Option {
 func WithConfigVersionRecorder(recorder ConfigVersionRecorder) Option {
 	return func(service *Service) {
 		service.configVersions = recorder
+	}
+}
+
+func WithVMMetadata(repository VMMetadataRepository) Option {
+	return func(service *Service) {
+		service.metadata = repository
 	}
 }
 
@@ -184,6 +206,36 @@ type HostDeviceCommand struct {
 	Request MutationContext
 }
 
+type AttachDiskCommand struct {
+	UUID    string
+	Spec    domain.VMDiskAttachSpec
+	Request MutationContext
+}
+
+type DetachDiskCommand struct {
+	UUID    string
+	Target  string
+	Request MutationContext
+}
+
+type AttachNetworkCommand struct {
+	UUID    string
+	Spec    domain.VMNetworkAttachSpec
+	Request MutationContext
+}
+
+type DetachNetworkCommand struct {
+	UUID    string
+	MAC     string
+	Request MutationContext
+}
+
+type VMMetadataCommand struct {
+	UUID    string
+	Spec    domain.VMMetadataSpec
+	Request MutationContext
+}
+
 type SnapshotCreateCommand struct {
 	UUID    string
 	Spec    domain.VMSnapshotCreateSpec
@@ -211,12 +263,18 @@ var (
 	storagePoolNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
 	hostDeviceNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	diskTargetPattern         = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
+	storageVolumeNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	macAddressPattern         = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 	maxMemoryMiB              = uint64(1024 * 1024)
 	minMemoryMiB              = uint64(128)
 	minDiskCapacityBytes      = uint64(1 << 20)
 	maxDiskCapacityBytes      = uint64(1 << 50)
 	maxVCPUs                  = uint(255)
 	maxCloudInitUserDataBytes = 64 << 10
+	maxVMMetadataTags         = 20
+	maxVMMetadataTagBytes     = 48
+	maxVMMetadataNoteBytes    = 2000
+	maxVMMetadataOwnerBytes   = 128
 	supportedFormats          = map[string]struct{}{"qcow2": {}, "raw": {}}
 )
 
@@ -233,14 +291,34 @@ func (s *Service) List(ctx context.Context, query domain.ListQuery) (domain.VMSu
 	if err != nil {
 		return domain.VMSummaryList{}, err
 	}
+	if s.metadata != nil {
+		metadata, err := s.metadata.ListVMMetadata(ctx)
+		if err != nil {
+			return domain.VMSummaryList{}, err
+		}
+		for index := range vms {
+			if item, ok := metadata[vms[index].UUID]; ok {
+				copy := item
+				vms[index].Metadata = &copy
+			}
+		}
+	}
 	filtered := make([]domain.VM, 0, len(vms))
 	search := strings.ToLower(strings.TrimSpace(query.Query))
 	state := strings.ToLower(strings.TrimSpace(query.State))
+	tag := strings.ToLower(strings.TrimSpace(query.Tag))
+	owner := strings.ToLower(strings.TrimSpace(query.Owner))
 	for _, vm := range vms {
-		if search != "" && !strings.Contains(strings.ToLower(vm.Name), search) && !strings.Contains(strings.ToLower(vm.UUID), search) {
+		if search != "" && !vmMatchesSearch(vm, search) {
 			continue
 		}
 		if state != "" && string(vm.State) != state {
+			continue
+		}
+		if owner != "" && (vm.Metadata == nil || !strings.Contains(strings.ToLower(vm.Metadata.Owner), owner)) {
+			continue
+		}
+		if tag != "" && !vmHasTag(vm, tag) {
 			continue
 		}
 		filtered = append(filtered, vm)
@@ -256,7 +334,75 @@ func (s *Service) Get(ctx context.Context, uuid string) (domain.VM, error) {
 	if uuid == "" {
 		return domain.VM{}, domain.ErrInvalidInput
 	}
-	return s.repository.GetVM(ctx, uuid)
+	vm, err := s.repository.GetVM(ctx, uuid)
+	if err != nil {
+		return domain.VM{}, err
+	}
+	if s.metadata != nil {
+		item, err := s.metadata.GetVMMetadata(ctx, uuid)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return domain.VM{}, err
+		}
+		if err == nil {
+			vm.Metadata = &item
+		}
+	}
+	return vm, nil
+}
+
+func (s *Service) GetMetadata(ctx context.Context, uuid string) (domain.VMMetadata, error) {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return domain.VMMetadata{}, domain.ErrInvalidInput
+	}
+	if _, err := s.repository.GetVM(ctx, uuid); err != nil {
+		return domain.VMMetadata{}, err
+	}
+	if s.metadata == nil {
+		return domain.VMMetadata{}, domain.ErrUnavailable
+	}
+	item, err := s.metadata.GetVMMetadata(ctx, uuid)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.VMMetadata{VMUUID: uuid, Tags: []string{}}, nil
+	}
+	return item, err
+}
+
+func (s *Service) UpdateMetadata(ctx context.Context, command VMMetadataCommand) (domain.VMMetadata, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return domain.VMMetadata{}, domain.ErrInvalidInput
+	}
+	spec, err := normalizeVMMetadataSpec(command.Spec)
+	if err != nil {
+		return domain.VMMetadata{}, err
+	}
+	detail := map[string]any{"tags": spec.Tags, "owner": spec.Owner}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, domain.ErrReadOnly)
+	}
+	if s.metadata == nil {
+		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, domain.ErrUnavailable)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	item, err := s.metadata.UpsertVMMetadata(ctx, domain.VMMetadata{
+		VMUUID: command.UUID, Tags: spec.Tags, Note: spec.Note, Owner: spec.Owner,
+		UpdatedBy: command.Request.Session.User.Username, UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, err)
+	}
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.metadata.update", command.UUID, "success", detail, nil); err != nil {
+		return domain.VMMetadata{}, fmt.Errorf("record VM metadata audit: %w", err)
+	}
+	return item, nil
 }
 
 func (s *Service) Metrics(ctx context.Context, uuid string) (domain.VMMetrics, error) {
@@ -394,6 +540,11 @@ func (s *Service) Delete(ctx context.Context, command DeleteCommand) error {
 	}
 	if err := s.repository.DeleteVM(ctx, command.UUID); err != nil {
 		return s.mutationFailure(ctx, command.Request, "vm.delete", command.UUID, detail, err)
+	}
+	if s.metadata != nil {
+		if err := s.metadata.DeleteVMMetadata(ctx, command.UUID); err != nil {
+			return fmt.Errorf("delete VM metadata: %w", err)
+		}
 	}
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.delete", command.UUID, "success", detail, nil); err != nil {
 		return fmt.Errorf("record VM delete audit: %w", err)
@@ -573,6 +724,183 @@ func (s *Service) ResizeDisk(ctx context.Context, command ResizeDiskCommand) (do
 	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceDiskResize, 0, "扩容磁盘后保存持久配置")
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.disk.resize", command.UUID, "success", detail, nil); err != nil {
 		return domain.VM{}, fmt.Errorf("record VM disk resize audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) AttachDisk(ctx context.Context, command AttachDiskCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.Spec.Pool = strings.TrimSpace(command.Spec.Pool)
+	command.Spec.Volume = strings.TrimSpace(command.Spec.Volume)
+	command.Spec.Target = strings.TrimSpace(command.Spec.Target)
+	bus, ok := domain.NormalizeVMDiskBus(string(command.Spec.Bus))
+	if !ok {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	command.Spec.Bus = bus
+	if command.UUID == "" || !storagePoolNamePattern.MatchString(command.Spec.Pool) ||
+		!storageVolumeNamePattern.MatchString(command.Spec.Volume) ||
+		(command.Spec.Target != "" && !diskTargetPattern.MatchString(command.Spec.Target)) {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	detail := map[string]any{"pool": command.Spec.Pool, "volume": command.Spec.Volume, "bus": command.Spec.Bus, "target": command.Spec.Target}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	if command.Spec.Target != "" {
+		for _, disk := range vm.Disks {
+			if disk.Target == command.Spec.Target {
+				return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, domain.ErrConflict)
+			}
+		}
+	}
+	hotplug, ok := s.repository.(HotplugRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, domain.ErrUnavailable)
+	}
+	updated, err := hotplug.AttachVMDisk(ctx, command.UUID, command.Spec)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.attach", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceDiskHotplug, 0, "热附加磁盘后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.disk.attach", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM disk attach audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) DetachDisk(ctx context.Context, command DetachDiskCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.Target = strings.TrimSpace(command.Target)
+	if command.UUID == "" || !diskTargetPattern.MatchString(command.Target) {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	detail := map[string]any{"target": command.Target}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	found := false
+	for _, disk := range vm.Disks {
+		if disk.Target == command.Target && disk.Device == "disk" && !disk.ReadOnly {
+			found = true
+			detail["source"] = disk.Source
+			detail["format"] = disk.Format
+			break
+		}
+	}
+	if !found {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, domain.ErrNotFound)
+	}
+	hotplug, ok := s.repository.(HotplugRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, domain.ErrUnavailable)
+	}
+	updated, err := hotplug.DetachVMDisk(ctx, command.UUID, command.Target)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.detach", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceDiskHotplug, 0, "热移除磁盘后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.disk.detach", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM disk detach audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) AttachNetwork(ctx context.Context, command AttachNetworkCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.Spec.Network = strings.TrimSpace(command.Spec.Network)
+	model, ok := domain.NormalizeVMNICModel(string(command.Spec.Model))
+	if !ok {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	command.Spec.Model = model
+	if command.UUID == "" || !networkPattern.MatchString(command.Spec.Network) {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	detail := map[string]any{"network": command.Spec.Network, "model": command.Spec.Model}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.attach", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.attach", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.attach", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	hotplug, ok := s.repository.(HotplugRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.attach", command.UUID, detail, domain.ErrUnavailable)
+	}
+	updated, err := hotplug.AttachVMNetwork(ctx, command.UUID, command.Spec)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.attach", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceNetworkHotplug, 0, "热附加网卡后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.network.attach", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM network attach audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) DetachNetwork(ctx context.Context, command DetachNetworkCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.MAC = strings.TrimSpace(command.MAC)
+	if command.UUID == "" || !macAddressPattern.MatchString(command.MAC) {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	detail := map[string]any{"mac": command.MAC}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	found := false
+	for _, networkInterface := range vm.Interfaces {
+		if strings.EqualFold(networkInterface.MAC, command.MAC) {
+			found = true
+			detail["network"] = networkInterface.Source
+			detail["model"] = networkInterface.Model
+			break
+		}
+	}
+	if !found {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, domain.ErrNotFound)
+	}
+	hotplug, ok := s.repository.(HotplugRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, domain.ErrUnavailable)
+	}
+	updated, err := hotplug.DetachVMNetwork(ctx, command.UUID, command.MAC)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.detach", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceNetworkHotplug, 0, "热移除网卡后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.network.detach", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM network detach audit: %w", err)
 	}
 	return updated, nil
 }
@@ -905,6 +1233,71 @@ func (s *Service) snapshotFailure(ctx context.Context, request MutationContext, 
 	return cause
 }
 
+func normalizeVMMetadataSpec(spec domain.VMMetadataSpec) (domain.VMMetadataSpec, error) {
+	tags := make([]string, 0, len(spec.Tags))
+	seen := make(map[string]struct{}, len(spec.Tags))
+	for _, raw := range spec.Tags {
+		tag := strings.TrimSpace(raw)
+		if tag == "" {
+			continue
+		}
+		if len(tag) > maxVMMetadataTagBytes || strings.IndexFunc(tag, unicode.IsControl) >= 0 {
+			return domain.VMMetadataSpec{}, fmt.Errorf("%w: invalid VM tag", domain.ErrInvalidInput)
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		tags = append(tags, tag)
+	}
+	if len(tags) > maxVMMetadataTags {
+		return domain.VMMetadataSpec{}, fmt.Errorf("%w: too many VM tags", domain.ErrInvalidInput)
+	}
+	spec.Tags = tags
+	spec.Note = strings.TrimSpace(spec.Note)
+	spec.Owner = strings.TrimSpace(spec.Owner)
+	if len(spec.Note) > maxVMMetadataNoteBytes || len(spec.Owner) > maxVMMetadataOwnerBytes ||
+		strings.IndexFunc(spec.Note, isNUL) >= 0 || strings.IndexFunc(spec.Owner, unicode.IsControl) >= 0 {
+		return domain.VMMetadataSpec{}, domain.ErrInvalidInput
+	}
+	return spec, nil
+}
+
+func isNUL(value rune) bool {
+	return value == 0
+}
+
+func vmMatchesSearch(vm domain.VM, search string) bool {
+	if strings.Contains(strings.ToLower(vm.Name), search) || strings.Contains(strings.ToLower(vm.UUID), search) {
+		return true
+	}
+	if vm.Metadata == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(vm.Metadata.Owner), search) || strings.Contains(strings.ToLower(vm.Metadata.Note), search) {
+		return true
+	}
+	for _, tag := range vm.Metadata.Tags {
+		if strings.Contains(strings.ToLower(tag), search) {
+			return true
+		}
+	}
+	return false
+}
+
+func vmHasTag(vm domain.VM, tag string) bool {
+	if vm.Metadata == nil {
+		return false
+	}
+	for _, candidate := range vm.Metadata.Tags {
+		if strings.ToLower(candidate) == tag {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) {
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.DiskPath = strings.TrimSpace(spec.DiskPath)
@@ -962,14 +1355,17 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	spec.BootOrder = bootOrder
 	if spec.CloudInit != nil {
 		userData := strings.TrimSpace(spec.CloudInit.UserData)
+		networkConfig := strings.TrimSpace(spec.CloudInit.NetworkConfig)
+		vendorData := strings.TrimSpace(spec.CloudInit.VendorData)
 		pool := strings.TrimSpace(spec.CloudInit.Pool)
-		if userData == "" || len(userData) > maxCloudInitUserDataBytes || strings.ContainsRune(userData, '\x00') {
-			return domain.VMCreateSpec{}, fmt.Errorf("%w: cloud-init user data must be between 1 and %d bytes and contain no NUL", domain.ErrInvalidInput, maxCloudInitUserDataBytes)
+		total := len(userData) + len(networkConfig) + len(vendorData)
+		if userData == "" || total > maxCloudInitUserDataBytes || containsCloudInitNUL(userData, networkConfig, vendorData) {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: cloud-init data must include user-data and be at most %d bytes in total with no NUL", domain.ErrInvalidInput, maxCloudInitUserDataBytes)
 		}
 		if !cloudInitPoolPattern.MatchString(pool) {
 			return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid cloud-init storage pool", domain.ErrInvalidInput)
 		}
-		spec.CloudInit = &domain.CloudInitSpec{UserData: userData, Pool: pool}
+		spec.CloudInit = &domain.CloudInitSpec{UserData: userData, NetworkConfig: networkConfig, VendorData: vendorData, Pool: pool}
 	}
 	firmware, ok := domain.NormalizeVMFirmware(string(spec.Firmware))
 	if !ok {
@@ -980,6 +1376,15 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	}
 	spec.Firmware = firmware
 	return spec, nil
+}
+
+func containsCloudInitNUL(values ...string) bool {
+	for _, value := range values {
+		if strings.ContainsRune(value, '\x00') {
+			return true
+		}
+	}
+	return false
 }
 
 func validAbsolutePath(path string) bool {

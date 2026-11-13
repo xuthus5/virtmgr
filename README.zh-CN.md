@@ -50,21 +50,22 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 模块 | 主要能力 |
 |---|---|
 | 总览 | 宿主机 CPU、内存、libvirt 版本、虚拟机数量、资源分配率、异常提醒和近期虚拟机状态 |
-| 虚拟机 | 搜索和筛选域；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
-| 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、磁盘总线（virtio/SATA/SCSI）、网卡型号（virtio/e1000）、启动顺序、网络选择、ISO、自动启动，以及带实时 YAML 预览和源码编辑的可交互 Cloud-init seed ISO |
-| 虚拟机详情 | 硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、分网卡吞吐、磁盘、网卡、Guest Agent 信息、快照和域 XML |
+| 虚拟机 | 搜索和筛选域；按状态、标签、负责人筛选，本地保存筛选并收藏常用虚拟机；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
+| 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、磁盘总线（virtio/SATA/SCSI）、网卡型号（virtio/e1000）、启动顺序、网络选择、ISO、自动启动，以及支持 user-data、network-config、vendor-data 的 Cloud-init seed ISO |
+| 虚拟机详情 | 标签/备注/负责人、硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、历史指标、分网卡吞吐、磁盘、网卡、Guest Agent 信息、快照和域 XML |
 | Web 控制台 | 页面内嵌或独立窗口打开 noVNC / xterm.js 控制台，支持图形与串口切换、Cockpit 风格组合键、缩放、断开重连、全屏和分离窗口；会话均通过一次性 token 与服务端 WebSocket 代理 |
-| 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整和磁盘扩容 |
+| 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整、磁盘扩容，以及数据磁盘和网卡热插拔 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
-| 快照 | 创建、回滚、删除快照，并按保留策略配置定时快照 |
-| 备份中心 | 集中管理冷备份、完整性校验、恢复为新虚拟机、定时计划、保留清理、固定保留和 libvirt 存储库 |
+| 快照 | 创建、回滚、删除快照，并按固定间隔或每日时刻和保留策略配置定时快照 |
+| 备份中心 | 集中管理冷备份、手动完整性校验、恢复为新虚拟机、固定间隔/每日计划、保留清理、固定保留、失败重试和任务 SSE 状态 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；流式上传 ISO、qcow2 和 raw 镜像；阻止删除仍在使用的卷 |
-| 网络 | NAT 和隔离网络、桥接口、IPv4/DHCP 配置、实时租约、静态 DHCP 主机，以及创建、编辑、启停和删除 |
+| 网络 | NAT 和隔离网络、桥接口、IPv4/DHCP 配置、实时租约、静态 DHCP 主机及 CSV 批量导入/导出，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
-| 可观测性 | SSE 实时事件、带进度和失败原因的任务中心、宿主机与虚拟机资源趋势、虚拟磁盘 IO 与分网卡指标、结构化日志和健康检查 |
-| 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选与导出的审计、CSP 和安全响应头 |
-| 使用体验 | 响应式布局、固定且可折叠的侧边导航、明暗主题、键盘友好的全局搜索、可访问对话框和危险操作二次确认 |
+| 可观测性 | SSE 实时事件与任务状态、任务失败重试、宿主机和运行中 VM 的 7 天历史指标、Prometheus `/metrics`、CPU/内存阈值 Webhook 告警、结构化日志和健康检查 |
+| 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选/导出/按保留期清理的审计、CSP 和安全响应头 |
+| 系统管理 | 版本/提交/构建时间、SQLite 在线导出、审计保留期和全局只读设置 |
+| 使用体验 | 响应式布局、固定且可折叠的侧边导航、明暗主题、键盘友好的全局搜索、本地保存的列表筛选与收藏、可访问对话框和危险操作二次确认 |
 | 虚拟机模板 | 复用虚拟机规格、固件/网络默认值和可交互 Cloud-init 默认配置（软件包、启动命令、区域、sudo/SSH 用户），不包含实例名称和磁盘路径 |
 
 ## 架构
@@ -223,6 +224,29 @@ VIRTMGR_COOKIE_SECURE=true
 
 不要在没有 TLS、防火墙和强管理员密码的情况下，将可写模式的 VirtMgr 直接暴露到公网。
 
+## 使用容器部署
+
+仓库提供多阶段镜像和 Compose 示例。镜像以非特权用户运行，挂载宿主机 libvirt socket 和持久化数据卷。
+
+```bash
+cd deploy/docker
+cat > .env <<'EOF'
+VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
+VIRTMGR_READ_ONLY=true
+VIRTMGR_COOKIE_SECURE=false
+LIBVIRT_GID=640
+TZ=Asia/Shanghai
+EOF
+
+# Docker Compose
+docker compose up -d --build
+
+# 或 Podman Compose
+podman compose up -d --build
+```
+
+`LIBVIRT_GID` 应与宿主机 `/var/run/libvirt/libvirt-sock` 的组 ID 一致：`stat -c '%g' /var/run/libvirt/libvirt-sock`。如需原生 TLS，取消 Compose 中的证书挂载注释并设置 `VIRTMGR_TLS_CERT_FILE` / `VIRTMGR_TLS_KEY_FILE`。如果备份或存储功能需要直接读写宿主机存储目录，请把这些目录以相同路径挂载进容器；不要使用 `--privileged`。
+
 ## 配置项
 
 | 环境变量 | 默认值 | 说明 |
@@ -327,7 +351,7 @@ internal/domain/          领域类型、校验和错误契约
 internal/modules/         按业务模块拆分的 http/app 层
 internal/platform/        libvirt、SQLite、认证上下文、指标、任务和配置
 web/                      React + TypeScript + Vite + Tailwind 前端
-deploy/                   systemd 单元文件和环境变量示例
+deploy/                   systemd、容器镜像、Compose 和环境变量示例
 docs/                     架构文档与项目截图
 scripts/                  本地开发和 E2E 辅助脚本
 .github/workflows/        发布二进制流水线
@@ -338,19 +362,21 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 一个 VirtMgr 实例管理一个 libvirt 端点。跨宿主机调度、迁移和多集群清单尚未实现。
 - 运行环境为 Linux + KVM/QEMU + libvirt Go binding；构建需要 CGO 和 libvirt 开发头文件。
 - 图形控制台当前仅支持 VNC，不支持 SPICE。串口控制台支持 libvirt PTY 设备，同一串口设备同时只允许一个交互会话。
-- 当前尚未提供官方容器化部署方式，推荐的生产形态仍是由 systemd 管理的宿主机二进制。
+- 容器部署需要挂载宿主机 libvirt socket，并使用与 socket 组 ID 匹配的补充组；需要直接访问存储路径时还应以相同路径挂载对应目录。
 - 备份仅支持持久虚拟机的冷全量备份和 `file` 后端磁盘；在线/增量备份、原地覆盖恢复、跨宿主机复制和浏览器下载备份均未实现。
+- 自动备份校验和夏令时特殊处理不在当前范围；每日调度使用服务端本地时区。
 - 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。
 - 建议使用较新的 Chrome、Edge、Firefox 或 Safari。
 
 ## 文档
 
 - [架构设计](docs/architecture-design.md)——产品边界、架构、数据模型、路由、安全和部署细节
-- [产品差距分析](docs/product-gap-analysis.md)——与主流管理工具的差异、单机精品路线和第一批增强状态
+- [产品差距分析](docs/product-gap-analysis.md)——与主流管理工具的差异、单机精品路线和已实施能力状态
 - [备份与恢复方案](docs/backup-design.md)——已实现的冷备份目录、恢复、调度和保留策略
 - [发布流水线](.github/workflows/release.yml)——amd64/arm64 二进制构建与 Release 附件
 - [环境变量示例](deploy/virtmgr.env.example)——生产环境配置模板
 - [systemd 单元文件](deploy/virtmgr.service)——加固后的服务定义
+- [容器镜像](deploy/docker/Dockerfile) 与 [Compose 示例](deploy/docker/compose.yaml)——libvirt socket 和非特权运行
 
 ## 许可证
 

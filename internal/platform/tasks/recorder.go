@@ -16,6 +16,10 @@ type Repository interface {
 	UpdateTask(ctx context.Context, task domain.Task) error
 }
 
+type MetadataRepository interface {
+	SetTaskMetadata(ctx context.Context, id string, metadata map[string]any) error
+}
+
 type Recorder struct {
 	repository Repository
 	now        func() time.Time
@@ -56,6 +60,20 @@ func (r *Recorder) Start(ctx context.Context, kind, targetKind, targetID, actor,
 
 func (r *Recorder) Progress(ctx context.Context, id string, progress int, step string) error {
 	return r.update(ctx, id, domain.TaskStatusRunning, progress, step, "")
+}
+
+func (r *Recorder) SetMetadata(ctx context.Context, id string, metadata map[string]any) error {
+	repository, ok := r.repository.(MetadataRepository)
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(id) == "" {
+		return domain.ErrInvalidInput
+	}
+	if err := repository.SetTaskMetadata(ctx, id, metadata); err != nil {
+		return fmt.Errorf("set task metadata %s: %w", id, err)
+	}
+	return nil
 }
 
 func (r *Recorder) Succeed(ctx context.Context, id, step string) error {

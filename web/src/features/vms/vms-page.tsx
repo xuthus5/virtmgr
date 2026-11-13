@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, LoaderCircle, Play, Plus, Search } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Play, Plus, RotateCcw, Search, Star } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { VMAction, VMState } from "@/api/types";
 import { StatusBadge, stateLabel } from "@/components/feedback/status-badge";
@@ -24,6 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSessionQuery } from "@/features/auth/use-session";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useVMsQuery } from "@/features/vms/use-vms-query";
+import { useVMListPreferences } from "@/features/vms/vm-list-preferences";
 import { formatBytes } from "@/lib/utils";
 
 const states: Array<{ value: "" | VMState; label: string }> = [
@@ -56,19 +57,22 @@ function batchActionLabel(action: VMAction) {
 
 export function VMsPage() {
   const [search, setSearch] = useState("");
-  const [state, setState] = useState("" as "" | VMState);
+  const { filters, favorites, updateFilters, resetFilters, toggleFavorite } = useVMListPreferences();
+  const [showFavorites, setShowFavorites] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batchAction, setBatchAction] = useState<VMAction>("start");
   const [confirmAction, setConfirmAction] = useState<VMAction | null>(null);
   const [batchNotice, setBatchNotice] = useState<BatchNotice | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const vms = useVMsQuery(deferredSearch, state);
+  const vms = useVMsQuery(deferredSearch, filters.state, true, filters.tag.trim(), filters.owner.trim());
   const session = useSessionQuery();
   const queryClient = useQueryClient();
   const readOnly = Boolean(session.data?.readOnly);
   const canOperate = Boolean(session.data) && !session.data?.readOnly && session.data?.user.role !== "viewer";
   const disabledReason = session.data?.readOnly ? "系统当前处于只读模式" : "当前账号没有创建虚拟机权限";
-  const items = vms.data?.items ?? [];
+  const loadedItems = vms.data?.items ?? [];
+  const favoriteSet = new Set(favorites);
+  const items = showFavorites ? loadedItems.filter((vm) => favoriteSet.has(vm.uuid)) : loadedItems;
   const allVisibleSelected = items.length > 0 && items.every((vm) => selected.has(vm.uuid));
 
   useEffect(() => {
@@ -77,7 +81,7 @@ export function VMsPage() {
       const next = new Set([...current].filter((uuid) => available.has(uuid)));
       return next.size === current.size ? current : next;
     });
-  }, [vms.data]);
+  }, [vms.data, showFavorites, favorites]);
 
   const batchMutation = useMutation({
     mutationFn: ({ action, uuids }: { action: VMAction; uuids: string[] }) => api.batchVMAction({ action, uuids }),
@@ -152,12 +156,20 @@ export function VMsPage() {
           <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center">
             <div className="relative min-w-0 flex-1 md:max-w-sm">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input aria-label="搜索虚拟机" placeholder="搜索名称或 UUID" className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Input aria-label="搜索虚拟机" placeholder="搜索名称、UUID、标签、备注或负责人" className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
-            <select aria-label="状态筛选" value={state} onChange={(event) => setState(event.target.value as "" | VMState)} className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <select aria-label="状态筛选" value={filters.state} onChange={(event) => updateFilters({ state: event.target.value as "" | VMState })} className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {states.map((item) => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
             </select>
-            <p className="text-xs text-muted-foreground md:ml-auto" data-testid="vm-total-label">共 {vms.data?.total ?? 0} 台虚拟机</p>
+            <Input aria-label="标签筛选" placeholder="标签" className="md:max-w-36" value={filters.tag} onChange={(event) => updateFilters({ tag: event.target.value })} />
+            <Input aria-label="负责人筛选" placeholder="负责人" className="md:max-w-36" value={filters.owner} onChange={(event) => updateFilters({ owner: event.target.value })} />
+            <Button type="button" size="sm" variant={showFavorites ? "secondary" : "outline"} aria-pressed={showFavorites} data-testid="vm-favorites-toggle" onClick={() => setShowFavorites((current) => !current)}>
+              <Star className={showFavorites ? "h-4 w-4 fill-current" : "h-4 w-4"} />收藏{favorites.length ? ` (${favorites.length})` : ""}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" data-testid="vm-filters-reset" onClick={() => { setSearch(""); setShowFavorites(false); resetFilters(); }}>
+              <RotateCcw className="h-4 w-4" />重置
+            </Button>
+            <p className="text-xs text-muted-foreground md:ml-auto" data-testid="vm-total-label">共 {showFavorites ? items.length : vms.data?.total ?? 0} 台虚拟机</p>
           </div>
 
           {canOperate ? (
@@ -241,8 +253,26 @@ export function VMsPage() {
                         <div className="flex items-start gap-2">
                           {canOperate ? <input type="checkbox" aria-label={`选择 ${vm.name}`} data-testid={`vm-select-${vm.uuid}`} checked={selected.has(vm.uuid)} onChange={() => toggleSelected(vm.uuid)} className="mt-0.5 h-5 w-5 shrink-0 accent-primary" /> : null}
                           <div className="min-w-0">
-                            <Link to="/vms/$uuid" params={{ uuid: vm.uuid }} className="font-medium text-primary hover:underline">{vm.name}</Link>
+                            <div className="flex items-center gap-1.5">
+                              <Link to="/vms/$uuid" params={{ uuid: vm.uuid }} className="font-medium text-primary hover:underline">{vm.name}</Link>
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-muted-foreground hover:bg-warning/10 hover:text-warning focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-label={favoriteSet.has(vm.uuid) ? `取消收藏 ${vm.name}` : `收藏 ${vm.name}`}
+                                aria-pressed={favoriteSet.has(vm.uuid)}
+                                data-testid={`vm-favorite-${vm.uuid}`}
+                                onClick={() => toggleFavorite(vm.uuid)}
+                              >
+                                <Star className={favoriteSet.has(vm.uuid) ? "h-3.5 w-3.5 fill-current text-warning" : "h-3.5 w-3.5"} />
+                              </button>
+                            </div>
                             <p className="truncate font-mono text-[10px] text-muted-foreground">{vm.uuid}</p>
+                            {vm.metadata?.tags?.length || vm.metadata?.owner ? (
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                {vm.metadata?.tags?.map((item) => <span key={item} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{item}</span>)}
+                                {vm.metadata?.owner ? <span className="text-[10px] text-muted-foreground">负责人 {vm.metadata.owner}</span> : null}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </TableCell>

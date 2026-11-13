@@ -89,6 +89,29 @@ test("虚拟机列表支持搜索和状态筛选", async ({ page }) => {
   await expect(page.getByText("demo-legacy-01")).toBeVisible();
 });
 
+test("虚拟机筛选与收藏可持久化到本地浏览器", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms");
+  await page.getByLabel("状态筛选").selectOption("shutoff");
+  await expect(page.getByTestId("vm-total-label")).toHaveText("共 1 台虚拟机");
+  await page.reload();
+  await expect(page.getByLabel("状态筛选")).toHaveValue("shutoff");
+  await expect(page.getByTestId("vm-total-label")).toHaveText("共 1 台虚拟机");
+
+  await page.getByRole("button", { name: "收藏 demo-legacy-01" }).click();
+  await expect(page.getByRole("button", { name: "取消收藏 demo-legacy-01" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("vm-filters-reset").click();
+  await expect(page.getByTestId("vm-total-label")).toHaveText("共 4 台虚拟机");
+  await page.getByTestId("vm-favorites-toggle").click();
+  await expect(page.getByTestId("vm-total-label")).toHaveText("共 1 台虚拟机");
+  await expect(page.getByText("demo-legacy-01")).toBeVisible();
+
+  await page.reload();
+  await page.getByTestId("vm-favorites-toggle").click();
+  await expect(page.getByTestId("vm-total-label")).toHaveText("共 1 台虚拟机");
+  await expect(page.getByRole("button", { name: "取消收藏 demo-legacy-01" })).toHaveAttribute("aria-pressed", "true");
+});
+
 test("物理主机展示实时资源趋势", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "物理主机", exact: true }).click();
@@ -176,6 +199,8 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await expect(page.getByTestId("network-hosts-card")).toContainText("实时生效");
   await expect(page.getByTestId("network-host-row-52:54:00:12:34:56")).toContainText("demo-web-01");
   await expect(page.getByTestId("network-host-form")).toHaveCount(0);
+  await expect(page.getByTestId("network-hosts-export-default")).toBeEnabled();
+  await expect(page.getByTestId("network-hosts-import-default")).toBeDisabled();
   await expect(page.getByTestId("network-host-delete-52:54:00:12:34:56")).toBeDisabled();
 });
 
@@ -365,6 +390,44 @@ test("移动端虚拟机详情保持关键操作可用", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "生命周期操作", exact: true })).toBeVisible();
   await expect(page.getByTestId("vm-action-pause")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/templates");
+  await page.getByTestId("template-use-secure-uefi").click();
+  const editor = page.getByTestId("vm-cloud-init-editor");
+  await expect(editor).toBeVisible();
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByTestId("vm-cloud-init-mode-visual")).toBeVisible();
+    const layout = await editor.evaluate((element) => {
+      const header = element.firstElementChild as HTMLElement;
+      const summary = header.firstElementChild as HTMLElement;
+      const tabs = header.lastElementChild as HTMLElement;
+      const summaryBox = summary.getBoundingClientRect();
+      const tabsBox = tabs.getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+        summaryWidth: summaryBox.width,
+        tabsWidth: tabsBox.width,
+        stacked: tabsBox.top >= summaryBox.bottom - 1,
+      };
+    });
+
+    expect(layout.documentWidth, `${width}px: 页面不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px: body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.summaryWidth, `${width}px: 标题和说明应保留可读宽度`).toBeGreaterThan(200);
+    expect(layout.tabsWidth, `${width}px: 模式切换器应占满内容宽度`).toBeCloseTo(layout.summaryWidth, 0);
+    expect(layout.stacked, `${width}px: 模式切换器应位于标题区下方`).toBe(true);
+  }
+
+  await expect(page.getByTestId("vm-cloud-init-preview")).toBeVisible();
+  await expect(page.getByTestId("vm-cloud-init-mode-source")).toBeDisabled();
 });
 
 test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) => {

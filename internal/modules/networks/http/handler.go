@@ -1,8 +1,10 @@
 package networkshttp
 
 import (
+	"io"
 	stdhttp "net/http"
 	"net/url"
+	"strings"
 
 	"virtmgr/internal/domain"
 	networksapp "virtmgr/internal/modules/networks/app"
@@ -152,6 +154,62 @@ func (h *Handler) DeleteDHCPHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, network)
 }
 
+func (h *Handler) ExportDHCPHosts(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	name := chi.URLParam(r, "name")
+	data, err := h.service.ExportDHCPHostsCSV(r.Context(), name)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="virtmgr-`+name+`-dhcp-hosts.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(stdhttp.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *Handler) ImportDHCPHosts(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	request := mutationContext(r, session)
+	name := chi.URLParam(r, "name")
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	var result domain.NetworkDHCPHostImportResult
+	var err error
+	switch contentType {
+	case "text/csv", "application/csv":
+		data, readErr := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		if readErr != nil {
+			httpx.Error(w, r, domain.ErrInvalidInput)
+			return
+		}
+		if len(data) > 1<<20 {
+			httpx.Error(w, r, domain.ErrTooLarge)
+			return
+		}
+		result, err = h.service.ImportDHCPHostsCSV(r.Context(), name, data, request)
+	case "application/json", "":
+		var spec domain.NetworkDHCPHostImportSpec
+		if decodeErr := httpx.DecodeJSON(r, &spec); decodeErr != nil {
+			httpx.Error(w, r, decodeErr)
+			return
+		}
+		result, err = h.service.ImportDHCPHosts(r.Context(), networksapp.ImportNetworkDHCPHostsCommand{Name: name, Hosts: spec.Hosts, Request: request})
+	default:
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Delete(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	session, ok := authctx.Session(r.Context())
 	if !ok {
@@ -171,10 +229,12 @@ func (h *Handler) Delete(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/networks", h.List)
 	r.Get("/networks/{name}/leases", h.Leases)
+	r.Get("/networks/{name}/hosts/export", h.ExportDHCPHosts)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
 		mutating.Post("/networks", h.Create)
 		mutating.Patch("/networks/{name}", h.Update)
+		mutating.Post("/networks/{name}/hosts/import", h.ImportDHCPHosts)
 		mutating.Post("/networks/{name}/hosts", h.AddDHCPHost)
 		mutating.Delete("/networks/{name}/hosts/{mac}", h.DeleteDHCPHost)
 		mutating.Post("/networks/{name}/actions/{action}", h.Action)

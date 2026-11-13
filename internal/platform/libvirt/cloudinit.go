@@ -46,7 +46,7 @@ func (c *Client) createCloudInitSeedLocked(ctx context.Context, vmName string, s
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	isoData, err := buildCloudInitISO(vmName, spec.UserData)
+	isoData, err := buildCloudInitISO(vmName, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -120,9 +120,11 @@ func cloudInitSeedVolumeName(vmName string) string {
 	return name[:127]
 }
 
-func buildCloudInitISO(vmName, userData string) ([]byte, error) {
+func buildCloudInitISO(vmName string, spec domain.CloudInitSpec) ([]byte, error) {
 	vmName = strings.TrimSpace(vmName)
-	userData = strings.TrimSpace(userData)
+	userData := strings.TrimSpace(spec.UserData)
+	networkConfig := strings.TrimSpace(spec.NetworkConfig)
+	vendorData := strings.TrimSpace(spec.VendorData)
 	if vmName == "" || userData == "" {
 		return nil, domain.ErrInvalidInput
 	}
@@ -147,7 +149,14 @@ func buildCloudInitISO(vmName, userData string) ([]byte, error) {
 		return nil, fmt.Errorf("create cloud-init ISO filesystem: %w", err)
 	}
 	defer func() { _ = fs.Close() }()
-	for name, content := range map[string]string{"meta-data": metaData, "user-data": userData + "\n"} {
+	files := map[string]string{"meta-data": metaData, "user-data": userData + "\n"}
+	if networkConfig != "" {
+		files["network-config"] = networkConfig + "\n"
+	}
+	if vendorData != "" {
+		files["vendor-data"] = vendorData + "\n"
+	}
+	for name, content := range files {
 		file, err := fs.OpenFile(name, os.O_CREATE|os.O_RDWR)
 		if err != nil {
 			return nil, fmt.Errorf("open cloud-init %s in ISO: %w", name, err)

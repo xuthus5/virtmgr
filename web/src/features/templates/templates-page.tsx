@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
-import { cloudInitValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
+import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
 import { initialTemplateForm, formToTemplateInput, templateToForm, type TemplateFormState } from "@/features/templates/template-form";
 import { templatesQueryKey, useTemplatesQuery } from "@/features/templates/use-templates-query";
 
@@ -122,7 +122,7 @@ export function TemplatesPage() {
     if (!canManage) return;
     setFormError("");
     setSuccessMessage("");
-    const cloudInitError = form.cloudInit ? cloudInitValidationError(form.cloudInitUserData) : "";
+    const cloudInitError = form.cloudInit ? cloudInitBundleValidationError(form.cloudInitUserData, form.cloudInitNetworkConfig, form.cloudInitVendorData) : "";
     if (cloudInitError) {
       setFormError(cloudInitError);
       return;
@@ -245,6 +245,10 @@ export function TemplatesPage() {
                   prefix="template-cloud-init"
                   value={form.cloudInitUserData}
                   onChange={(value) => updateField("cloudInitUserData", value)}
+                  networkConfig={form.cloudInitNetworkConfig}
+                  onNetworkConfigChange={(value) => updateField("cloudInitNetworkConfig", value)}
+                  vendorData={form.cloudInitVendorData}
+                  onVendorDataChange={(value) => updateField("cloudInitVendorData", value)}
                   disabled={!canManage}
                 />
               ) : null}

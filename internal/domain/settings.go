@@ -1,5 +1,6 @@
 package domain
 
 type Settings struct {
-	ReadOnly bool `json:"readOnly"`
+	ReadOnly           bool `json:"readOnly"`
+	AuditRetentionDays int  `json:"auditRetentionDays"`
 }

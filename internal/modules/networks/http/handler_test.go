@@ -232,6 +232,46 @@ func TestNetworkDHCPHostRoutes(t *testing.T) {
 	}
 }
 
+func TestNetworkDHCPHostImportExportRoutes(t *testing.T) {
+	repository := &handlerRepository{networks: []domain.VirtualNetwork{{
+		Name: "default", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{{
+			Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,
+			DHCPStart: "192.168.122.2", DHCPEnd: "192.168.122.254",
+			Hosts: []domain.NetworkDHCPHost{{MAC: "52:54:00:12:34:56", IP: "192.168.122.50", Name: "web-01"}},
+		}},
+	}}}
+	router := newTestRouter(repository)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/networks/default/hosts/export", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Header().Get("Content-Disposition"), "virtmgr-default-dhcp-hosts.csv") {
+		t.Fatalf("export status = %d headers=%v body=%s", recorder.Code, recorder.Header(), recorder.Body.String())
+	}
+	if body := recorder.Body.String(); !strings.HasPrefix(body, "mac,ip,name\n") || !strings.Contains(body, "52:54:00:12:34:56,192.168.122.50,web-01") {
+		t.Fatalf("export body = %s", body)
+	}
+
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,ip,name\n52:54:00:12:34:56,192.168.122.50,web-01\n52:54:00:AB:CD:EF,192.168.122.60,db-01\n")), domain.RoleOperator)
+	request.Header.Set("Content-Type", "text/csv")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"imported":1`) || !strings.Contains(recorder.Body.String(), `"skipped":1`) {
+		t.Fatalf("import status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if repository.addedHost.MAC != "52:54:00:ab:cd:ef" || repository.addedHost.IP != "192.168.122.60" {
+		t.Fatalf("imported host = %+v", repository.addedHost)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,ip,name\n52:54:00:AB:CD:EF,192.168.122.60,db-01\n"))
+	request.Header.Set("Content-Type", "text/csv")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("missing session status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestDeleteNetworkRoute(t *testing.T) {
 	repository := &handlerRepository{}
 	router := newTestRouter(repository)

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"virtmgr/internal/domain"
@@ -13,6 +14,7 @@ type fakeRepository struct {
 	created     domain.VirtualNetworkDefinition
 	updated     domain.VirtualNetworkDefinition
 	addedHost   domain.NetworkDHCPHost
+	addedHosts  []domain.NetworkDHCPHost
 	deletedHost domain.NetworkDHCPHost
 	action      domain.VirtualNetworkAction
 	actionFor   string
@@ -53,6 +55,7 @@ func (f *fakeRepository) UpdateNetwork(_ context.Context, definition domain.Virt
 func (f *fakeRepository) AddNetworkDHCPHost(_ context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error) {
 	f.called = true
 	f.addedHost = host
+	f.addedHosts = append(f.addedHosts, host)
 	if f.err != nil {
 		return domain.VirtualNetwork{}, f.err
 	}
@@ -411,6 +414,115 @@ func TestAddDHCPHostRequiresDHCPSection(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrNetworkUnsupported) || repository.called {
 		t.Fatalf("error = %v called=%v", err, repository.called)
+	}
+}
+
+func TestImportDHCPHostsSkipsExistingAndAudits(t *testing.T) {
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{{
+		Name: "default", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{{
+			Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,
+			DHCPStart: "192.168.122.2", DHCPEnd: "192.168.122.254",
+			Hosts: []domain.NetworkDHCPHost{{MAC: "52:54:00:12:34:56", IP: "192.168.122.50", Name: "existing"}},
+		}},
+	}}}
+	audit := &auditRecorder{}
+	result, err := New(repository, audit, false).ImportDHCPHosts(context.Background(), ImportNetworkDHCPHostsCommand{
+		Name: " default ",
+		Hosts: []domain.NetworkDHCPHostCreateSpec{
+			{MAC: "52:54:00:12:34:56", IP: "192.168.122.50", Name: "existing"},
+			{MAC: "52:54:00:AB:CD:EF", IP: "192.168.122.60", Name: "web-01"},
+			{MAC: "52:54:00:AB:CD:EF", IP: "192.168.122.60", Name: "web-01"},
+			{MAC: "52:54:00:AB:CD:70", IP: "192.168.122.70"},
+		},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("ImportDHCPHosts() error = %v", err)
+	}
+	if result.Imported != 2 || result.Skipped != 2 || len(repository.addedHosts) != 2 {
+		t.Fatalf("result=%+v hosts=%+v", result, repository.addedHosts)
+	}
+	if repository.addedHosts[0].MAC != "52:54:00:ab:cd:ef" || repository.addedHosts[1].IP != "192.168.122.70" {
+		t.Fatalf("imported hosts = %+v", repository.addedHosts)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "network.dhcp.host.import" || audit.events[0].Detail["imported"] != 2 || audit.events[0].Detail["skipped"] != 2 {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestImportDHCPHostsRejectsConflictsBeforeWriting(t *testing.T) {
+	network := domain.VirtualNetwork{
+		Name: "default", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{{
+			Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,
+			DHCPStart: "192.168.122.2", DHCPEnd: "192.168.122.254",
+			Hosts: []domain.NetworkDHCPHost{{MAC: "52:54:00:12:34:56", IP: "192.168.122.50", Name: "existing"}},
+		}},
+	}
+	tests := []struct {
+		name  string
+		hosts []domain.NetworkDHCPHostCreateSpec
+		want  error
+	}{
+		{name: "existing conflict", hosts: []domain.NetworkDHCPHostCreateSpec{{MAC: "52:54:00:12:34:56", IP: "192.168.122.60"}}, want: domain.ErrConflict},
+		{name: "batch MAC conflict", hosts: []domain.NetworkDHCPHostCreateSpec{{MAC: "52:54:00:AB:CD:EF", IP: "192.168.122.60"}, {MAC: "52:54:00:AB:CD:EF", IP: "192.168.122.70"}}, want: domain.ErrConflict},
+		{name: "batch IP conflict", hosts: []domain.NetworkDHCPHostCreateSpec{{MAC: "52:54:00:AB:CD:EF", IP: "192.168.122.60"}, {MAC: "52:54:00:AB:CD:70", IP: "192.168.122.60"}}, want: domain.ErrConflict},
+		{name: "outside subnet", hosts: []domain.NetworkDHCPHostCreateSpec{{MAC: "52:54:00:AB:CD:EF", IP: "192.168.123.60"}}, want: domain.ErrInvalidInput},
+		{name: "empty", hosts: nil, want: domain.ErrInvalidInput},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{networks: []domain.VirtualNetwork{network}}
+			_, err := New(repository, nil, false).ImportDHCPHosts(context.Background(), ImportNetworkDHCPHostsCommand{Name: "default", Hosts: test.hosts, Request: adminRequest()})
+			if !errors.Is(err, test.want) || repository.called {
+				t.Fatalf("error = %v called=%v", err, repository.called)
+			}
+		})
+	}
+}
+
+func TestDHCPHostCSVRoundTrip(t *testing.T) {
+	network := domain.VirtualNetwork{Name: "default", Addresses: []domain.NetworkAddress{{
+		Family: "ipv4", Address: "192.168.122.1", Prefix: 24,
+		Hosts: []domain.NetworkDHCPHost{
+			{MAC: "52:54:00:12:34:56", IP: "192.168.122.50", Name: "web-01"},
+			{MAC: "52:54:00:ab:cd:ef", IP: "192.168.122.9", Name: "db,01"},
+		},
+	}}}
+	data, err := encodeNetworkDHCPHostsCSV(network)
+	if err != nil {
+		t.Fatalf("encode error = %v", err)
+	}
+	if !strings.HasPrefix(string(data), "mac,ip,name\n") || !strings.Contains(string(data), `"db,01"`) {
+		t.Fatalf("CSV = %s", data)
+	}
+	hosts, err := ParseNetworkDHCPHostCSV(data)
+	if err != nil {
+		t.Fatalf("parse error = %v", err)
+	}
+	if len(hosts) != 2 || hosts[0].IP != "192.168.122.9" || hosts[1].IP != "192.168.122.50" || hosts[0].Name != "db,01" {
+		t.Fatalf("hosts = %+v", hosts)
+	}
+}
+
+func TestParseDHCPHostCSVValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{name: "empty", data: ""},
+		{name: "header only", data: "mac,ip,name\n"},
+		{name: "missing ip", data: "52:54:00:12:34:56\n"},
+		{name: "too many columns", data: "52:54:00:12:34:56,192.168.122.50,web,extra\n"},
+		{name: "malformed quotes", data: `"52:54:00:12:34:56,192.168.122.50`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseNetworkDHCPHostCSV([]byte(test.data)); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

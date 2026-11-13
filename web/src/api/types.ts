@@ -18,6 +18,7 @@ export type Session = {
 
 export type Settings = {
   readOnly: boolean;
+  auditRetentionDays: number;
 };
 
 export type SettingsUpdateInput = {
@@ -115,6 +116,18 @@ export type VMDiskResizeInput = {
   capacityBytes: number;
 };
 
+export type VMDiskAttachInput = {
+  pool: string;
+  volume: string;
+  target?: string;
+  bus?: VMDiskBus;
+};
+
+export type VMNetworkAttachInput = {
+  network: string;
+  model?: VMNICModel;
+};
+
 export type VMFirmware = "bios" | "uefi";
 export type VMDiskBus = "virtio" | "sata" | "scsi";
 export type VMNICModel = "virtio" | "e1000";
@@ -122,6 +135,8 @@ export type VMBootOrder = "auto" | "disk-first" | "cdrom-first";
 
 export type CloudInitInput = {
   userData: string;
+  networkConfig?: string;
+  vendorData?: string;
   pool: string;
 };
 
@@ -175,6 +190,8 @@ export type VMTemplateInput = {
   secureBoot: boolean;
   cloudInit: boolean;
   cloudInitUserData?: string;
+  cloudInitNetworkConfig?: string;
+  cloudInitVendorData?: string;
   autostart: boolean;
   start: boolean;
 };
@@ -356,6 +373,8 @@ export type BackupSchedule = {
   targetPool: string;
   name: string;
   intervalHours: number;
+  scheduleMode: ScheduleMode;
+  dailyTime: string;
   retentionCount: number;
   retentionDays: number;
   enabled: boolean;
@@ -372,6 +391,8 @@ export type BackupScheduleInput = {
   repositoryId: string;
   name: string;
   intervalHours: number;
+  scheduleMode: ScheduleMode;
+  dailyTime: string;
   retentionCount: number;
   retentionDays: number;
   enabled: boolean;
@@ -409,6 +430,22 @@ export type VM = {
   hostname?: string;
   agentConnected: boolean;
   allowedActions: VMAction[];
+  metadata?: VMMetadata;
+};
+
+export type VMMetadata = {
+  vmUuid: string;
+  tags: string[];
+  note: string;
+  owner: string;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export type VMMetadataInput = {
+  tags: string[];
+  note: string;
+  owner: string;
 };
 
 export type SerialConsole = {
@@ -546,9 +583,13 @@ export type VMSnapshotList = {
   total: number;
 };
 
+export type ScheduleMode = "interval" | "daily";
+
 export type SnapshotPolicyInput = {
   name: string;
   intervalMinutes: number;
+  scheduleMode: ScheduleMode;
+  dailyTime: string;
   retention: number;
   enabled: boolean;
 };
@@ -632,6 +673,68 @@ export type HostMetrics = ResourceMetrics & {
 
 export type VMMetrics = ResourceMetrics & {
   uuid: string;
+};
+
+export type MetricSample = {
+  id: number;
+  scope: "host" | "vm";
+  targetId: string;
+  sampledAt: string;
+  cpuPercent: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  diskReadBytesPerSecond: number;
+  diskWriteBytesPerSecond: number;
+  networkRxBytesPerSecond: number;
+  networkTxBytesPerSecond: number;
+};
+
+export type MetricSampleList = {
+  items: MetricSample[];
+  total: number;
+};
+
+export type MetricHistoryFilters = {
+  scope: "host" | "vm";
+  targetId: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
+export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent";
+export type AlertOperator = "gt" | "gte" | "lt" | "lte";
+export type AlertState = "ok" | "pending" | "firing";
+
+export type AlertRule = {
+  id: number;
+  name: string;
+  metric: AlertMetric;
+  operator: AlertOperator;
+  threshold: number;
+  durationMinutes: number;
+  enabled: boolean;
+  webhookUrl: string;
+  lastState: AlertState;
+  lastChangedAt?: string;
+  lastNotifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AlertRuleInput = Omit<AlertRule, "id" | "lastState" | "lastChangedAt" | "lastNotifiedAt" | "createdAt" | "updatedAt">;
+
+export type AlertRuleList = {
+  items: AlertRule[];
+  total: number;
+};
+
+export type SystemInfo = {
+  build: {
+    version: string;
+    commit: string;
+    date: string;
+  };
 };
 
 export type HostDevice = {
@@ -767,6 +870,12 @@ export type NetworkDHCPHostInput = {
   name?: string;
 };
 
+export type NetworkDHCPHostImportResult = {
+  network: VirtualNetwork;
+  imported: number;
+  skipped: number;
+};
+
 export type VirtualNetwork = {
   name: string;
   uuid?: string;
@@ -869,6 +978,7 @@ export type Task = {
   progress: number;
   step: string;
   error?: string;
+  metadata?: Record<string, unknown>;
   actor: string;
   createdAt: string;
   updatedAt: string;

@@ -1,0 +1,44 @@
+name: virtmgr
+
+services:
+  virtmgr:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        VERSION: ${VIRTMGR_VERSION:-local}
+        COMMIT: ${VIRTMGR_COMMIT:-unknown}
+        BUILD_DATE: ${VIRTMGR_BUILD_DATE:-unknown}
+    image: virtmgr:local
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      VIRTMGR_LISTEN: "[::]:8443"
+      VIRTMGR_LIBVIRT_URI: qemu:///system
+      VIRTMGR_DATABASE_PATH: /var/lib/virtmgr/virtmgr.db
+      VIRTMGR_HOST_NAME: ${VIRTMGR_HOST_NAME:-libvirt-host}
+      VIRTMGR_ADMIN_USERNAME: ${VIRTMGR_ADMIN_USERNAME:-admin}
+      VIRTMGR_ADMIN_PASSWORD: ${VIRTMGR_ADMIN_PASSWORD:?set VIRTMGR_ADMIN_PASSWORD in .env}
+      VIRTMGR_SESSION_TTL: ${VIRTMGR_SESSION_TTL:-8h}
+      VIRTMGR_COOKIE_SECURE: ${VIRTMGR_COOKIE_SECURE:-false}
+      VIRTMGR_TRUSTED_PROXIES: ${VIRTMGR_TRUSTED_PROXIES:-}
+      VIRTMGR_READ_ONLY: ${VIRTMGR_READ_ONLY:-true}
+      VIRTMGR_DEMO_MODE: ${VIRTMGR_DEMO_MODE:-false}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - virtmgr-data:/var/lib/virtmgr
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+      # Optional native TLS: mount the certificate directory and set both
+      # VIRTMGR_TLS_CERT_FILE and VIRTMGR_TLS_KEY_FILE below.
+      # - ./tls:/etc/virtmgr/tls:ro
+      # Mount storage directories that VirtMgr must read or write directly.
+      # - /var/lib/libvirt/images:/var/lib/libvirt/images
+    # Match the GID that owns /var/run/libvirt/libvirt-sock on the host.
+    group_add:
+      - "${LIBVIRT_GID:-640}"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  virtmgr-data:

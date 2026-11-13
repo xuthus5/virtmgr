@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
-import { cloudInitValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
+import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
@@ -36,6 +36,8 @@ type FormState = {
   secureBoot: boolean;
   cloudInit: boolean;
   cloudInitUserData: string;
+  cloudInitNetworkConfig: string;
+  cloudInitVendorData: string;
   autostart: boolean;
   start: boolean;
 };
@@ -55,6 +57,8 @@ const initialForm: FormState = {
   secureBoot: false,
   cloudInit: false,
   cloudInitUserData: "",
+  cloudInitNetworkConfig: "",
+  cloudInitVendorData: "",
   autostart: false,
   start: false,
 };
@@ -141,6 +145,8 @@ export function VMCreatePage() {
       secureBoot: defaults.secureBoot,
       cloudInit: defaults.cloudInit,
       cloudInitUserData: defaults.cloudInitUserData,
+      cloudInitNetworkConfig: defaults.cloudInitNetworkConfig,
+      cloudInitVendorData: defaults.cloudInitVendorData,
       autostart: defaults.autostart,
       start: defaults.start,
     }));
@@ -166,7 +172,7 @@ export function VMCreatePage() {
     event.preventDefault();
     if (!canCreate) return;
     setError("");
-    const cloudInitError = form.cloudInit ? cloudInitValidationError(form.cloudInitUserData) : "";
+    const cloudInitError = form.cloudInit ? cloudInitBundleValidationError(form.cloudInitUserData, form.cloudInitNetworkConfig, form.cloudInitVendorData) : "";
     if (cloudInitError) {
       setError(cloudInitError);
       return;
@@ -184,7 +190,12 @@ export function VMCreatePage() {
       bootOrder: form.bootOrder,
       firmware: form.firmware,
       secureBoot: form.secureBoot,
-      cloudInit: form.cloudInit ? { userData: form.cloudInitUserData.trim(), pool: diskPool } : undefined,
+      cloudInit: form.cloudInit ? {
+        userData: form.cloudInitUserData.trim(),
+        networkConfig: form.cloudInitNetworkConfig.trim() || undefined,
+        vendorData: form.cloudInitVendorData.trim() || undefined,
+        pool: diskPool,
+      } : undefined,
       autostart: form.autostart,
       start: form.start,
     });
@@ -373,7 +384,16 @@ export function VMCreatePage() {
                   </span>
                 </label>
                 {form.cloudInit ? (
-                  <CloudInitEditor prefix="vm-cloud-init" value={form.cloudInitUserData} onChange={(value) => update("cloudInitUserData", value)} disabled={!canCreate} />
+                  <CloudInitEditor
+                    prefix="vm-cloud-init"
+                    value={form.cloudInitUserData}
+                    onChange={(value) => update("cloudInitUserData", value)}
+                    networkConfig={form.cloudInitNetworkConfig}
+                    onNetworkConfigChange={(value) => update("cloudInitNetworkConfig", value)}
+                    vendorData={form.cloudInitVendorData}
+                    onVendorDataChange={(value) => update("cloudInitVendorData", value)}
+                    disabled={!canCreate}
+                  />
                 ) : null}
                 {form.cloudInit ? <p className="text-xs text-muted-foreground">seed ISO 将写入存储池 <span className="font-medium text-foreground">{diskPool || "-"}</span>；审计只记录启用状态和字节数，不保存用户数据内容。</p> : null}
               </div>
