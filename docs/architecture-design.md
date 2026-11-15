@@ -56,7 +56,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- 镜像库第一阶段：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理已有 qcow2/raw 存储卷的登记。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 复制来源卷为独立系统盘，目标路径不得与来源相同；失败时清理已克隆磁盘和新域。当前只提供全量克隆，不支持链接克隆、镜像上传、格式转换或跨池自动搬移。
+- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 复制来源卷为独立系统盘，目标路径不得与来源相同；失败时清理已克隆磁盘和新域。当前只提供全量克隆，不支持链接克隆、格式转换或跨池自动搬移。
 - Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户和固定命令进程管理；手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
@@ -549,7 +549,7 @@ type VMAction =
 
 ### 4.2 存储
 
-当前实现通过 libvirt Storage Pool/Volume API 读取存储池和卷，并支持目录池（dir）的生命周期：`StoragePoolDefineXML` 定义、启动/停止、`Refresh` 刷新和删除未激活定义。池名和绝对目标路径由服务层校验；删除只移除 libvirt 定义，不递归删除宿主机目录或卷文件。活跃池使用 `StorageVolCreateXML` 创建 qcow2/raw 卷，并在删除前扫描所有域的磁盘来源，确认没有虚拟机引用后才调用卷删除。整个流程不直接访问宿主机文件系统。创建请求包含卷名、格式和字节容量；卷名必须是安全文件名并以对应扩展名结尾。`StorageVolume` 暂未返回 `attachedTo`、`bootable` 等关联推导字段；占用信息在删除时实时校验，不落库。
+当前实现通过 libvirt Storage Pool/Volume API 读取存储池和卷，并支持目录池（dir）的生命周期：`StoragePoolDefineXML` 定义、启动/停止、`Refresh` 刷新和删除未激活定义。池名和绝对目标路径由服务层校验；删除只移除 libvirt 定义，不递归删除宿主机目录或卷文件。活跃池使用 `StorageVolCreateXML` 创建 qcow2/raw 卷，并在创建、上传和导入前按格式估算所需空间与 512 MiB 安全余量，剩余容量不足时返回 `STORAGE_INSUFFICIENT`。卷列表通过域磁盘来源推导 `usedBy`，删除前再次扫描所有域并拒绝仍在使用的卷。整个流程不直接访问宿主机文件系统。创建请求包含卷名、格式和字节容量；卷名必须是安全文件名并以对应扩展名结尾。
 
 ```ts
 type StoragePool = {
