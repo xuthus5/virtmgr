@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, LoaderCircle, Play, Plus, RotateCcw, Search, Star } from "lucide-react";
+import { AlertTriangle, LoaderCircle, Play, Plus, RotateCcw, Search, Star, Upload } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { VMAction, VMState } from "@/api/types";
 import { StatusBadge, stateLabel } from "@/components/feedback/status-badge";
@@ -148,8 +148,8 @@ export function VMsPage() {
         breadcrumb="总览 / 虚拟机"
         description="查看由当前 libvirt 主机管理的全部域。"
         actions={canOperate
-          ? <Button asChild><Link to="/vms/new"><Plus className="h-4 w-4" />新建虚拟机</Link></Button>
-          : <Button disabled title={disabledReason}><Plus className="h-4 w-4" />新建虚拟机</Button>}
+          ? <><Button asChild variant="outline"><Link to="/vms/import" data-testid="vm-import-link"><Upload className="h-4 w-4" />导入虚拟机</Link></Button><Button asChild><Link to="/vms/new"><Plus className="h-4 w-4" />新建虚拟机</Link></Button></>
+          : <><Button disabled title={disabledReason} data-testid="vm-import-link"><Upload className="h-4 w-4" />导入虚拟机</Button><Button disabled title={disabledReason}><Plus className="h-4 w-4" />新建虚拟机</Button></>}
       />
       <Card>
         <CardContent className="p-0">
@@ -217,7 +217,7 @@ export function VMsPage() {
           {readOnly ? (
             <div className="flex items-start gap-3 border-b border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning" data-testid="vm-read-only-notice" role="status">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>只读模式已开启，批量操作和新虚拟机创建已禁用。管理员可在系统设置中关闭只读模式。</p>
+              <p>只读模式已开启，批量操作、新虚拟机创建和磁盘导入已禁用。管理员可在系统设置中关闭只读模式。</p>
             </div>
           ) : null}
 

@@ -16,6 +16,7 @@ const (
 	VMConfigSourceExternal       VMConfigVersionSource = "external"
 	VMConfigSourceCreate         VMConfigVersionSource = "create"
 	VMConfigSourceClone          VMConfigVersionSource = "clone"
+	VMConfigSourceImport         VMConfigVersionSource = "import"
 	VMConfigSourceBackupRestore  VMConfigVersionSource = "backup_restore"
 	VMConfigSourceRollback       VMConfigVersionSource = "rollback"
 	VMConfigSourcePreRollback    VMConfigVersionSource = "pre_rollback"
@@ -29,7 +30,7 @@ func ValidVMConfigVersionSource(value VMConfigVersionSource) bool {
 	switch value {
 	case VMConfigSourceManualXML, VMConfigSourceResources, VMConfigSourcePassthrough,
 		VMConfigSourceSnapshotRevert, VMConfigSourceExternal, VMConfigSourceCreate,
-		VMConfigSourceClone, VMConfigSourceBackupRestore, VMConfigSourceRollback,
+		VMConfigSourceClone, VMConfigSourceImport, VMConfigSourceBackupRestore, VMConfigSourceRollback,
 		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceBaseline:
 		return true
 	case VMConfigSourceDiskHotplug, VMConfigSourceNetworkHotplug:

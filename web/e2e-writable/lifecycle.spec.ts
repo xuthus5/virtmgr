@@ -1288,3 +1288,69 @@ test("任务取消确认交互在安全检查点生效", async ({ page }) => {
   await expect(page.getByTestId("tasks-notice")).toContainText("已请求取消任务 task-demo-clone");
   await expect(page.getByTestId("tasks-notice")).toContainText("安全检查点");
 });
+
+test("可写模式导入 QCOW2 磁盘并保留来源卷", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByTestId("vm-import-link").click();
+  await expect(page).toHaveURL(/\/vms\/import$/);
+  await expect(page.getByRole("heading", { name: "导入虚拟机", exact: true })).toBeVisible();
+
+  await page.getByLabel("来源存储池", { exact: true }).selectOption("default");
+  await page.getByLabel("来源磁盘或 ISO", { exact: true }).selectOption("demo-db-01.qcow2");
+  await page.getByLabel("目标存储池", { exact: true }).selectOption("default");
+  await page.getByLabel("名称", { exact: true }).fill("e2e-import-01");
+  await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
+  await expect(page.getByText("default/e2e-import-01-disk.qcow2", { exact: true })).toBeVisible();
+  await page.getByTestId("vm-import-submit").click();
+  await expect(page.getByTestId("vm-import-result")).toContainText("导入任务已创建");
+
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  const importTask = page.locator('[data-testid^="task-row-"]').filter({ hasText: "导入虚拟机" }).first();
+  await expect(importTask).toContainText("已完成", { timeout: 10_000 });
+  await expect(importTask).toContainText("e2e-import-01");
+
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByRole("link", { name: "e2e-import-01", exact: true }).click();
+  await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-import-01-disk.qcow2");
+
+  await page.getByRole("link", { name: "存储", exact: true }).click();
+  await expect(page.getByText("demo-db-01.qcow2", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("e2e-import-01-disk.qcow2", { exact: true }).first()).toBeVisible();
+
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  await page.getByTestId("audit-action-filter").selectOption("vm.import");
+  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
+  const auditRow = page.locator('[data-testid^="audit-row-"]').first();
+  await expect(auditRow).toContainText("导入虚拟机");
+  await expect(auditRow).toContainText("成功");
+  await expect(auditRow).toContainText("e2e-import-01");
+});
+
+test("可写模式使用 ISO 安装介质导入并创建空白系统盘", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByTestId("vm-import-link").click();
+  await expect(page).toHaveURL(/\/vms\/import$/);
+
+  await page.getByLabel("来源存储池", { exact: true }).selectOption("iso-store");
+  await page.getByLabel("来源磁盘或 ISO", { exact: true }).selectOption("debian-13-netinst.iso");
+  await page.getByLabel("目标存储池", { exact: true }).selectOption("default");
+  await page.getByLabel("名称", { exact: true }).fill("e2e-iso-import-01");
+  await expect(page.getByTestId("vm-import-iso-disk-capacity")).toBeVisible();
+  await page.getByLabel("系统盘容量 (GiB)", { exact: true }).fill("24");
+  await expect(page.getByTestId("vm-import-copy-notice")).toContainText("新建空白系统盘");
+  await expect(page.getByText("default/e2e-iso-import-01-disk.qcow2", { exact: true })).toBeVisible();
+  await page.getByTestId("vm-import-submit").click();
+  await expect(page.getByTestId("vm-import-result")).toContainText("导入任务已创建");
+
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  const importTask = page.locator('[data-testid^="task-row-"]').filter({ hasText: "导入虚拟机" }).first();
+  await expect(importTask).toContainText("已完成", { timeout: 10_000 });
+  await expect(importTask).toContainText("e2e-iso-import-01");
+
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByRole("link", { name: "e2e-iso-import-01", exact: true }).click();
+  await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-iso-import-01-disk.qcow2");
+  await expect(page.getByTestId("vm-disk-source").nth(1)).toContainText("debian-13-netinst.iso");
+});

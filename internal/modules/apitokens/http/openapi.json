@@ -51,6 +51,18 @@
       "get": { "operationId": "listVMs", "summary": "列出虚拟机", "responses": { "200": { "description": "虚拟机列表" } } },
       "post": { "operationId": "createVM", "summary": "创建虚拟机；支持 imageId 从镜像库克隆系统盘", "responses": { "201": { "description": "虚拟机已创建" }, "400": { "description": "参数无效" } } }
     },
+    "/vms/import": {
+      "post": {
+        "operationId": "importVM",
+        "summary": "从 RAW/QCOW2 磁盘或 ISO 安装介质导入虚拟机",
+        "description": "RAW/QCOW2 来源会复制为 {name}-disk.{format}；ISO 来源会保留为只读安装介质，新建 {name}-disk.qcow2 空白系统盘并设置为光盘优先启动。diskCapacityBytes 仅用于 ISO 模式，默认 20 GiB。来源卷保留不变，导入创建 vm.import 可取消任务。OVA、OVF、VMDK、VHDX 和格式转换不在当前范围内。",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["name", "sourcePool", "sourceVolume", "vcpus", "memoryMiB", "network", "firmware", "autostart", "start"], "properties": { "name": { "type": "string" }, "sourcePool": { "type": "string" }, "sourceVolume": { "type": "string" }, "targetPool": { "type": "string" }, "vcpus": { "type": "integer" }, "memoryMiB": { "type": "integer" }, "diskCapacityBytes": { "type": "integer", "minimum": 1073741824, "maximum": 17592186044416, "description": "ISO 模式下的空白系统盘容量；磁盘模式忽略此字段" }, "diskBus": { "type": "string", "enum": ["virtio", "sata", "scsi"] }, "network": { "type": "string" }, "nicModel": { "type": "string", "enum": ["virtio", "e1000"] }, "firmware": { "type": "string", "enum": ["bios", "uefi"] }, "secureBoot": { "type": "boolean" }, "guestAgent": { "type": "boolean" }, "autostart": { "type": "boolean" }, "start": { "type": "boolean" } } } } }
+        },
+        "responses": { "202": { "description": "导入任务已创建", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } }, "400": { "description": "参数无效或格式不支持" }, "403": { "description": "无写权限或系统只读" }, "409": { "description": "虚拟机或目标磁盘已存在" } }
+      }
+    },
     "/vms/{uuid}": {
       "get": { "operationId": "getVM", "summary": "读取虚拟机详情", "parameters": [{ "name": "uuid", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "虚拟机详情" } } },
       "delete": { "operationId": "deleteVM", "summary": "删除关机状态的持久虚拟机", "responses": { "204": { "description": "已删除" } } }

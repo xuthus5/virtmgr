@@ -70,3 +70,22 @@ test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", a
   await expect(page.getByRole("heading", { name: "镜像库", exact: true })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "ubuntu-24.04-cloud-base" })).toBeVisible();
 });
+
+test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/vms/import");
+  await expect(page.getByTestId("vm-import-page")).toBeVisible();
+  await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `/vms/import ${width}px document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `/vms/import ${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+});

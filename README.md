@@ -52,9 +52,10 @@ All screenshots use the built-in demo backend, not production host data.
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains by state, tag, and owner; persist filters locally and favorite frequently used VMs; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
 | VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, full clone from a registered image, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
+| VM import | Import a RAW/QCOW2 system disk or ISO installation media from an active storage pool, or upload one first; copy disk images to an independent volume, or create a blank QCOW2 system disk and mount the ISO as a read-only boot CD-ROM |
 | VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, structured Guest Agent information, controlled file/password/SSH/process actions, policy health history, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
-| VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
+| VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, import, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with interval or daily-time retention policies |
@@ -311,7 +312,7 @@ Representative endpoint groups include:
 | Session | `POST /api/v1/session`, `GET /api/v1/session`, `DELETE /api/v1/session` |
 | Automation | `GET/POST /api/v1/api-tokens`, `DELETE /api/v1/api-tokens/{id}`, `GET /api/v1/openapi.json` |
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
-| Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/guest-agent`, `/guest-agent/files`, `/guest-agent/password`, `/guest-agent/ssh-keys`, `/guest-agent/processes`, `/guest-agent/users`, `/guest-agent/policy`, `/guest-agent/health`, `/devices`, `/actions/{action}` |
+| Virtual machines | `/api/v1/vms`, `/api/v1/vms/import`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/guest-agent`, `/guest-agent/files`, `/guest-agent/password`, `/guest-agent/ssh-keys`, `/guest-agent/processes`, `/guest-agent/users`, `/guest-agent/policy`, `/guest-agent/health`, `/devices`, `/actions/{action}` |
 | VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/console/send-key`, `/console`, `/serial-console`, `/export` |
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
@@ -374,6 +375,7 @@ scripts/                  Development and E2E helpers
 - Graphical consoles currently support VNC only; SPICE is not supported. Serial consoles support libvirt PTY devices, with one active browser session per serial device.
 - Container deployment requires the host libvirt socket and a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
+- VM import supports active-pool QCOW2/RAW system disks and ISO installation media. ISO imports create a blank system disk and retain the source ISO as a read-only CD-ROM. OVA/OVF, VMDK, VHDX, and format conversion are not implemented.
 - The image library currently supports full clones only. Linked clones, image uploads, format conversion, and cross-pool automatic movement are not implemented.
 - Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
 - Alerts use the existing rule-level Webhook only. Notification centers, SMTP, Slack/Teams, PagerDuty, alert silencing, and escalation policies are not provided.

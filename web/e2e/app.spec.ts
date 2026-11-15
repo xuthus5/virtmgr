@@ -598,10 +598,16 @@ test("只读模式展示定时快照策略但禁用变更", async ({ page }) => 
   await expect(page.getByTestId("vm-snapshot-policy-form")).toHaveCount(0);
 });
 
-test("只读模式禁用新建虚拟机", async ({ page }) => {
+test("只读模式禁用新建和导入虚拟机", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await expect(page.getByRole("button", { name: "新建虚拟机", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("vm-import-link")).toBeDisabled();
+  await page.goto("/vms/import");
+  await expect(page.getByRole("heading", { name: "导入虚拟机", exact: true })).toBeVisible();
+  await expect(page.getByTestId("vm-import-disabled")).toContainText("只读模式");
+  await expect(page.getByTestId("vm-import-submit")).toBeDisabled();
+  await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
 });
 
 test("只读模式展示备份中心并禁用写操作", async ({ page }) => {

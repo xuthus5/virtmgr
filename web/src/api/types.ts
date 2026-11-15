@@ -210,6 +210,24 @@ export type VMCreateInput = {
   start: boolean;
 };
 
+export type VMImportInput = {
+  name: string;
+  sourcePool: string;
+  sourceVolume: string;
+  targetPool: string;
+  vcpus: number;
+  memoryMiB: number;
+  diskCapacityBytes?: number;
+  diskBus: VMDiskBus;
+  network: string;
+  nicModel: VMNICModel;
+  firmware: VMFirmware;
+  secureBoot: boolean;
+  guestAgent: boolean;
+  autostart: boolean;
+  start: boolean;
+};
+
 export type VMTemplateInput = {
   name: string;
   description: string;
@@ -544,6 +562,7 @@ export type VMConfigVersionSource =
   | "external"
   | "create"
   | "clone"
+  | "import"
   | "backup_restore"
   | "rollback"
   | "pre_rollback"

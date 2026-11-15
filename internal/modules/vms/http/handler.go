@@ -170,6 +170,28 @@ func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusCreated, vm)
 }
 
+func (h *Handler) Import(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMImportSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	task, err := h.service.Import(r.Context(), vmsapp.ImportCommand{
+		Spec:    spec,
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, task)
+}
+
 func (h *Handler) Clone(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VMCloneSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -553,6 +575,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
 		mutating.Post("/vms", h.Create)
+		mutating.Post("/vms/import", h.Import)
 		mutating.Post("/vms/batch-actions", h.BatchAction)
 		mutating.Post("/vms/{uuid}/clone", h.Clone)
 		mutating.Post("/vms/{uuid}/backups", h.Backup)

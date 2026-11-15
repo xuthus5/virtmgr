@@ -193,6 +193,28 @@ func (spec VMCreateSpec) GuestAgentEnabled() bool {
 	return spec.GuestAgent == nil || *spec.GuestAgent
 }
 
+type VMImportSpec struct {
+	Name              string     `json:"name"`
+	SourcePool        string     `json:"sourcePool"`
+	SourceVolume      string     `json:"sourceVolume"`
+	TargetPool        string     `json:"targetPool,omitempty"`
+	VCPUs             uint       `json:"vcpus"`
+	MemoryMiB         uint64     `json:"memoryMiB"`
+	DiskCapacityBytes uint64     `json:"diskCapacityBytes,omitempty"`
+	DiskBus           VMDiskBus  `json:"diskBus,omitempty"`
+	Network           string     `json:"network"`
+	NICModel          VMNICModel `json:"nicModel,omitempty"`
+	Firmware          VMFirmware `json:"firmware"`
+	SecureBoot        bool       `json:"secureBoot"`
+	GuestAgent        *bool      `json:"guestAgent,omitempty"`
+	Autostart         bool       `json:"autostart"`
+	Start             bool       `json:"start"`
+}
+
+func (spec VMImportSpec) GuestAgentEnabled() bool {
+	return spec.GuestAgent == nil || *spec.GuestAgent
+}
+
 type VMResourcesSpec struct {
 	VCPUs     uint   `json:"vcpus"`
 	MemoryMiB uint64 `json:"memoryMiB"`

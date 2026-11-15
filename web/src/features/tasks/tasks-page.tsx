@@ -29,6 +29,7 @@ const statusLabels: Record<TaskStatus, string> = {
 const kindLabels: Record<string, string> = {
   "vm.create": "创建虚拟机",
   "vm.clone": "克隆虚拟机",
+  "vm.import": "导入虚拟机",
   "vm.backup": "备份虚拟机",
   "vm.backup.verify": "校验虚拟机备份",
   "vm.backup.restore": "从备份恢复虚拟机",
@@ -51,6 +52,7 @@ const targetLabels: Record<string, string> = {
   backup: "备份",
   vm_snapshot: "快照",
   storage_volume: "存储卷",
+  vm_import: "虚拟机导入",
   network: "虚拟网络",
 };
 

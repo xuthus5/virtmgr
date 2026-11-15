@@ -8,6 +8,7 @@ export const vmConfigVersionSourceLabels: Record<VMConfigVersionSource, string> 
   external: "外部工具修改",
   create: "创建虚拟机",
   clone: "克隆虚拟机",
+  import: "导入虚拟机",
   backup_restore: "备份恢复",
   rollback: "XML 版本回滚",
   pre_rollback: "回滚前自动存档",

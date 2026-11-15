@@ -52,9 +52,10 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 总览 | 宿主机 CPU、内存、libvirt 版本、虚拟机数量、资源分配率、异常提醒和近期虚拟机状态 |
 | 虚拟机 | 搜索和筛选域；按状态、标签、负责人筛选，本地保存筛选并收藏常用虚拟机；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
 | 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、从已登记镜像全量克隆、磁盘总线（virtio/SATA/SCSI）、网卡型号（virtio/e1000）、启动顺序、网络选择、ISO、自动启动，以及支持 user-data、network-config、vendor-data 的 Cloud-init seed ISO |
+| 导入虚拟机 | 从活跃存储池选择或上传 RAW/QCOW2 系统盘或 ISO 安装介质；系统盘复制为独立卷，ISO 则新建空白 QCOW2 系统盘并以光盘优先启动，同时保留来源卷 |
 | 虚拟机详情 | 标签/备注/负责人、硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、历史指标、分网卡吞吐、磁盘、网卡、结构化 Guest Agent 信息与受控动作、文件/密码/SSH/进程管理、期望状态健康历史、快照和域 XML |
 | Web 控制台 | 页面内嵌或独立窗口打开 noVNC / xterm.js 控制台，支持图形与串口切换、Cockpit 风格组合键、缩放、断开重连、全屏和分离窗口；会话均通过一次性 token 与服务端 WebSocket 代理 |
-| 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整、磁盘扩容，以及数据磁盘和网卡热插拔 |
+| 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、导入、冷备份、自动启动、CPU/内存调整、磁盘扩容，以及数据磁盘和网卡热插拔 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
 | 快照 | 创建、回滚、删除快照，并按固定间隔或每日时刻和保留策略配置定时快照 |
@@ -312,7 +313,7 @@ API 位于 `/api/v1`，使用 JSON。浏览器使用 Cookie，写操作还需要
 | 会话 | `POST /api/v1/session`、`GET /api/v1/session`、`DELETE /api/v1/session` |
 | 自动化 | `GET/POST /api/v1/api-tokens`、`DELETE /api/v1/api-tokens/{id}`、`GET /api/v1/openapi.json` |
 | 总览与宿主机 | `/api/v1/overview`、`/api/v1/host`、`/api/v1/host/devices`、`/api/v1/host/metrics` |
-| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/guest-agent`、`/guest-agent/files`、`/guest-agent/password`、`/guest-agent/ssh-keys`、`/guest-agent/processes`、`/guest-agent/users`、`/guest-agent/policy`、`/guest-agent/health`、`/devices`、`/actions/{action}` |
+| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/import`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/guest-agent`、`/guest-agent/files`、`/guest-agent/password`、`/guest-agent/ssh-keys`、`/guest-agent/processes`、`/guest-agent/users`、`/guest-agent/policy`、`/guest-agent/health`、`/devices`、`/actions/{action}` |
 | 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/console/send-key`、`/console`、`/serial-console`、`/export` |
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
@@ -375,6 +376,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 图形控制台当前仅支持 VNC，不支持 SPICE。串口控制台支持 libvirt PTY 设备，同一串口设备同时只允许一个交互会话。
 - 容器部署需要挂载宿主机 libvirt socket，并使用与 socket 组 ID 匹配的补充组；需要直接访问存储路径时还应以相同路径挂载对应目录。
 - 备份仅支持持久虚拟机的冷全量备份和 `file` 后端磁盘；在线/增量备份、原地覆盖恢复、跨宿主机复制和浏览器下载备份均未实现。
+- 虚拟机导入支持活跃存储池中的 QCOW2/RAW 系统盘和 ISO 安装介质；ISO 模式会创建空白系统盘并保留 ISO 作为只读光驱。不支持 OVA/OVF、VMDK、VHDX 和格式转换。
 - 镜像库当前只支持全量克隆；链接克隆、镜像上传、格式转换和跨池自动搬移尚未实现。
 - 自动备份校验和夏令时特殊处理不在当前范围；每日调度使用服务端本地时区。
 - 告警仅支持现有规则级 Webhook；不提供通知中心、SMTP、Slack/Teams、PagerDuty、通知静默或升级策略。

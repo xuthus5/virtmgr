@@ -17,6 +17,7 @@ export function useStorageVolumesQuery(pool: string) {
     queryKey: ["storage", "volumes", pool],
     queryFn: () => api.storageVolumes(pool),
     staleTime: 15_000,
+    refetchOnMount: "always",
     enabled: Boolean(pool),
   });
 }

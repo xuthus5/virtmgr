@@ -334,6 +334,7 @@ func newHandlerRouter(repository *handlerRepository, session *domain.Session, cs
 		vmsapp.WithConsoleTokens(consoletoken.New(time.Minute)),
 		vmsapp.WithTaskRecorder(handlerTaskRecorder{}),
 		vmsapp.WithMetrics(handlerMetrics{}),
+		vmsapp.WithImportVolumes(handlerImportVolumes{}),
 	))
 	handler.Mount(router, func(next stdhttp.Handler) stdhttp.Handler {
 		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

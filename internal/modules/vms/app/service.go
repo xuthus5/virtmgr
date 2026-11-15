@@ -86,6 +86,13 @@ type ImageVolumeRepository interface {
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 }
 
+type ImportVolumeRepository interface {
+	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
+	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
+	CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error)
+	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
+}
+
 type TaskRecorder interface {
 	Start(ctx context.Context, kind, targetKind, targetID, actor, step string) (string, error)
 	Progress(ctx context.Context, id string, progress int, step string) error
@@ -108,6 +115,7 @@ type Service struct {
 	guestAgentData GuestAgentDataCleaner
 	images         ImageRepository
 	imageVolumes   ImageVolumeRepository
+	importVolumes  ImportVolumeRepository
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -141,6 +149,12 @@ func WithImages(repository ImageRepository, volumes ImageVolumeRepository) Optio
 	return func(service *Service) {
 		service.images = repository
 		service.imageVolumes = volumes
+	}
+}
+
+func WithImportVolumes(repository ImportVolumeRepository) Option {
+	return func(service *Service) {
+		service.importVolumes = repository
 	}
 }
 
@@ -203,6 +217,11 @@ type MutationContext struct {
 
 type CreateCommand struct {
 	Spec    domain.VMCreateSpec
+	Request MutationContext
+}
+
+type ImportCommand struct {
+	Spec    domain.VMImportSpec
 	Request MutationContext
 }
 

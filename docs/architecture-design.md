@@ -49,6 +49,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 物理主机页读取宿主机、存储池、虚拟网络和虚拟机分配汇总，并展示异常提醒与容量使用率。
 - 物理主机设备：`GET /host/devices` 读取 libvirt 节点设备，解析 PCI、USB、网络、块设备和 DRM 能力；主机页展示设备地址、厂商/型号、驱动和在线状态。
 - 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件、安全启动和硬件建模参数进入创建审计，并从运行态域 XML 回读。
+- 导入虚拟机：`POST /vms/import` 接收 `name`、`sourcePool`、`sourceVolume`、可选 `targetPool`、`diskCapacityBytes` 和硬件参数。来源与目标池必须活跃；QCOW2/RAW 系统盘复制为 `${name}-disk.${format}`，ISO 则保留为只读安装介质、创建 `${name}-disk.qcow2` 空白系统盘并使用光盘优先启动，默认 20 GiB、可配置 1-16384 GiB。OVA/OVF、VMDK、VHDX 和格式转换不支持。预检校验名称与目标卷冲突后创建 `vm.import` 可取消任务并定义持久域。来源卷始终保留；失败或安全检查点取消会清理新建目标卷，若域已创建则先移除新域。成功写入 `vm.import` 审计并采集 `import` 配置版本；取消不会强杀正在执行的 libvirt 操作，会在下一个检查点停止。
 - Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
 - 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径、可选镜像绑定和启动策略。模板只保存镜像引用，不拥有镜像或系统盘；新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
@@ -68,7 +69,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）创建、启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。
 - 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离网络、启停网络并删除未激活网络。模式、地址推导和删除约束由后端校验，写操作记录审计。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
-- 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、冷备份相关任务和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
+- 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、`vm.import`、冷备份相关任务和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆、导入或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
 - 控制台：Operator/Admin 可在虚拟机详情内嵌或独立窗口中打开 noVNC 与 xterm.js；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD` 或 console stream，并在打开时记录审计。
 - 域 XML：`GET /api/v1/vms/{uuid}/xml?format=live|config` 默认 live，使用 `DOMAIN_XML_INACTIVE` 读取 config；Admin 可通过 `PUT /api/v1/vms/{uuid}/xml` 在可写模式编辑持久配置，服务端锁定名称/UUID、拒绝 QEMU hook 命名空间，并以 `DOMAIN_DEFINE_VALIDATE` 校验后定义，审计不保存 XML 正文。

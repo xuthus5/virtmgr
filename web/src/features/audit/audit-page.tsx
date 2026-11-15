@@ -16,6 +16,7 @@ const pageSize = 20;
 const actions = [
   { value: "vm.create", label: "创建虚拟机" },
   { value: "vm.clone", label: "克隆虚拟机" },
+  { value: "vm.import", label: "导入虚拟机" },
   { value: "vm.backup", label: "备份虚拟机" },
   { value: "backup.create", label: "创建备份" },
   { value: "backup.verify", label: "校验备份" },

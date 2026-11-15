@@ -15,6 +15,7 @@ import { SettingsPage } from "@/features/settings/settings-page";
 import { TasksPage } from "@/features/tasks/tasks-page";
 import { TemplatesPage } from "@/features/templates/templates-page";
 import { VMCreatePage } from "@/features/vms/vm-create-page";
+import { VMImportPage } from "@/features/vms/vm-import-page";
 import { VMsPage } from "@/features/vms/vms-page";
 import { UsersPage } from "@/features/users/users-page";
 
@@ -64,6 +65,7 @@ const vmCreateRoute = createRoute({
   },
   component: VMCreatePage,
 });
+const vmImportRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms/import", component: VMImportPage });
 const templatesRoute = createRoute({ getParentRoute: () => appRoute, path: "/templates", component: TemplatesPage });
 const imagesRoute = createRoute({ getParentRoute: () => appRoute, path: "/images", component: ImagesPage });
 const storageRoute = createRoute({ getParentRoute: () => appRoute, path: "/storage", component: StoragePage });
@@ -104,7 +106,7 @@ const vncConsoleRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   loginRoute,
   vncConsoleRoute,
-  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
+  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmImportRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
 ]);
 
 export const router = createRouter({
