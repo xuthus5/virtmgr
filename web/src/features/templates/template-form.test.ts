@@ -15,6 +15,7 @@ const template: VMTemplate = {
   secureBoot: true,
   cloudInit: true,
   cloudInitUserData: "#cloud-config\n",
+  guestAgent: true,
   autostart: true,
   start: false,
   createdAt: "2026-01-01T00:00:00Z",
@@ -38,7 +39,7 @@ describe("template form model", () => {
     const defaults = templateVMCreateDefaults(template);
     expect(defaults).toMatchObject({
       vcpus: 4, memoryMiB: 4096, diskFormat: "qcow2", network: "default",
-      firmware: "uefi", secureBoot: true, cloudInit: true, autostart: true, start: false,
+      firmware: "uefi", secureBoot: true, cloudInit: true, guestAgent: true, autostart: true, start: false,
     });
     expect(defaults.cloudInitUserData).toContain("#cloud-config");
     expect(defaults).not.toHaveProperty("name");

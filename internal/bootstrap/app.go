@@ -76,6 +76,7 @@ type App struct {
 	backupScheduler *backupsapp.Service
 	configVersions  *configversionsapp.Service
 	monitoring      *monitoringapp.Service
+	guestAgent      *guestagentapp.Service
 	auditRetention  *runtimeconfig.AuditRetention
 	eventBus        *eventbus.Bus
 }
@@ -166,8 +167,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store)))
-	guestAgentHandler := guestagenthttp.New(guestagentapp.New(backend, store, cfg.ReadOnly, guestagentapp.WithReadOnlyMode(mode)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store)))
+	guestAgentService := guestagentapp.New(backend, store, cfg.ReadOnly,
+		guestagentapp.WithReadOnlyMode(mode),
+		guestagentapp.WithPolicyRepository(store),
+		guestagentapp.WithTaskRecorder(taskRecorder),
+	)
+	guestAgentHandler := guestagenthttp.New(guestAgentService)
 	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
@@ -211,7 +217,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, monitoring: monitoringService, auditRetention: auditRetention, eventBus: eventBus}, nil
+	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, monitoring: monitoringService, guestAgent: guestAgentService, auditRetention: auditRetention, eventBus: eventBus}, nil
 }
 
 func (a *App) Handler() stdhttp.Handler { return a.handler }
@@ -237,6 +243,7 @@ func (a *App) Run(ctx context.Context) error {
 	go a.scheduler.Run(ctx)
 	go a.backupScheduler.Run(ctx)
 	go a.monitoring.Run(ctx)
+	go a.runGuestAgentHealth(ctx)
 	go a.cleanupExpiredSessions(ctx)
 	go a.runAuditRetention(ctx)
 	scheme := "http"
@@ -254,6 +261,47 @@ func (a *App) Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (a *App) runGuestAgentHealth(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	prune := func() {
+		if err := a.guestAgent.PruneHealthHistory(ctx, time.Now().UTC().Add(-7*24*time.Hour)); err != nil && !errors.Is(err, context.Canceled) {
+			a.logger.Warn("guest_agent_health_cleanup_failed", "error", err)
+		}
+	}
+	prune()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.guestAgent.EnsureHealthPolicies(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				a.logger.Warn("guest_agent_policy_sync_failed", "error", err)
+			}
+			changes, err := a.guestAgent.CheckHealth(ctx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				a.logger.Warn("guest_agent_health_check_failed", "error", err)
+				continue
+			}
+			for _, change := range changes {
+				severity := "warning"
+				kind := "guest_agent_degraded"
+				message := "Guest Agent 连续健康检查失败"
+				if change.Kind == "recovered" {
+					severity = "info"
+					kind = "guest_agent_recovered"
+					message = "Guest Agent 已恢复连接"
+				}
+				a.eventBus.Publish(domain.SystemEvent{
+					Source: "virtmgr", Kind: kind, Severity: severity, TargetKind: "vm",
+					TargetID: change.VMUUID, Message: message,
+					Detail: map[string]any{"state": change.State, "failures": change.Failures, "lastError": change.LastError},
+				})
+			}
+		}
+	}
 }
 
 func (a *App) runAuditRetention(ctx context.Context) {

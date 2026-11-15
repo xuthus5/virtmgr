@@ -2,6 +2,7 @@ package libvirtbackend
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -29,6 +30,59 @@ func TestGuestAgentCapabilitiesFromGuestInfo(t *testing.T) {
 	}
 	if !capabilities.Shutdown || !capabilities.Reboot || !capabilities.TimeSync || !capabilities.Trim || !capabilities.Quiesce {
 		t.Fatalf("action capabilities = %+v", capabilities)
+	}
+}
+
+func TestGuestAgentExtendedCapabilitiesAndParsers(t *testing.T) {
+	var parsed guestInfoResponse
+	if err := decodeGuestAgentResponse(`{"return":{"version":"10.2.2","supported_commands":[
+  {"name":"guest-file-open","enabled":true},{"name":"guest-file-read","enabled":true},
+  {"name":"guest-file-write","enabled":true},{"name":"guest-file-close","enabled":true},
+  {"name":"guest-set-user-password","enabled":true},
+  {"name":"guest-ssh-get-authorized-keys","enabled":true},
+  {"name":"guest-ssh-add-authorized-keys","enabled":true},
+  {"name":"guest-ssh-remove-authorized-keys","enabled":true},
+  {"name":"guest-exec","enabled":true},{"name":"guest-exec-status","enabled":true},
+  {"name":"guest-get-users","enabled":true},{"name":"guest-get-timezone","enabled":true},
+  {"name":"guest-network-get-route","enabled":true}
+]}}`, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	capabilities := guestAgentCapabilities(parsed)
+	if !capabilities.FileAccess || !capabilities.PasswordReset || !capabilities.SSHKeys || !capabilities.Processes || !capabilities.Users || !capabilities.Timezone || !capabilities.NetworkRoutes {
+		t.Fatalf("extended capabilities = %+v", capabilities)
+	}
+	timezone, err := parseGuestTimezone(`{"return":{"zone":"Asia/Shanghai","offset":28800}}`)
+	if err != nil || timezone != "Asia/Shanghai" {
+		t.Fatalf("parseGuestTimezone() = %q, %v", timezone, err)
+	}
+	routes, err := parseGuestRoutes(`{"return":[
+  {"destination":"0.0.0.0/0","gateway":"192.168.122.1","interface":"eth0","family":"ipv4","metric":100},
+  {"destination":"2001:db8::/64","interface":"eth0","family":"ipv6","metric":100}
+]}`)
+	if err != nil || len(routes) != 2 || routes[0].Family != "ipv4" || routes[1].Family != "ipv6" {
+		t.Fatalf("parseGuestRoutes() = %+v, %v", routes, err)
+	}
+}
+
+func TestGuestAgentOperationGuards(t *testing.T) {
+	for _, path := range []string{"/etc/hosts", "/var/lib/app/config"} {
+		if !validGuestAgentFilePath(path) {
+			t.Fatalf("path rejected: %s", path)
+		}
+	}
+	for _, path := range []string{"", "relative", "/tmp/a\x00b"} {
+		if validGuestAgentFilePath(path) {
+			t.Fatalf("path accepted: %q", path)
+		}
+	}
+	processes := parseGuestProcesses("  1 0 root Ss systemd /sbin/init\n412 1 root Ssl sshd sshd: /usr/sbin/sshd -D\nbad line\n")
+	if len(processes) != 2 || processes[0].PID != 1 || processes[1].Args != "sshd: /usr/sbin/sshd -D" {
+		t.Fatalf("processes = %+v", processes)
+	}
+	code, hint := guestAgentDiagnosticFromError(errors.New("permission denied by guest policy"))
+	if code != "permission_denied" || hint == "" {
+		t.Fatalf("diagnostic = %s %s", code, hint)
 	}
 }
 

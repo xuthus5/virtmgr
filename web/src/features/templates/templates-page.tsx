@@ -230,6 +230,10 @@ export function TemplatesPage() {
                   <span><span className="block font-medium">启用 Cloud-init</span><span className="mt-0.5 block text-xs text-muted-foreground">保存为新建虚拟机的默认 seed 内容。</span></span>
                 </label>
                 <label className="flex items-start gap-3 text-sm">
+                  <input aria-label="模板启用 Guest Agent" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.guestAgent} onChange={(event) => updateField("guestAgent", event.target.checked)} disabled={!canManage} />
+                  <span><span className="block font-medium">启用 Guest Agent 通道</span><span className="mt-0.5 block text-xs text-muted-foreground">新建虚拟机时挂载 org.qemu.guest_agent.0。</span></span>
+                </label>
+                <label className="flex items-start gap-3 text-sm">
                   <input aria-label="模板开机自动启动" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.autostart} onChange={(event) => updateField("autostart", event.target.checked)} disabled={!canManage} />
                   <span><span className="block font-medium">开机自动启动</span><span className="mt-0.5 block text-xs text-muted-foreground">作为新建虚拟机的默认值。</span></span>
                 </label>
@@ -295,7 +299,7 @@ export function TemplatesPage() {
                       <TableCell className="whitespace-nowrap text-xs">{template.vcpus} vCPU · {template.memoryMiB} MiB</TableCell>
                       <TableCell><Badge variant={template.firmware === "uefi" ? "default" : "outline"}>{template.firmware === "uefi" ? "UEFI" : "BIOS"}{template.secureBoot ? " · Secure Boot" : ""}</Badge></TableCell>
                       <TableCell className="text-xs"><p>{template.network}</p><p className="text-muted-foreground">{template.diskFormat}{template.isoPath ? " · ISO" : ""}</p></TableCell>
-                      <TableCell><Badge variant={template.cloudInit ? "success" : "secondary"}>{template.cloudInit ? "已启用" : "未启用"}</Badge></TableCell>
+                      <TableCell><div className="flex flex-wrap gap-1"><Badge variant={template.cloudInit ? "success" : "secondary"}>Cloud-init {template.cloudInit ? "开" : "关"}</Badge><Badge variant={template.guestAgent ? "success" : "secondary"}>QGA {template.guestAgent ? "开" : "关"}</Badge></div></TableCell>
                       <TableCell className="whitespace-nowrap text-xs">{template.autostart ? "自动启动" : "手动启动"}{template.start ? " · 创建后启动" : ""}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(template.updatedAt)}</TableCell>
                       <TableCell>

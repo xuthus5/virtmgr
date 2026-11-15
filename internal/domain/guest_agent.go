@@ -1,9 +1,12 @@
 package domain
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
+
+var guestAgentUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_.@\\-]{1,128}$`)
 
 type GuestAgentState string
 
@@ -48,15 +51,30 @@ type GuestAgentFilesystem struct {
 }
 
 type GuestAgentCapabilities struct {
-	Hostname bool `json:"hostname"`
-	Network  bool `json:"network"`
-	OSInfo   bool `json:"osInfo"`
-	FSInfo   bool `json:"fsInfo"`
-	Shutdown bool `json:"shutdown"`
-	Reboot   bool `json:"reboot"`
-	TimeSync bool `json:"timeSync"`
-	Trim     bool `json:"trim"`
-	Quiesce  bool `json:"quiesce"`
+	Hostname      bool `json:"hostname"`
+	Network       bool `json:"network"`
+	OSInfo        bool `json:"osInfo"`
+	FSInfo        bool `json:"fsInfo"`
+	Shutdown      bool `json:"shutdown"`
+	Reboot        bool `json:"reboot"`
+	TimeSync      bool `json:"timeSync"`
+	Trim          bool `json:"trim"`
+	Quiesce       bool `json:"quiesce"`
+	FileAccess    bool `json:"fileAccess"`
+	PasswordReset bool `json:"passwordReset"`
+	SSHKeys       bool `json:"sshKeys"`
+	Processes     bool `json:"processes"`
+	Users         bool `json:"users"`
+	Timezone      bool `json:"timezone"`
+	NetworkRoutes bool `json:"networkRoutes"`
+}
+
+type GuestAgentRoute struct {
+	Destination string `json:"destination,omitempty"`
+	Gateway     string `json:"gateway,omitempty"`
+	Interface   string `json:"interface,omitempty"`
+	Family      string `json:"family,omitempty"`
+	Metric      int    `json:"metric,omitempty"`
 }
 
 type GuestAgentInfo struct {
@@ -71,7 +89,11 @@ type GuestAgentInfo struct {
 	OS                GuestAgentOSInfo             `json:"os"`
 	Interfaces        []GuestAgentNetworkInterface `json:"interfaces"`
 	Filesystems       []GuestAgentFilesystem       `json:"filesystems"`
+	Timezone          string                       `json:"timezone,omitempty"`
+	Routes            []GuestAgentRoute            `json:"routes"`
 	Capabilities      GuestAgentCapabilities       `json:"capabilities"`
+	DiagnosticCode    string                       `json:"diagnosticCode,omitempty"`
+	DiagnosticHint    string                       `json:"diagnosticHint,omitempty"`
 	ProbedAt          time.Time                    `json:"probedAt"`
 }
 
@@ -113,4 +135,120 @@ func (spec GuestAgentActionSpec) SupportedBy(capabilities GuestAgentCapabilities
 	default:
 		return false
 	}
+}
+
+type GuestAgentFileReadSpec struct {
+	Path     string `json:"path"`
+	Offset   uint64 `json:"offset,omitempty"`
+	MaxBytes uint64 `json:"maxBytes,omitempty"`
+}
+
+type GuestAgentFileContent struct {
+	Path       string `json:"path"`
+	DataBase64 string `json:"dataBase64"`
+	Offset     uint64 `json:"offset"`
+	Size       uint64 `json:"size"`
+	EOF        bool   `json:"eof"`
+	SHA256     string `json:"sha256,omitempty"`
+}
+
+type GuestAgentFileWriteSpec struct {
+	Path       string `json:"path"`
+	DataBase64 string `json:"dataBase64"`
+	Mode       string `json:"mode,omitempty"`
+	Overwrite  bool   `json:"overwrite,omitempty"`
+}
+
+type GuestAgentFileWriteResult struct {
+	Path         string `json:"path"`
+	BytesWritten uint64 `json:"bytesWritten"`
+	SHA256       string `json:"sha256,omitempty"`
+}
+
+type GuestAgentPasswordSpec struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type GuestAgentSSHKeySpec struct {
+	Username string   `json:"username"`
+	Keys     []string `json:"keys"`
+}
+
+type GuestAgentAuthorizedKeys struct {
+	Username string   `json:"username"`
+	Keys     []string `json:"keys"`
+}
+
+type GuestAgentProcess struct {
+	PID     int64  `json:"pid"`
+	PPID    int64  `json:"ppid,omitempty"`
+	User    string `json:"user,omitempty"`
+	State   string `json:"state,omitempty"`
+	Command string `json:"command"`
+	Args    string `json:"args,omitempty"`
+}
+
+type GuestAgentProcessSignalSpec struct {
+	PID    int64  `json:"pid"`
+	Signal string `json:"signal"`
+}
+
+func ValidGuestAgentProcessSignal(value string) (string, bool) {
+	signal := strings.ToLower(strings.TrimSpace(value))
+	switch signal {
+	case "term", "kill":
+		return signal, true
+	default:
+		return "", false
+	}
+}
+
+type GuestAgentUser struct {
+	Username  string `json:"username"`
+	Domain    string `json:"domain,omitempty"`
+	LoginTime int64  `json:"loginTime,omitempty"`
+}
+
+func ValidGuestAgentUsername(value string) bool {
+	return guestAgentUsernamePattern.MatchString(strings.TrimSpace(value))
+}
+
+type GuestAgentPolicy struct {
+	VMUUID              string          `json:"vmUuid"`
+	Expected            bool            `json:"expected"`
+	LastState           GuestAgentState `json:"lastState,omitempty"`
+	LastError           string          `json:"lastError,omitempty"`
+	ConsecutiveFailures int             `json:"consecutiveFailures"`
+	LastCheckedAt       *time.Time      `json:"lastCheckedAt,omitempty"`
+	LastHealthyAt       *time.Time      `json:"lastHealthyAt,omitempty"`
+	UpdatedBy           string          `json:"updatedBy,omitempty"`
+	UpdatedAt           time.Time       `json:"updatedAt"`
+}
+
+type GuestAgentPolicySpec struct {
+	Expected bool `json:"expected"`
+}
+
+type GuestAgentHealthSample struct {
+	ID        int64           `json:"id"`
+	VMUUID    string          `json:"vmUuid"`
+	SampledAt time.Time       `json:"sampledAt"`
+	State     GuestAgentState `json:"state"`
+	LatencyMS int64           `json:"latencyMs"`
+	Connected bool            `json:"connected"`
+	Error     string          `json:"error,omitempty"`
+}
+
+type GuestAgentHealthHistory struct {
+	Items               []GuestAgentHealthSample `json:"items"`
+	Total               int                      `json:"total"`
+	ConnectivityPercent float64                  `json:"connectivityPercent"`
+}
+
+type GuestAgentSnapshotRecord struct {
+	VMUUID       string    `json:"vmUuid"`
+	SnapshotName string    `json:"snapshotName"`
+	Quiesced     bool      `json:"quiesced"`
+	CreatedAt    time.Time `json:"createdAt"`
 }

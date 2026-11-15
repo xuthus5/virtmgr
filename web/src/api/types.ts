@@ -193,6 +193,7 @@ export type VMTemplateInput = {
   cloudInitUserData?: string;
   cloudInitNetworkConfig?: string;
   cloudInitVendorData?: string;
+  guestAgent?: boolean;
   autostart: boolean;
   start: boolean;
 };
@@ -430,6 +431,8 @@ export type VM = {
   ipAddresses: string[];
   hostname?: string;
   agentConnected: boolean;
+  agentConfigured?: boolean;
+  agentState?: GuestAgentState;
   allowedActions: VMAction[];
   metadata?: VMMetadata;
 };
@@ -572,6 +575,7 @@ export type VMSnapshot = {
   state: VMState;
   current: boolean;
   parent?: string;
+  quiesced?: boolean;
 };
 
 export type VMSnapshotCreateInput = {
@@ -629,6 +633,21 @@ export type GuestAgentCapabilities = {
   timeSync: boolean;
   trim: boolean;
   quiesce: boolean;
+  fileAccess: boolean;
+  passwordReset: boolean;
+  sshKeys: boolean;
+  processes: boolean;
+  users: boolean;
+  timezone: boolean;
+  networkRoutes: boolean;
+};
+
+export type GuestAgentRoute = {
+  destination?: string;
+  gateway?: string;
+  interface?: string;
+  family?: string;
+  metric?: number;
 };
 
 export type GuestAgentInfo = {
@@ -643,7 +662,11 @@ export type GuestAgentInfo = {
   os: GuestAgentOSInfo;
   interfaces: GuestAgentNetworkInterface[];
   filesystems: GuestAgentFilesystem[];
+  timezone?: string;
+  routes: GuestAgentRoute[];
   capabilities: GuestAgentCapabilities;
+  diagnosticCode?: string;
+  diagnosticHint?: string;
   probedAt: string;
 };
 
@@ -653,6 +676,71 @@ export type GuestAgentActionInput = {
   action: GuestAgentAction;
   mount?: string;
   minimumBytes?: number;
+};
+
+export type GuestAgentFileContent = {
+  path: string;
+  dataBase64: string;
+  offset: number;
+  size: number;
+  eof: boolean;
+  sha256?: string;
+};
+
+export type GuestAgentFileWriteInput = {
+  path: string;
+  dataBase64: string;
+  mode?: "replace" | "append";
+  overwrite?: boolean;
+};
+
+export type GuestAgentFileWriteResponse = {
+  task: Task;
+  result: { path: string; bytesWritten: number; sha256?: string };
+};
+
+export type GuestAgentPasswordInput = { username: string; password: string };
+export type GuestAgentSSHKeyInput = { username: string; keys: string[] };
+export type GuestAgentAuthorizedKeys = { username: string; keys: string[] };
+
+export type GuestAgentProcess = {
+  pid: number;
+  ppid?: number;
+  user?: string;
+  state?: string;
+  command: string;
+  args?: string;
+};
+
+export type GuestAgentProcessList = { items: GuestAgentProcess[]; total: number };
+export type GuestAgentProcessSignalInput = { pid: number; signal: "term" | "kill" };
+export type GuestAgentUser = { username: string; domain?: string; loginTime?: number };
+export type GuestAgentUserList = { items: GuestAgentUser[]; total: number };
+export type GuestAgentPolicy = {
+  vmUuid: string;
+  expected: boolean;
+  lastState?: GuestAgentState;
+  lastError?: string;
+  consecutiveFailures: number;
+  lastCheckedAt?: string;
+  lastHealthyAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+};
+export type GuestAgentPolicyInput = { expected: boolean };
+export type GuestAgentHealthSample = {
+  id: number;
+  vmUuid: string;
+  sampledAt: string;
+  state: GuestAgentState;
+  latencyMs: number;
+  connected: boolean;
+  error?: string;
+};
+export type GuestAgentHealthHistory = {
+  items: GuestAgentHealthSample[];
+  total: number;
+  connectivityPercent: number;
 };
 
 export type VMSnapshotList = {

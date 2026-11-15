@@ -67,6 +67,16 @@ type ConfigVersionRecorder interface {
 	CaptureVM(ctx context.Context, vmUUID string, capture domain.VMConfigCapture) (domain.VMConfigVersion, error)
 }
 
+type GuestAgentSnapshotRecorder interface {
+	UpsertGuestAgentSnapshotRecord(ctx context.Context, record domain.GuestAgentSnapshotRecord) error
+	ListGuestAgentSnapshotRecords(ctx context.Context, vmUUID string) ([]domain.GuestAgentSnapshotRecord, error)
+	DeleteGuestAgentSnapshotRecord(ctx context.Context, vmUUID, snapshotName string) error
+}
+
+type GuestAgentDataCleaner interface {
+	DeleteGuestAgentVMData(ctx context.Context, vmUUID string) error
+}
+
 type TaskRecorder interface {
 	Start(ctx context.Context, kind, targetKind, targetID, actor, step string) (string, error)
 	Progress(ctx context.Context, id string, progress int, step string) error
@@ -85,6 +95,8 @@ type Service struct {
 	backupService  *backupsapp.Service
 	configVersions ConfigVersionRecorder
 	metadata       VMMetadataRepository
+	snapshotAgent  GuestAgentSnapshotRecorder
+	guestAgentData GuestAgentDataCleaner
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -105,6 +117,18 @@ func WithConsoleTokens(store ConsoleTokenStore) Option {
 func WithTaskRecorder(recorder TaskRecorder) Option {
 	return func(service *Service) {
 		service.tasks = recorder
+	}
+}
+
+func WithGuestAgentSnapshotRecorder(recorder GuestAgentSnapshotRecorder) Option {
+	return func(service *Service) {
+		service.snapshotAgent = recorder
+	}
+}
+
+func WithGuestAgentDataCleaner(cleaner GuestAgentDataCleaner) Option {
+	return func(service *Service) {
+		service.guestAgentData = cleaner
 	}
 }
 
@@ -544,6 +568,11 @@ func (s *Service) Delete(ctx context.Context, command DeleteCommand) error {
 	if s.metadata != nil {
 		if err := s.metadata.DeleteVMMetadata(ctx, command.UUID); err != nil {
 			return fmt.Errorf("delete VM metadata: %w", err)
+		}
+	}
+	if s.guestAgentData != nil {
+		if err := s.guestAgentData.DeleteGuestAgentVMData(ctx, command.UUID); err != nil {
+			return fmt.Errorf("delete guest agent VM data: %w", err)
 		}
 	}
 	if err := s.recordMutationAudit(ctx, command.Request, "vm.delete", command.UUID, "success", detail, nil); err != nil {
@@ -1061,6 +1090,21 @@ func (s *Service) ListSnapshots(ctx context.Context, uuid string) (domain.VMSnap
 	if err != nil {
 		return domain.VMSnapshotList{}, err
 	}
+	if s.snapshotAgent != nil {
+		records, recordErr := s.snapshotAgent.ListGuestAgentSnapshotRecords(ctx, uuid)
+		if recordErr != nil {
+			return domain.VMSnapshotList{}, recordErr
+		}
+		quiesced := make(map[string]bool, len(records))
+		for _, record := range records {
+			quiesced[record.SnapshotName] = record.Quiesced
+		}
+		for index := range snapshots {
+			if value, ok := quiesced[snapshots[index].Name]; ok {
+				snapshots[index].Quiesced = value
+			}
+		}
+	}
 	sort.Slice(snapshots, func(i, j int) bool {
 		if snapshots[i].CreatedAt != snapshots[j].CreatedAt {
 			return snapshots[i].CreatedAt > snapshots[j].CreatedAt
@@ -1091,6 +1135,13 @@ func (s *Service) CreateSnapshot(ctx context.Context, command SnapshotCreateComm
 	}
 	detail["stateAtSnapshot"] = string(snapshot.State)
 	detail["createdAt"] = snapshot.CreatedAt
+	if s.snapshotAgent != nil {
+		if err := s.snapshotAgent.UpsertGuestAgentSnapshotRecord(ctx, domain.GuestAgentSnapshotRecord{
+			VMUUID: command.UUID, SnapshotName: snapshot.Name, Quiesced: command.Spec.Quiesce, CreatedAt: time.Unix(snapshot.CreatedAt, 0).UTC(),
+		}); err != nil {
+			return domain.VMSnapshot{}, fmt.Errorf("record VM snapshot quiesce metadata: %w", err)
+		}
+	}
 	if err := s.recordSnapshotAudit(ctx, command.Request, "vm.snapshot.create", command.UUID+"/"+snapshot.Name, "success", detail, nil); err != nil {
 		return domain.VMSnapshot{}, fmt.Errorf("record VM snapshot create audit: %w", err)
 	}
@@ -1135,6 +1186,11 @@ func (s *Service) DeleteSnapshot(ctx context.Context, command SnapshotCommand) e
 	}
 	if err := s.repository.DeleteSnapshot(ctx, command.UUID, command.Name); err != nil {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.delete", command.UUID+"/"+command.Name, detail, err)
+	}
+	if s.snapshotAgent != nil {
+		if err := s.snapshotAgent.DeleteGuestAgentSnapshotRecord(ctx, command.UUID, command.Name); err != nil {
+			return fmt.Errorf("delete VM snapshot quiesce metadata: %w", err)
+		}
 	}
 	if err := s.recordSnapshotAudit(ctx, command.Request, "vm.snapshot.delete", command.UUID+"/"+command.Name, "success", detail, nil); err != nil {
 		return fmt.Errorf("record VM snapshot delete audit: %w", err)

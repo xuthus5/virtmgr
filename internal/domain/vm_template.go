@@ -19,6 +19,7 @@ type VMTemplateSpec struct {
 	CloudInitUserData      string     `json:"cloudInitUserData,omitempty"`
 	CloudInitNetworkConfig string     `json:"cloudInitNetworkConfig,omitempty"`
 	CloudInitVendorData    string     `json:"cloudInitVendorData,omitempty"`
+	GuestAgent             *bool      `json:"guestAgent,omitempty"`
 	Autostart              bool       `json:"autostart"`
 	Start                  bool       `json:"start"`
 }
@@ -38,10 +39,15 @@ type VMTemplate struct {
 	CloudInitUserData      string     `json:"cloudInitUserData,omitempty"`
 	CloudInitNetworkConfig string     `json:"cloudInitNetworkConfig,omitempty"`
 	CloudInitVendorData    string     `json:"cloudInitVendorData,omitempty"`
+	GuestAgent             bool       `json:"guestAgent"`
 	Autostart              bool       `json:"autostart"`
 	Start                  bool       `json:"start"`
 	CreatedAt              time.Time  `json:"createdAt"`
 	UpdatedAt              time.Time  `json:"updatedAt"`
+}
+
+func (spec VMTemplateSpec) GuestAgentEnabled() bool {
+	return spec.GuestAgent == nil || *spec.GuestAgent
 }
 
 type VMTemplateList struct {

@@ -278,6 +278,7 @@ type VMSnapshot struct {
 	State       VMState `json:"state"`
 	Current     bool    `json:"current"`
 	Parent      string  `json:"parent,omitempty"`
+	Quiesced    bool    `json:"quiesced"`
 }
 
 type VMSnapshotCreateSpec struct {
@@ -336,33 +337,35 @@ type PassthroughDevice struct {
 }
 
 type VM struct {
-	UUID           string              `json:"uuid"`
-	Name           string              `json:"name"`
-	State          VMState             `json:"state"`
-	StateReason    int                 `json:"stateReason"`
-	Persistent     bool                `json:"persistent"`
-	Autostart      bool                `json:"autostart"`
-	VCPUs          uint                `json:"vcpus"`
-	MaxVCPUs       uint                `json:"maxVcpus"`
-	MemoryBytes    uint64              `json:"memoryBytes"`
-	MaxMemoryBytes uint64              `json:"maxMemoryBytes"`
-	CPUTimeNanos   uint64              `json:"cpuTimeNanos"`
-	OSType         string              `json:"osType,omitempty"`
-	Arch           string              `json:"arch,omitempty"`
-	Machine        string              `json:"machine,omitempty"`
-	Firmware       VMFirmware          `json:"firmware"`
-	SecureBoot     bool                `json:"secureBoot"`
-	CloudInit      bool                `json:"cloudInit"`
-	Disks          []Disk              `json:"disks"`
-	Interfaces     []NetworkInterface  `json:"interfaces"`
-	Graphics       []Graphics          `json:"graphics"`
-	Serials        []SerialConsole     `json:"serials"`
-	Passthrough    []PassthroughDevice `json:"passthrough"`
-	IPAddresses    []string            `json:"ipAddresses"`
-	Hostname       string              `json:"hostname,omitempty"`
-	AgentConnected bool                `json:"agentConnected"`
-	AllowedActions []VMAction          `json:"allowedActions"`
-	Metadata       *VMMetadata         `json:"metadata,omitempty"`
+	UUID            string              `json:"uuid"`
+	Name            string              `json:"name"`
+	State           VMState             `json:"state"`
+	StateReason     int                 `json:"stateReason"`
+	Persistent      bool                `json:"persistent"`
+	Autostart       bool                `json:"autostart"`
+	VCPUs           uint                `json:"vcpus"`
+	MaxVCPUs        uint                `json:"maxVcpus"`
+	MemoryBytes     uint64              `json:"memoryBytes"`
+	MaxMemoryBytes  uint64              `json:"maxMemoryBytes"`
+	CPUTimeNanos    uint64              `json:"cpuTimeNanos"`
+	OSType          string              `json:"osType,omitempty"`
+	Arch            string              `json:"arch,omitempty"`
+	Machine         string              `json:"machine,omitempty"`
+	Firmware        VMFirmware          `json:"firmware"`
+	SecureBoot      bool                `json:"secureBoot"`
+	CloudInit       bool                `json:"cloudInit"`
+	Disks           []Disk              `json:"disks"`
+	Interfaces      []NetworkInterface  `json:"interfaces"`
+	Graphics        []Graphics          `json:"graphics"`
+	Serials         []SerialConsole     `json:"serials"`
+	Passthrough     []PassthroughDevice `json:"passthrough"`
+	IPAddresses     []string            `json:"ipAddresses"`
+	Hostname        string              `json:"hostname,omitempty"`
+	AgentConnected  bool                `json:"agentConnected"`
+	AgentConfigured bool                `json:"agentConfigured"`
+	AgentState      GuestAgentState     `json:"agentState,omitempty"`
+	AllowedActions  []VMAction          `json:"allowedActions"`
+	Metadata        *VMMetadata         `json:"metadata,omitempty"`
 }
 
 type VMXMLFormat string

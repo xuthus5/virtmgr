@@ -364,31 +364,38 @@ func domainFromLibvirt(dom *libvirt.Domain) (domain.VM, error) {
 	if maximum, err := dom.GetVcpusFlags(vcpuFlags); err == nil && maximum > 0 {
 		maxVCPUs = uint(maximum)
 	}
+	agentConfigured := details.GuestAgent
+	agentState := domain.GuestAgentStateNotConfigured
+	if agentConfigured {
+		agentState = domain.GuestAgentStateDisconnected
+	}
 	return domain.VM{
-		UUID:           uuid,
-		Name:           name,
-		State:          mapDomainState(state),
-		StateReason:    reason,
-		Persistent:     persistent,
-		Autostart:      autostart,
-		VCPUs:          info.NrVirtCpu,
-		MaxVCPUs:       maxVCPUs,
-		MemoryBytes:    info.Memory * 1024,
-		MaxMemoryBytes: info.MaxMem * 1024,
-		CPUTimeNanos:   info.CpuTime,
-		OSType:         details.OSType,
-		Arch:           details.Arch,
-		Machine:        details.Machine,
-		Firmware:       details.Firmware,
-		SecureBoot:     details.SecureBoot,
-		CloudInit:      details.CloudInit,
-		Disks:          details.Disks,
-		Interfaces:     details.Interfaces,
-		Graphics:       details.Graphics,
-		Serials:        details.Serials,
-		Passthrough:    details.Passthrough,
-		IPAddresses:    []string{},
-		AllowedActions: allowedActions(state),
+		UUID:            uuid,
+		Name:            name,
+		State:           mapDomainState(state),
+		StateReason:     reason,
+		Persistent:      persistent,
+		Autostart:       autostart,
+		VCPUs:           info.NrVirtCpu,
+		MaxVCPUs:        maxVCPUs,
+		MemoryBytes:     info.Memory * 1024,
+		MaxMemoryBytes:  info.MaxMem * 1024,
+		CPUTimeNanos:    info.CpuTime,
+		OSType:          details.OSType,
+		Arch:            details.Arch,
+		Machine:         details.Machine,
+		Firmware:        details.Firmware,
+		SecureBoot:      details.SecureBoot,
+		CloudInit:       details.CloudInit,
+		Disks:           details.Disks,
+		Interfaces:      details.Interfaces,
+		Graphics:        details.Graphics,
+		Serials:         details.Serials,
+		Passthrough:     details.Passthrough,
+		IPAddresses:     []string{},
+		AgentConfigured: agentConfigured,
+		AgentState:      agentState,
+		AllowedActions:  allowedActions(state),
 	}, nil
 }
 

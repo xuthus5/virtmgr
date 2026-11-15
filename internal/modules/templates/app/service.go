@@ -197,6 +197,8 @@ func (s *Service) Delete(ctx context.Context, command DeleteCommand) error {
 }
 
 func normalizeSpec(spec domain.VMTemplateSpec) (domain.VMTemplateSpec, error) {
+	guestAgent := spec.GuestAgentEnabled()
+	spec.GuestAgent = &guestAgent
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.Description = strings.TrimSpace(spec.Description)
 	spec.DiskFormat = strings.ToLower(strings.TrimSpace(spec.DiskFormat))
@@ -266,6 +268,7 @@ func templateDetail(template domain.VMTemplate) map[string]any {
 		"firmware":   template.Firmware,
 		"secureBoot": template.SecureBoot,
 		"cloudInit":  template.CloudInit,
+		"guestAgent": template.GuestAgent,
 		"autostart":  template.Autostart,
 		"start":      template.Start,
 	}

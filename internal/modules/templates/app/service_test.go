@@ -74,7 +74,7 @@ func fromSpec(id int64, spec domain.VMTemplateSpec) domain.VMTemplate {
 		ID: id, Name: spec.Name, Description: spec.Description, VCPUs: spec.VCPUs,
 		MemoryMiB: spec.MemoryMiB, DiskFormat: spec.DiskFormat, Network: spec.Network,
 		ISOPath: spec.ISOPath, Firmware: spec.Firmware, SecureBoot: spec.SecureBoot,
-		CloudInit: spec.CloudInit, CloudInitUserData: spec.CloudInitUserData,
+		CloudInit: spec.CloudInit, CloudInitUserData: spec.CloudInitUserData, GuestAgent: spec.GuestAgentEnabled(),
 		Autostart: spec.Autostart, Start: spec.Start,
 	}
 }

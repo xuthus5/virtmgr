@@ -243,7 +243,7 @@ export function VMsPage() {
                         名称
                       </span>
                     </TableHead>
-                    <TableHead>状态</TableHead><TableHead>vCPU</TableHead><TableHead>内存</TableHead><TableHead>IP</TableHead><TableHead>磁盘</TableHead><TableHead>网络</TableHead><TableHead>自动启动</TableHead>
+                    <TableHead>状态</TableHead><TableHead>Guest Agent</TableHead><TableHead>vCPU</TableHead><TableHead>内存</TableHead><TableHead>IP</TableHead><TableHead>磁盘</TableHead><TableHead>网络</TableHead><TableHead>自动启动</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -277,6 +277,11 @@ export function VMsPage() {
                         </div>
                       </TableCell>
                       <TableCell><StatusBadge state={vm.state} /></TableCell>
+                      <TableCell>
+                        <span className={vm.agentState === "connected" ? "rounded bg-success/10 px-1.5 py-0.5 text-[11px] text-success" : vm.agentConfigured ? "rounded bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning" : "rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"} title={vm.agentState ?? "unknown"}>
+                          {vm.agentState === "connected" ? "已连接" : vm.agentConfigured ? "已配置" : "未配置"}
+                        </span>
+                      </TableCell>
                       <TableCell className="tabular-nums">{vm.vcpus}</TableCell>
                       <TableCell className="tabular-nums">{formatBytes(vm.memoryBytes)}</TableCell>
                       <TableCell><span className="font-mono text-xs text-muted-foreground">{vm.ipAddresses?.length ? vm.ipAddresses.join(", ") : "-"}</span></TableCell>
@@ -285,7 +290,7 @@ export function VMsPage() {
                       <TableCell>{vm.autostart ? "是" : "否"}</TableCell>
                     </TableRow>
                   )) : (
-                    <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">没有匹配的虚拟机</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">没有匹配的虚拟机</TableCell></TableRow>
                   )}
                 </TableBody>
             </Table>

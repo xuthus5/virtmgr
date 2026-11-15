@@ -15,7 +15,7 @@ func (s *Store) ListVMTemplates(ctx context.Context) ([]domain.VMTemplate, error
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, description, vcpus, memory_mib, disk_format, network, iso_path,
 			firmware, secure_boot, cloud_init, cloud_init_user_data, cloud_init_network_config,
-			cloud_init_vendor_data, autostart, start,
+			cloud_init_vendor_data, guest_agent, autostart, start,
 			created_at, updated_at
 		FROM vm_templates
 		ORDER BY name COLLATE NOCASE ASC, id ASC`)
@@ -41,7 +41,7 @@ func (s *Store) GetVMTemplate(ctx context.Context, id int64) (domain.VMTemplate,
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, description, vcpus, memory_mib, disk_format, network, iso_path,
 			firmware, secure_boot, cloud_init, cloud_init_user_data, cloud_init_network_config,
-			cloud_init_vendor_data, autostart, start,
+			cloud_init_vendor_data, guest_agent, autostart, start,
 			created_at, updated_at
 		FROM vm_templates WHERE id = ?`, id)
 	template, err := scanVMTemplate(row)
@@ -55,7 +55,7 @@ func (s *Store) VMTemplateByName(ctx context.Context, name string) (domain.VMTem
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, description, vcpus, memory_mib, disk_format, network, iso_path,
 			firmware, secure_boot, cloud_init, cloud_init_user_data, cloud_init_network_config,
-			cloud_init_vendor_data, autostart, start,
+			cloud_init_vendor_data, guest_agent, autostart, start,
 			created_at, updated_at
 		FROM vm_templates WHERE name = ? COLLATE NOCASE`, name)
 	template, err := scanVMTemplate(row)
@@ -71,12 +71,12 @@ func (s *Store) CreateVMTemplate(ctx context.Context, spec domain.VMTemplateSpec
 		INSERT INTO vm_templates(
 			name, description, vcpus, memory_mib, disk_format, network, iso_path,
 			firmware, secure_boot, cloud_init, cloud_init_user_data, cloud_init_network_config,
-			cloud_init_vendor_data, autostart, start,
+			cloud_init_vendor_data, guest_agent, autostart, start,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		spec.Name, spec.Description, spec.VCPUs, spec.MemoryMiB, spec.DiskFormat,
 		spec.Network, spec.ISOPath, spec.Firmware, boolInt(spec.SecureBoot),
-		boolInt(spec.CloudInit), spec.CloudInitUserData, spec.CloudInitNetworkConfig, spec.CloudInitVendorData, boolInt(spec.Autostart),
+		boolInt(spec.CloudInit), spec.CloudInitUserData, spec.CloudInitNetworkConfig, spec.CloudInitVendorData, boolInt(spec.GuestAgentEnabled()), boolInt(spec.Autostart),
 		boolInt(spec.Start), now.Unix(), now.Unix(),
 	)
 	if err != nil {
@@ -97,12 +97,12 @@ func (s *Store) UpdateVMTemplate(ctx context.Context, id int64, spec domain.VMTe
 		UPDATE vm_templates SET
 			name = ?, description = ?, vcpus = ?, memory_mib = ?, disk_format = ?,
 			network = ?, iso_path = ?, firmware = ?, secure_boot = ?, cloud_init = ?,
-			cloud_init_user_data = ?, cloud_init_network_config = ?, cloud_init_vendor_data = ?,
+			cloud_init_user_data = ?, cloud_init_network_config = ?, cloud_init_vendor_data = ?, guest_agent = ?,
 			autostart = ?, start = ?, updated_at = ?
 		WHERE id = ?`,
 		spec.Name, spec.Description, spec.VCPUs, spec.MemoryMiB, spec.DiskFormat,
 		spec.Network, spec.ISOPath, spec.Firmware, boolInt(spec.SecureBoot),
-		boolInt(spec.CloudInit), spec.CloudInitUserData, spec.CloudInitNetworkConfig, spec.CloudInitVendorData, boolInt(spec.Autostart),
+		boolInt(spec.CloudInit), spec.CloudInitUserData, spec.CloudInitNetworkConfig, spec.CloudInitVendorData, boolInt(spec.GuestAgentEnabled()), boolInt(spec.Autostart),
 		boolInt(spec.Start), time.Now().UTC().Unix(), id,
 	)
 	if err != nil {
@@ -144,6 +144,7 @@ func scanVMTemplate(scanner vmTemplateScanner) (domain.VMTemplate, error) {
 	var template domain.VMTemplate
 	var secureBoot int
 	var cloudInit int
+	var guestAgent int
 	var autostart int
 	var start int
 	var createdAt int64
@@ -152,12 +153,13 @@ func scanVMTemplate(scanner vmTemplateScanner) (domain.VMTemplate, error) {
 		&template.ID, &template.Name, &template.Description, &template.VCPUs,
 		&template.MemoryMiB, &template.DiskFormat, &template.Network, &template.ISOPath,
 		&template.Firmware, &secureBoot, &cloudInit, &template.CloudInitUserData,
-		&template.CloudInitNetworkConfig, &template.CloudInitVendorData, &autostart, &start, &createdAt, &updatedAt,
+		&template.CloudInitNetworkConfig, &template.CloudInitVendorData, &guestAgent, &autostart, &start, &createdAt, &updatedAt,
 	); err != nil {
 		return domain.VMTemplate{}, err
 	}
 	template.SecureBoot = secureBoot != 0
 	template.CloudInit = cloudInit != 0
+	template.GuestAgent = guestAgent != 0
 	template.Autostart = autostart != 0
 	template.Start = start != 0
 	template.CreatedAt = time.Unix(createdAt, 0).UTC()

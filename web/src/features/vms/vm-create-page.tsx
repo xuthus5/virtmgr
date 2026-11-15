@@ -77,6 +77,7 @@ export function VMCreatePage() {
   const [diskPool, setDiskPool] = useState("");
   const [error, setError] = useState("");
   const [selectedTemplateID, setSelectedTemplateID] = useState("");
+  const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
   const presetApplied = useRef(false);
   const activeNetworks = (networksQuery.data?.items ?? []).filter((network) => network.active);
   const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
@@ -149,6 +150,7 @@ export function VMCreatePage() {
       cloudInitUserData: defaults.cloudInitUserData,
       cloudInitNetworkConfig: defaults.cloudInitNetworkConfig,
       cloudInitVendorData: defaults.cloudInitVendorData,
+      guestAgent: defaults.guestAgent,
       autostart: defaults.autostart,
       start: defaults.start,
     }));
@@ -413,6 +415,20 @@ export function VMCreatePage() {
                     <span className="mt-0.5 block text-xs text-muted-foreground">挂载 org.qemu.guest_agent.0；仍需在客户机内安装并启动 qemu-guest-agent。</span>
                   </span>
                 </label>
+                {form.guestAgent ? (
+                  <details className="rounded-lg border bg-muted/20 p-3 text-xs">
+                    <summary className="cursor-pointer font-medium">Cloud-init 安装引导（不会自动改写现有 user-data）</summary>
+                    <div className="mt-3 space-y-2">
+                      <select aria-label="Guest Agent 客户机发行版" value={guestAgentDistro} onChange={(event) => setGuestAgentDistro(event.target.value as typeof guestAgentDistro)} className="h-8 rounded-md border border-input bg-card px-2 text-xs">
+                        <option value="debian">Debian / Ubuntu</option>
+                        <option value="rhel">RHEL / Fedora / Rocky</option>
+                        <option value="suse">openSUSE / SLES</option>
+                      </select>
+                      <pre className="overflow-auto rounded-md bg-background p-2 font-mono text-[11px]">{`packages:\n  - qemu-guest-agent\nruncmd:\n  - systemctl enable --now qemu-guest-agent`}</pre>
+                      <p className="text-muted-foreground">请将片段合并到现有 Cloud-init user-data。Windows 客户机请从 virtio-win ISO 安装 guest-agent MSI；当前不支持自动写入 Windows 安装介质。</p>
+                    </div>
+                  </details>
+                ) : null}
               </div>
             </CardContent>
           </Card>

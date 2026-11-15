@@ -55,7 +55,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作仅开放关机、重启、时间同步和 TRIM；手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
+- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户和固定命令进程管理；手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
 - 开机自启动写能力：详情页通过 `PATCH /vms/{uuid}/autostart` 切换持久域的 autostart；临时域、Viewer 和全局只读模式拒绝修改，成功/失败均记录 `vm.autostart` 审计。
@@ -715,6 +715,14 @@ type PassthroughDevice = {
 | `GET` | `/vms/{uuid}/guest-agent?refresh=true` | Guest Agent 结构化状态；Agent 不可用也返回状态对象 |
 | `POST` | `/vms/{uuid}/guest-agent/actions` | 执行 `shutdown` / `reboot` / `sync-time` / `trim`，需 Operator/Admin、CSRF 和非只读模式 |
 | `POST` | `/vms/{uuid}/guest-agent/channel` | 为关机或异常停止的持久域补齐 QGA channel |
+| `GET` | `/vms/{uuid}/guest-agent/files?path=&offset=&maxBytes=` | 读取绝对路径文件，单次上限 1 MiB；Operator/Admin 且写审计 |
+| `POST` | `/vms/{uuid}/guest-agent/files` | 写入或追加文件，单次上限 1 MiB；生成任务并二次确认覆盖 |
+| `POST` | `/vms/{uuid}/guest-agent/password` | 重置客户机用户密码；审计不记录密码 |
+| `GET/POST` | `/vms/{uuid}/guest-agent/ssh-keys[/add|/remove]` | 查询、添加或移除 SSH 公钥；审计只记录数量与 SHA-256 指纹 |
+| `GET/POST` | `/vms/{uuid}/guest-agent/processes[/signal]` | 固定 `ps` 命令读取进程；仅 SIGTERM/SIGKILL，拒绝 PID 1 |
+| `GET` | `/vms/{uuid}/guest-agent/users` | 查询当前登录用户 |
+| `GET/PUT` | `/vms/{uuid}/guest-agent/policy` | 读取或由 Admin 更新期望状态 |
+| `GET` | `/vms/{uuid}/guest-agent/health?hours=&limit=` | 读取健康样本、连通率和故障历史 |
 | `GET` | `/vms/{uuid}/snapshot-policies` | 定时快照策略列表（已实现） |
 | `POST` | `/vms/{uuid}/snapshot-policies` | 创建定时快照策略（已实现，需 CSRF） |
 | `PATCH` | `/snapshot-policies/{id}` | 更新或启停策略（已实现，需 CSRF） |
@@ -1201,7 +1209,7 @@ WantedBy=multi-user.target
 
 - 快照创建/回滚/删除、VM 克隆、ISO/qcow2/raw 镜像上传。
 - 存储池 CRUD、存储卷高级操作和虚拟网络详情/DHCP lease。
-- Guest Agent IP/hostname、CPU/内存/网络趋势。
+- Guest Agent IP/hostname、状态/诊断、时区/路由、期望状态健康趋势、CPU/内存/网络趋势。
 - 全局搜索、批量操作、只读模式开关。
 - 移动端表格、控制台和详情页可用性验收。
 

@@ -128,6 +128,7 @@ type domainDetails struct {
 	Firmware    domain.VMFirmware
 	SecureBoot  bool
 	CloudInit   bool
+	GuestAgent  bool
 	Disks       []domain.Disk
 	Interfaces  []domain.NetworkInterface
 	Graphics    []domain.Graphics
@@ -154,6 +155,7 @@ func parseDomainXML(text string) (domainDetails, error) {
 		Firmware:   firmware,
 		SecureBoot: secureBoot,
 		Disks:      make([]domain.Disk, 0, len(parsed.Devices.Disks)),
+		GuestAgent: hasGuestAgentChannelXML(text),
 	}
 	for _, disk := range parsed.Devices.Disks {
 		source := firstNonEmpty(disk.Source.File, disk.Source.Dev, disk.Source.Volume)

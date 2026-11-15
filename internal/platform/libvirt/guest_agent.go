@@ -68,6 +68,23 @@ type guestFSInfoResponse struct {
 	} `json:"return"`
 }
 
+type guestTimezoneResponse struct {
+	Return struct {
+		Zone   string `json:"zone"`
+		Offset int    `json:"offset"`
+	} `json:"return"`
+}
+
+type guestRouteResponse struct {
+	Return []struct {
+		Destination string `json:"destination"`
+		Gateway     string `json:"gateway"`
+		Interface   string `json:"interface"`
+		Family      string `json:"family"`
+		Metric      int    `json:"metric"`
+	} `json:"return"`
+}
+
 func (c *Client) GetGuestAgentInfo(ctx context.Context, uuid string, refresh bool) (domain.GuestAgentInfo, error) {
 	uuid = strings.TrimSpace(uuid)
 	if uuid == "" {
@@ -181,11 +198,15 @@ func (c *Client) probeGuestAgent(ctx context.Context, uuid string, previous doma
 	if !info.ChannelConfigured {
 		info.State = domain.GuestAgentStateNotConfigured
 		info.LastError = "虚拟机配置中没有 org.qemu.guest_agent.0 通道"
+		info.DiagnosticCode = "channel_missing"
+		info.DiagnosticHint = "关机后可为持久域补充 QGA 通道；新建虚拟机默认会挂载该通道。"
 		return info, nil
 	}
 	if state != libvirt.DOMAIN_RUNNING && state != libvirt.DOMAIN_BLOCKED {
 		info.State = domain.GuestAgentStateDisconnected
 		info.LastError = "虚拟机当前未运行，客户机代理无法响应"
+		info.DiagnosticCode = "domain_not_running"
+		info.DiagnosticHint = "启动虚拟机后再探测 Guest Agent。"
 		return info, nil
 	}
 	return probeGuestAgentOnDomain(dom, info)
@@ -206,12 +227,15 @@ func probeGuestAgentOnDomain(dom *libvirt.Domain, info domain.GuestAgentInfo) (d
 		info.State = guestAgentStateFromError(err)
 		info.Connected = false
 		info.LastError = boundedGuestAgentError(err)
+		info.DiagnosticCode, info.DiagnosticHint = guestAgentDiagnosticFromError(err)
 		return info, nil
 	}
 	var parsed guestInfoResponse
 	if err := decodeGuestAgentResponse(rawInfo, &parsed); err != nil {
 		info.State = domain.GuestAgentStateError
 		info.LastError = "无法解析 guest-info 响应: " + boundedGuestAgentError(err)
+		info.DiagnosticCode = "protocol_error"
+		info.DiagnosticHint = "Agent 返回了无法识别的 guest-info 响应，请检查 qemu-guest-agent 版本。"
 		return info, nil
 	}
 	info.State = domain.GuestAgentStateConnected
@@ -270,8 +294,37 @@ func probeGuestAgentOnDomain(dom *libvirt.Domain, info domain.GuestAgentInfo) (d
 			collectionErrors = append(collectionErrors, "fsinfo")
 		}
 	}
+	if info.Capabilities.Timezone {
+		if raw, commandErr := guestAgentCommand(dom, "guest-get-timezone", nil, guestAgentInfoTimeoutSeconds); commandErr == nil {
+			timezone, parseErr := parseGuestTimezone(raw)
+			if parseErr != nil {
+				collectionErrors = append(collectionErrors, "timezone")
+			} else {
+				info.Timezone = timezone
+			}
+		} else {
+			collectionErrors = append(collectionErrors, "timezone")
+		}
+	}
+	if info.Capabilities.NetworkRoutes {
+		if raw, commandErr := guestAgentCommand(dom, "guest-network-get-route", nil, guestAgentInfoTimeoutSeconds); commandErr == nil {
+			routes, parseErr := parseGuestRoutes(raw)
+			if parseErr != nil {
+				collectionErrors = append(collectionErrors, "routes")
+			} else {
+				info.Routes = routes
+			}
+		} else {
+			collectionErrors = append(collectionErrors, "routes")
+		}
+	}
+	if isWindowsGuest(info.OS) {
+		info.Capabilities.Processes = false
+	}
 	if len(collectionErrors) > 0 {
 		info.LastError = "以下代理信息读取失败: " + strings.Join(collectionErrors, ", ")
+		info.DiagnosticCode = "partial_data"
+		info.DiagnosticHint = "Agent 已连接，但部分信息读取失败；可刷新重试或检查客户机负载。"
 	}
 	return info, nil
 }
@@ -328,6 +381,77 @@ func guestAgentCapabilities(response guestInfoResponse) domain.GuestAgentCapabil
 		TimeSync: commands["guest-set-time"],
 		Trim:     commands["guest-fstrim"],
 		Quiesce:  commands["guest-fsfreeze-freeze"] && commands["guest-fsfreeze-thaw"],
+		FileAccess: commands["guest-file-open"] && commands["guest-file-read"] &&
+			commands["guest-file-write"] && commands["guest-file-close"],
+		PasswordReset: commands["guest-set-user-password"],
+		SSHKeys: commands["guest-ssh-get-authorized-keys"] && commands["guest-ssh-add-authorized-keys"] &&
+			commands["guest-ssh-remove-authorized-keys"],
+		Processes:     commands["guest-exec"] && commands["guest-exec-status"],
+		Users:         commands["guest-get-users"],
+		Timezone:      commands["guest-get-timezone"],
+		NetworkRoutes: commands["guest-network-get-route"],
+	}
+}
+
+func parseGuestTimezone(raw string) (string, error) {
+	var response guestTimezoneResponse
+	if err := decodeGuestAgentResponse(raw, &response); err != nil {
+		return "", fmt.Errorf("decode guest timezone response: %w", err)
+	}
+	return strings.TrimSpace(response.Return.Zone), nil
+}
+
+func parseGuestRoutes(raw string) ([]domain.GuestAgentRoute, error) {
+	var response guestRouteResponse
+	if err := decodeGuestAgentResponse(raw, &response); err != nil {
+		return nil, fmt.Errorf("decode guest route response: %w", err)
+	}
+	result := make([]domain.GuestAgentRoute, 0, len(response.Return))
+	for _, route := range response.Return {
+		destination := strings.TrimSpace(route.Destination)
+		family := strings.ToLower(strings.TrimSpace(route.Family))
+		if family == "" {
+			if strings.Contains(destination, ":") {
+				family = "ipv6"
+			} else if destination != "" {
+				family = "ipv4"
+			}
+		}
+		result = append(result, domain.GuestAgentRoute{
+			Destination: destination, Gateway: strings.TrimSpace(route.Gateway),
+			Interface: strings.TrimSpace(route.Interface), Family: family, Metric: route.Metric,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Family != result[j].Family {
+			return result[i].Family == "ipv4"
+		}
+		if result[i].Destination != result[j].Destination {
+			return result[i].Destination < result[j].Destination
+		}
+		return result[i].Interface < result[j].Interface
+	})
+	return result, nil
+}
+
+func isWindowsGuest(info domain.GuestAgentOSInfo) bool {
+	value := strings.ToLower(strings.TrimSpace(info.ID + " " + info.Name + " " + info.PrettyName))
+	return strings.Contains(value, "windows") || strings.Contains(value, "microsoft")
+}
+
+func guestAgentDiagnosticFromError(err error) (string, string) {
+	message := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, libvirt.ERR_AGENT_UNRESPONSIVE), errors.Is(err, libvirt.ERR_AGENT_COMMAND_TIMEOUT):
+		return "agent_unresponsive", "Guest Agent 无响应；请检查客户机 qemu-guest-agent 服务、virtio-serial 驱动和客户机负载。"
+	case errors.Is(err, libvirt.ERR_AGENT_UNSYNCED):
+		return "agent_unsynced", "Guest Agent 尚未完成同步；请稍后刷新或重启客户机代理服务。"
+	case errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED):
+		return "protocol_unsupported", "当前 Agent 或 QEMU 版本不支持该能力，请升级 qemu-guest-agent。"
+	case strings.Contains(message, "permission"), strings.Contains(message, "denied"):
+		return "permission_denied", "客户机代理拒绝了请求；请检查 Agent 运行权限或相关策略。"
+	default:
+		return "agent_not_running", "Agent 未响应；请在客户机内安装并启动 qemu-guest-agent，并确认 virtio-serial 驱动已加载。"
 	}
 }
 

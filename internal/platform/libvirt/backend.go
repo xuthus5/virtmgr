@@ -40,6 +40,15 @@ type Backend interface {
 	GetGuestAgentInfo(ctx context.Context, uuid string, refresh bool) (domain.GuestAgentInfo, error)
 	PerformGuestAgentAction(ctx context.Context, uuid string, spec domain.GuestAgentActionSpec) error
 	EnsureGuestAgentChannel(ctx context.Context, uuid string) (domain.VM, error)
+	ReadGuestAgentFile(ctx context.Context, uuid string, spec domain.GuestAgentFileReadSpec) (domain.GuestAgentFileContent, error)
+	WriteGuestAgentFile(ctx context.Context, uuid string, spec domain.GuestAgentFileWriteSpec) (domain.GuestAgentFileWriteResult, error)
+	ResetGuestAgentPassword(ctx context.Context, uuid string, spec domain.GuestAgentPasswordSpec) error
+	ListGuestAgentAuthorizedKeys(ctx context.Context, uuid, username string) (domain.GuestAgentAuthorizedKeys, error)
+	AddGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
+	RemoveGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
+	ListGuestAgentProcesses(ctx context.Context, uuid string) ([]domain.GuestAgentProcess, error)
+	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
+	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
 	ListSnapshots(ctx context.Context, uuid string) ([]domain.VMSnapshot, error)
 	CreateSnapshot(ctx context.Context, uuid string, spec domain.VMSnapshotCreateSpec) (domain.VMSnapshot, error)
 	RevertSnapshot(ctx context.Context, uuid, name string) error

@@ -44,6 +44,11 @@ type guestNetworkInterface struct {
 
 func populateGuestInfo(dom *libvirt.Domain, vm *domain.VM) {
 	if vm.State != domain.VMStateRunning && vm.State != domain.VMStateBlocked {
+		if vm.AgentConfigured {
+			vm.AgentState = domain.GuestAgentStateDisconnected
+		} else {
+			vm.AgentState = domain.GuestAgentStateNotConfigured
+		}
 		return
 	}
 	rawHostname, err := dom.QemuAgentCommand(`{"execute":"guest-get-host-name"}`, libvirt.DomainQemuAgentCommandTimeout(guestAgentTimeoutSeconds), 0)
@@ -55,6 +60,7 @@ func populateGuestInfo(dom *libvirt.Domain, vm *domain.VM) {
 		return
 	}
 	vm.AgentConnected = true
+	vm.AgentState = domain.GuestAgentStateConnected
 	vm.Hostname = hostname
 	rawInterfaces, err := dom.QemuAgentCommand(`{"execute":"guest-network-get-interfaces"}`, libvirt.DomainQemuAgentCommandTimeout(guestAgentTimeoutSeconds), 0)
 	if err != nil {

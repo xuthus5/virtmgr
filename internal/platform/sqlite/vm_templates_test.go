@@ -14,13 +14,13 @@ func TestVMTemplateStoreCRUD(t *testing.T) {
 	spec := domain.VMTemplateSpec{
 		Name: "linux-base", Description: "base image", VCPUs: 2, MemoryMiB: 2048,
 		DiskFormat: "qcow2", Network: "default", Firmware: domain.VMFirmwareBIOS,
-		CloudInit: true, CloudInitUserData: "#cloud-config\n", Autostart: true,
+		CloudInit: true, CloudInitUserData: "#cloud-config\n", GuestAgent: boolPtr(true), Autostart: true,
 	}
 	created, err := store.CreateVMTemplate(ctx, spec)
 	if err != nil {
 		t.Fatalf("CreateVMTemplate() error = %v", err)
 	}
-	if created.ID < 1 || created.Name != "linux-base" || !created.CloudInit || !created.Autostart {
+	if created.ID < 1 || created.Name != "linux-base" || !created.CloudInit || !created.GuestAgent || !created.Autostart {
 		t.Fatalf("created template = %+v", created)
 	}
 	byName, err := store.VMTemplateByName(ctx, "LINUX-BASE")
@@ -35,11 +35,12 @@ func TestVMTemplateStoreCRUD(t *testing.T) {
 	spec.Firmware = domain.VMFirmwareUEFI
 	spec.SecureBoot = true
 	spec.MemoryMiB = 4096
+	spec.GuestAgent = boolPtr(false)
 	updated, err := store.UpdateVMTemplate(ctx, created.ID, spec)
 	if err != nil {
 		t.Fatalf("UpdateVMTemplate() error = %v", err)
 	}
-	if updated.Name != "secure-web" || updated.Firmware != domain.VMFirmwareUEFI || !updated.SecureBoot || updated.MemoryMiB != 4096 {
+	if updated.Name != "secure-web" || updated.Firmware != domain.VMFirmwareUEFI || !updated.SecureBoot || updated.MemoryMiB != 4096 || updated.GuestAgent {
 		t.Fatalf("updated template = %+v", updated)
 	}
 	list, err := store.ListVMTemplates(ctx)
@@ -59,3 +60,5 @@ func TestVMTemplateStoreCRUD(t *testing.T) {
 		t.Fatalf("second delete error = %v", err)
 	}
 }
+
+func boolPtr(value bool) *bool { return &value }

@@ -1,4 +1,4 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentInfo, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentSSHKeyInput, GuestAgentUserList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -166,13 +166,58 @@ export const api = {
   guestAgent: (uuid: string, refresh = false) => request<GuestAgentInfo>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent${refresh ? "?refresh=true" : ""}`,
   ),
-  performGuestAgentAction: (uuid: string, input: GuestAgentActionInput) => request<void>(
+  performGuestAgentAction: (uuid: string, input: GuestAgentActionInput) => request<Task>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/actions`,
     { method: "POST", body: JSON.stringify(input) },
   ),
   ensureGuestAgentChannel: (uuid: string) => request<VM>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/channel`,
     { method: "POST" },
+  ),
+  guestAgentFile: (uuid: string, path: string, offset = 0, maxBytes = 0) => {
+    const params = new URLSearchParams({ path });
+    if (offset) params.set("offset", String(offset));
+    if (maxBytes) params.set("maxBytes", String(maxBytes));
+    return request<GuestAgentFileContent>(`/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/files?${params.toString()}`);
+  },
+  writeGuestAgentFile: (uuid: string, input: GuestAgentFileWriteInput) => request<GuestAgentFileWriteResponse>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/files`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  resetGuestAgentPassword: (uuid: string, input: GuestAgentPasswordInput) => request<Task>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/password`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  guestAgentSSHKeys: (uuid: string, username: string) => request<GuestAgentAuthorizedKeys>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/ssh-keys?username=${encodeURIComponent(username)}`,
+  ),
+  addGuestAgentSSHKeys: (uuid: string, input: GuestAgentSSHKeyInput) => request<Task>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/ssh-keys/add`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  removeGuestAgentSSHKeys: (uuid: string, input: GuestAgentSSHKeyInput) => request<Task>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/ssh-keys/remove`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  guestAgentProcesses: (uuid: string) => request<GuestAgentProcessList>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/processes`,
+  ),
+  signalGuestAgentProcess: (uuid: string, input: GuestAgentProcessSignalInput) => request<Task>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/processes/signal`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  guestAgentUsers: (uuid: string) => request<GuestAgentUserList>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/users`,
+  ),
+  guestAgentPolicy: (uuid: string) => request<GuestAgentPolicy>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/policy`,
+  ),
+  updateGuestAgentPolicy: (uuid: string, input: GuestAgentPolicyInput) => request<GuestAgentPolicy>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/policy`,
+    { method: "PUT", body: JSON.stringify(input) },
+  ),
+  guestAgentHealth: (uuid: string, hours = 24, limit = 288) => request<GuestAgentHealthHistory>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/health?hours=${hours}&limit=${limit}`,
   ),
   vmMetadata: (uuid: string) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`),
   updateVMMetadata: (uuid: string, input: VMMetadataInput) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`, {

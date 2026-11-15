@@ -48,6 +48,33 @@ test("可写模式完成启动和强制下电确认", async ({ page }) => {
   await expect(page.getByTestId("guest-agent-state")).toHaveText("未连接");
 });
 
+test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+  await expect(page.getByTestId("guest-agent-controls")).toBeVisible();
+  await page.getByLabel("客户机文件路径").fill("/etc/os-release");
+  await page.getByTestId("guest-agent-file-read").click();
+  await expect(page.getByTestId("guest-agent-file-preview")).toContainText("Ubuntu 24.04.1 LTS");
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("文件读取完成");
+
+  await page.getByLabel("新密码").fill("temporary-e2e-secret");
+  await page.getByTestId("guest-agent-password-reset").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("密码已重置");
+  await expect(page.getByLabel("新密码")).toHaveValue("");
+
+  await page.getByTestId("guest-agent-process-load").click();
+  const processRow = page.getByTestId("guest-agent-process-918");
+  await expect(processRow).toContainText("nginx");
+  await page.getByTestId("guest-agent-process-signal-918").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("进程信号任务");
+  await expect(processRow).toHaveCount(0);
+});
+
 test("可写模式批量暂停和恢复虚拟机", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
@@ -305,7 +332,7 @@ test("可写模式上传存储卷并刷新列表", async ({ page }) => {
   await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("成功");
 
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await expect(page.getByTestId("tasks-total")).toHaveText("共 5 个任务");
+  await expect(page.getByTestId("tasks-total")).toHaveText(/共 \d+ 个任务/);
   const uploadTask = page.locator('[data-testid^="task-row-"]').filter({ hasText: "e2e-upload.iso" }).first();
   await expect(uploadTask).toContainText("上传存储卷");
   await expect(uploadTask).toContainText("已完成");

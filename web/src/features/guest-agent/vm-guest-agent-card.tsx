@@ -35,8 +35,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { guestAgentQueryKey, useGuestAgentQuery } from "@/features/guest-agent/use-guest-agent-query";
 import { guestAgentActionUnavailableReason, guestAgentCanAddChannel } from "@/features/guest-agent/guest-agent-model";
+import { GuestAgentControls } from "@/features/guest-agent/guest-agent-controls";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { cn, formatBytes, percent } from "@/lib/utils";
 
@@ -53,7 +56,7 @@ const actionMeta: Record<GuestAgentAction, { label: string; icon: typeof Power; 
   shutdown: { label: "由代理关机", icon: Power, confirm: true },
   reboot: { label: "由代理重启", icon: RotateCcw, confirm: true },
   "sync-time": { label: "同步时间", icon: Clock },
-  trim: { label: "执行 TRIM", icon: Scissors },
+  trim: { label: "执行 TRIM", icon: Scissors, confirm: true },
 };
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -83,6 +86,12 @@ function capabilityBadges(info: GuestAgentInfo) {
     ["时间同步", info.capabilities.timeSync],
     ["TRIM", info.capabilities.trim],
     ["静默快照", info.capabilities.quiesce],
+    ["文件读写", info.capabilities.fileAccess],
+    ["密码重置", info.capabilities.passwordReset],
+    ["SSH Key", info.capabilities.sshKeys],
+    ["进程管理", info.capabilities.processes],
+    ["登录用户", info.capabilities.users],
+    ["时区/路由", info.capabilities.timezone || info.capabilities.networkRoutes],
   ] as const;
   return capabilities.map(([label, enabled]) => (
     <Badge key={label} variant={enabled ? "success" : "secondary"}>{label}</Badge>
@@ -98,6 +107,8 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
   const query = useGuestAgentQuery(vm.uuid);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [confirmAction, setConfirmAction] = useState<GuestAgentAction | null>(null);
+  const [trimMount, setTrimMount] = useState("/");
+  const [trimMinimumBytes, setTrimMinimumBytes] = useState("0");
 
   const refreshMutation = useMutation({
     mutationFn: () => api.guestAgent(vm.uuid, true),
@@ -193,7 +204,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
 
             {info.lastError ? (
               <div className="flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning" data-testid="guest-agent-error">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="break-all">{info.lastError}</span>
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="break-all">{info.lastError}{info.diagnosticCode ? ` [${info.diagnosticCode}]` : ""}{info.diagnosticHint ? ` ${info.diagnosticHint}` : ""}</span>
               </div>
             ) : null}
 
@@ -236,6 +247,13 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
                   <p className="mb-2 text-xs font-medium text-muted-foreground">可用能力</p>
                   <div className="flex flex-wrap gap-1.5" data-testid="guest-agent-capabilities">{capabilityBadges(info)}</div>
                 </div>
+
+                {info.timezone || info.routes.length ? (
+                  <div className="grid gap-3 text-xs sm:grid-cols-2">
+                    <div className="rounded-md border bg-muted/20 p-3"><p className="text-muted-foreground">客户机时区</p><p className="mt-1 font-mono">{info.timezone || "-"}</p></div>
+                    <div className="rounded-md border bg-muted/20 p-3"><p className="text-muted-foreground">路由</p>{info.routes.length ? info.routes.slice(0, 6).map((route) => <p key={`${route.family}-${route.destination}-${route.gateway}`} className="mt-1 truncate font-mono">{route.destination || "-"}{route.gateway ? ` via ${route.gateway}` : ""} · {route.interface || "-"}</p>) : <p className="mt-1 text-muted-foreground">未返回路由。</p>}</div>
+                  </div>
+                ) : null}
 
                 <div className="grid gap-4 xl:grid-cols-2">
                   <div className="overflow-hidden rounded-md border">
@@ -294,6 +312,13 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
                     );
                   })}
                 </div>
+
+                <GuestAgentControls
+                  uuid={vm.uuid}
+                  canMutate={canMutate}
+                  disabledReason={disabledReason}
+                  notify={(tone, text) => setNotice({ tone, text })}
+                />
               </>
             ) : null}
           </>
@@ -305,7 +330,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
           </p>
         ) : null}
 
-        <p className="flex items-start gap-2 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />Guest Agent 不回传密码或任意命令；本页仅开放固定动作。</p>
+        <p className="flex items-start gap-2 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />Guest Agent 不提供任意命令执行；文件、密码、SSH Key 与进程操作均走固定接口并记录脱敏审计。</p>
       </CardContent>
 
       <AlertDialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
@@ -313,13 +338,19 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmAction ? actionMeta[confirmAction].label : "确认操作"}？</AlertDialogTitle>
             <AlertDialogDescription>该操作会通过客户机内的 QEMU Guest Agent 执行。请确认客户机内的服务与工作负载已做好准备。</AlertDialogDescription>
+            {confirmAction === "trim" ? (
+              <div className="space-y-3 text-left">
+                <div className="space-y-1"><Label htmlFor="guest-trim-mount">文件系统挂载点</Label><select id="guest-trim-mount" value={trimMount} onChange={(event) => setTrimMount(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="">全部支持的文件系统</option>{info?.filesystems.map((filesystem) => <option key={filesystem.mountPoint} value={filesystem.mountPoint}>{filesystem.mountPoint} ({filesystem.type || "unknown"})</option>)}</select></div>
+                <div className="space-y-1"><Label htmlFor="guest-trim-minimum">最小回收字节数</Label><Input id="guest-trim-minimum" type="number" min={0} value={trimMinimumBytes} onChange={(event) => setTrimMinimumBytes(event.target.value)} /></div>
+              </div>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={actionMutation.isPending}>取消</AlertDialogCancel>
             <Button
               data-testid="guest-agent-confirm-action"
               disabled={!confirmAction || actionMutation.isPending}
-              onClick={() => { if (confirmAction) actionMutation.mutate({ action: confirmAction }); }}
+              onClick={() => { if (confirmAction) actionMutation.mutate({ action: confirmAction, mount: confirmAction === "trim" && trimMount ? trimMount : undefined, minimumBytes: confirmAction === "trim" ? Number(trimMinimumBytes) || undefined : undefined }); }}
             >
               {actionMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}确认执行
             </Button>

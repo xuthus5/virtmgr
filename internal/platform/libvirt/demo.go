@@ -20,17 +20,21 @@ import (
 )
 
 type DemoBackend struct {
-	mu          sync.RWMutex
-	events      EventSink
-	vms         map[string]domain.VM
-	xmlConfig   map[string]string
-	snapshots   map[string][]domain.VMSnapshot
-	pools       map[string]domain.StoragePool
-	volumes     map[string][]domain.StorageVolume
-	volumeData  map[string][]byte
-	networks    map[string]domain.VirtualNetwork
-	leases      map[string][]domain.DHCPLease
-	metricCalls map[string]uint64
+	mu             sync.RWMutex
+	events         EventSink
+	vms            map[string]domain.VM
+	xmlConfig      map[string]string
+	snapshots      map[string][]domain.VMSnapshot
+	pools          map[string]domain.StoragePool
+	volumes        map[string][]domain.StorageVolume
+	volumeData     map[string][]byte
+	networks       map[string]domain.VirtualNetwork
+	leases         map[string][]domain.DHCPLease
+	metricCalls    map[string]uint64
+	guestFiles     map[string][]byte
+	guestSSHKeys   map[string][]string
+	guestProcesses []domain.GuestAgentProcess
+	guestUsers     []domain.GuestAgentUser
 }
 
 func NewDemo(sinks ...EventSink) *DemoBackend {
@@ -44,6 +48,22 @@ func NewDemo(sinks ...EventSink) *DemoBackend {
 		networks:    make(map[string]domain.VirtualNetwork),
 		leases:      demoNetworkLeases(),
 		metricCalls: make(map[string]uint64),
+		guestFiles: map[string][]byte{
+			"/etc/hostname":   []byte("demo-db-01\n"),
+			"/etc/os-release": []byte("PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n"),
+		},
+		guestSSHKeys: map[string][]string{
+			"root": {"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoVirtMgrGuestAgentKeyOnly demo@virtmgr"},
+		},
+		guestProcesses: []domain.GuestAgentProcess{
+			{PID: 1, PPID: 0, User: "root", State: "Ss", Command: "systemd", Args: "/sbin/init"},
+			{PID: 412, PPID: 1, User: "root", State: "Ssl", Command: "sshd", Args: "sshd: /usr/sbin/sshd -D"},
+			{PID: 918, PPID: 1, User: "www-data", State: "S", Command: "nginx", Args: "nginx: worker process"},
+			{PID: 1042, PPID: 1, User: "root", State: "Ssl", Command: "qemu-ga", Args: "/usr/sbin/qemu-ga"},
+		},
+		guestUsers: []domain.GuestAgentUser{
+			{Username: "deploy", Domain: "demo", LoginTime: time.Now().Add(-42 * time.Minute).Unix()},
+		},
 	}
 	if len(sinks) > 0 {
 		backend.events = sinks[0]
@@ -546,6 +566,13 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 		Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: demoMAC(len(d.vms) + 1), Source: spec.Network, Model: "virtio"}},
 		Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5900 + len(d.vms) + 1}},
 		IPAddresses: []string{}, AgentConnected: spec.Start && spec.GuestAgentEnabled(),
+		AgentConfigured: spec.GuestAgentEnabled(),
+		AgentState: func() domain.GuestAgentState {
+			if spec.GuestAgentEnabled() {
+				return domain.GuestAgentStateDisconnected
+			}
+			return domain.GuestAgentStateNotConfigured
+		}(),
 		AllowedActions: domain.AllowedVMActions(state),
 	}
 	xmlText := demoVMDomainXML(vm)
@@ -1745,7 +1772,7 @@ func demoVMDomainXML(vm domain.VM) string {
 			fmt.Fprintf(&builder, "    %s\n", hostdevXML)
 		}
 	}
-	if vm.AgentConnected {
+	if vm.AgentConfigured {
 		builder.WriteString("    <controller type='virtio-serial' index='0'/>\n    <channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>\n")
 	}
 	builder.WriteString("  </devices>\n</domain>\n")
@@ -1777,6 +1804,7 @@ func demoVMs() []domain.VM {
 			Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5901}},
 			Serials:     demoSerialConsoles(),
 			IPAddresses: []string{"192.168.122.101"}, Hostname: "demo-web-01", AgentConnected: true,
+			AgentConfigured: true, AgentState: domain.GuestAgentStateConnected,
 			AllowedActions: domain.AllowedVMActions(domain.VMStateRunning),
 		},
 		{
@@ -1788,28 +1816,31 @@ func demoVMs() []domain.VM {
 			Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5902}},
 			Serials:     demoSerialConsoles(),
 			IPAddresses: []string{"192.168.122.102"}, Hostname: "demo-db-01", AgentConnected: true,
+			AgentConfigured: true, AgentState: domain.GuestAgentStateConnected,
 			AllowedActions: domain.AllowedVMActions(domain.VMStateRunning),
 		},
 		{
 			UUID: "33333333-3333-4333-8333-333333333333", Name: "demo-build-01", State: domain.VMStatePaused,
 			Persistent: true, Autostart: false, VCPUs: 2, MaxVCPUs: 4, MemoryBytes: 4 * 1024 * 1024 * 1024, MaxMemoryBytes: 8 * 1024 * 1024 * 1024,
 			OSType: "hvm", Arch: "x86_64", Machine: "pc-q35-10.2", Firmware: domain.VMFirmwareBIOS,
-			Disks:          []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-build-01.qcow2", CapacityBytes: 30 * 1024 * 1024 * 1024, AllocationBytes: 12 * 1024 * 1024 * 1024}},
-			Interfaces:     []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:03", Source: "default", Model: "virtio"}},
-			Graphics:       []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5903}},
-			Serials:        demoSerialConsoles(),
-			IPAddresses:    []string{},
+			Disks:           []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-build-01.qcow2", CapacityBytes: 30 * 1024 * 1024 * 1024, AllocationBytes: 12 * 1024 * 1024 * 1024}},
+			Interfaces:      []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:03", Source: "default", Model: "virtio"}},
+			Graphics:        []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5903}},
+			Serials:         demoSerialConsoles(),
+			IPAddresses:     []string{},
+			AgentConfigured: false, AgentState: domain.GuestAgentStateNotConfigured,
 			AllowedActions: domain.AllowedVMActions(domain.VMStatePaused),
 		},
 		{
 			UUID: "44444444-4444-4444-8444-444444444444", Name: "demo-legacy-01", State: domain.VMStateShutoff,
 			Persistent: true, Autostart: false, VCPUs: 2, MaxVCPUs: 2, MemoryBytes: 2 * 1024 * 1024 * 1024, MaxMemoryBytes: 2 * 1024 * 1024 * 1024,
 			OSType: "hvm", Arch: "x86_64", Machine: "pc-i440fx-10.2", Firmware: domain.VMFirmwareBIOS,
-			Disks:          []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-legacy-01.qcow2", CapacityBytes: 20 * 1024 * 1024 * 1024, AllocationBytes: 30 * 1024 * 1024 * 1024}},
-			Interfaces:     []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:04", Source: "default", Model: "virtio"}},
-			Graphics:       []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5904}},
-			Serials:        demoSerialConsoles(),
-			IPAddresses:    []string{},
+			Disks:           []domain.Disk{{Device: "disk", Target: "vda", Bus: "virtio", Format: "qcow2", Source: "/var/lib/libvirt/images/demo-legacy-01.qcow2", CapacityBytes: 20 * 1024 * 1024 * 1024, AllocationBytes: 30 * 1024 * 1024 * 1024}},
+			Interfaces:      []domain.NetworkInterface{{Type: "network", MAC: "52:54:00:01:00:04", Source: "default", Model: "virtio"}},
+			Graphics:        []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5904}},
+			Serials:         demoSerialConsoles(),
+			IPAddresses:     []string{},
+			AgentConfigured: false, AgentState: domain.GuestAgentStateNotConfigured,
 			AllowedActions: domain.AllowedVMActions(domain.VMStateShutoff),
 		},
 	}

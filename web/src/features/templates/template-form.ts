@@ -14,6 +14,7 @@ export type TemplateFormState = {
   cloudInitUserData: string;
   cloudInitNetworkConfig: string;
   cloudInitVendorData: string;
+  guestAgent: boolean;
   autostart: boolean;
   start: boolean;
 };
@@ -32,6 +33,7 @@ export const initialTemplateForm: TemplateFormState = {
   cloudInitUserData: "",
   cloudInitNetworkConfig: "",
   cloudInitVendorData: "",
+  guestAgent: true,
   autostart: false,
   start: false,
 };
@@ -51,6 +53,7 @@ export function templateToForm(template: VMTemplate): TemplateFormState {
     cloudInitUserData: template.cloudInitUserData ?? "",
     cloudInitNetworkConfig: template.cloudInitNetworkConfig ?? "",
     cloudInitVendorData: template.cloudInitVendorData ?? "",
+    guestAgent: template.guestAgent ?? true,
     autostart: template.autostart,
     start: template.start,
   };
@@ -71,6 +74,7 @@ export function formToTemplateInput(form: TemplateFormState): VMTemplateInput {
     cloudInitUserData: form.cloudInit ? form.cloudInitUserData : undefined,
     cloudInitNetworkConfig: form.cloudInit ? form.cloudInitNetworkConfig : undefined,
     cloudInitVendorData: form.cloudInit ? form.cloudInitVendorData : undefined,
+    guestAgent: form.guestAgent,
     autostart: form.autostart,
     start: form.start,
   };
@@ -90,6 +94,7 @@ export type TemplateVMCreateDefaults = {
   cloudInitUserData: string;
   cloudInitNetworkConfig: string;
   cloudInitVendorData: string;
+  guestAgent: boolean;
 };
 
 export function templateVMCreateDefaults(template: VMTemplate): TemplateVMCreateDefaults {
@@ -105,6 +110,7 @@ export function templateVMCreateDefaults(template: VMTemplate): TemplateVMCreate
     cloudInitUserData: template.cloudInit ? template.cloudInitUserData ?? "" : "",
     cloudInitNetworkConfig: template.cloudInit ? template.cloudInitNetworkConfig ?? "" : "",
     cloudInitVendorData: template.cloudInit ? template.cloudInitVendorData ?? "" : "",
+    guestAgent: template.guestAgent ?? true,
     autostart: template.autostart,
     start: template.start,
   };
