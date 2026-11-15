@@ -155,6 +155,17 @@ func (s *Service) prepareImport(ctx context.Context, spec domain.VMImportSpec, c
 	} else {
 		diskCapacity = source.CapacityBytes
 	}
+	targetPoolInfo, err := s.importVolumes.GetStoragePool(ctx, targetPool)
+	if err != nil {
+		return importPlan{}, err
+	}
+	required := domain.StorageProvisionRequiredBytes(targetFormat, diskCapacity, source.AllocationBytes)
+	if sourceKind == importSourceKindISO {
+		required = domain.StorageProvisionRequiredBytes(targetFormat, diskCapacity, 0)
+	}
+	if !domain.StoragePoolHasCapacity(targetPoolInfo, required) {
+		return importPlan{}, fmt.Errorf("%w: target pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, targetPool, required, targetPoolInfo.AvailableBytes)
+	}
 	return importPlan{
 		createSpec: createSpec, source: source, sourcePool: spec.SourcePool, sourceKind: sourceKind,
 		targetPool: targetPool, targetName: targetName, format: format, diskCapacity: diskCapacity,

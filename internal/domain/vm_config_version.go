@@ -23,6 +23,7 @@ const (
 	VMConfigSourceDiskResize     VMConfigVersionSource = "disk_resize"
 	VMConfigSourceDiskHotplug    VMConfigVersionSource = "disk_hotplug"
 	VMConfigSourceNetworkHotplug VMConfigVersionSource = "network_hotplug"
+	VMConfigSourceISOEject       VMConfigVersionSource = "iso_eject"
 	VMConfigSourceBaseline       VMConfigVersionSource = "baseline"
 )
 
@@ -33,7 +34,7 @@ func ValidVMConfigVersionSource(value VMConfigVersionSource) bool {
 		VMConfigSourceClone, VMConfigSourceImport, VMConfigSourceBackupRestore, VMConfigSourceRollback,
 		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceBaseline:
 		return true
-	case VMConfigSourceDiskHotplug, VMConfigSourceNetworkHotplug:
+	case VMConfigSourceDiskHotplug, VMConfigSourceNetworkHotplug, VMConfigSourceISOEject:
 		return true
 	default:
 		return false

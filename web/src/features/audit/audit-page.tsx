@@ -34,6 +34,7 @@ const actions = [
   { value: "vm.delete", label: "删除虚拟机" },
   { value: "vm.export", label: "导出虚拟机配置" },
   { value: "vm.xml.update", label: "更新虚拟机 XML" },
+  { value: "vm.iso.eject", label: "弹出虚拟机 ISO" },
   { value: "vm.config.version.create", label: "归档配置版本" },
   { value: "vm.config.version.pin", label: "更新版本保护" },
   { value: "vm.config.rollback", label: "回滚域 XML 版本" },

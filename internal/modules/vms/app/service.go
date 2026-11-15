@@ -82,11 +82,13 @@ type ImageRepository interface {
 }
 
 type ImageVolumeRepository interface {
+	GetStoragePool(ctx context.Context, name string) (domain.StoragePool, error)
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 }
 
 type ImportVolumeRepository interface {
+	GetStoragePool(ctx context.Context, name string) (domain.StoragePool, error)
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error)
@@ -621,6 +623,14 @@ func (s *Service) prepareImageDisk(ctx context.Context, spec *domain.VMCreateSpe
 		return domain.VMImage{}, domain.ErrInvalidInput
 	}
 	targetName := imageDiskName(spec.Name, image.Format)
+	pool, err := s.imageVolumes.GetStoragePool(ctx, targetPool)
+	if err != nil {
+		return domain.VMImage{}, err
+	}
+	required := domain.StorageProvisionRequiredBytes(image.Format, image.CapacityBytes, image.AllocationBytes)
+	if !domain.StoragePoolHasCapacity(pool, required) {
+		return domain.VMImage{}, fmt.Errorf("%w: target pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, targetPool, required, pool.AvailableBytes)
+	}
 	volume, err := s.imageVolumes.CloneStorageVolume(ctx, image.Pool, image.Volume, targetPool, targetName)
 	if err != nil {
 		return domain.VMImage{}, err

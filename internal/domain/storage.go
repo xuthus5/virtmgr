@@ -1,5 +1,24 @@
 package domain
 
+const StorageCapacityReserveBytes = uint64(512 << 20)
+
+func StorageProvisionRequiredBytes(format string, capacity, allocation uint64) uint64 {
+	required := capacity
+	switch format {
+	case "qcow2":
+		if allocation > 0 {
+			required = allocation + allocation/20 + (64 << 20)
+		}
+	case "raw":
+		required = capacity
+	}
+	return required + StorageCapacityReserveBytes
+}
+
+func StoragePoolHasCapacity(pool StoragePool, required uint64) bool {
+	return required == 0 || pool.AvailableBytes >= required
+}
+
 type StoragePoolState string
 
 const (
@@ -51,12 +70,20 @@ type StoragePoolCreateSpec struct {
 }
 
 type StorageVolume struct {
-	Name            string `json:"name"`
-	Path            string `json:"path,omitempty"`
-	Type            string `json:"type"`
-	Format          string `json:"format,omitempty"`
-	CapacityBytes   uint64 `json:"capacityBytes"`
-	AllocationBytes uint64 `json:"allocationBytes"`
+	Name            string               `json:"name"`
+	Path            string               `json:"path,omitempty"`
+	Type            string               `json:"type"`
+	Format          string               `json:"format,omitempty"`
+	CapacityBytes   uint64               `json:"capacityBytes"`
+	AllocationBytes uint64               `json:"allocationBytes"`
+	UsedBy          []StorageVolumeUsage `json:"usedBy,omitempty"`
+}
+
+type StorageVolumeUsage struct {
+	VMUUID   string `json:"vmUuid"`
+	VMName   string `json:"vmName"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"readOnly"`
 }
 
 type StorageVolumeCreateSpec struct {

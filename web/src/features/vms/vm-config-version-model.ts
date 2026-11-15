@@ -13,6 +13,7 @@ export const vmConfigVersionSourceLabels: Record<VMConfigVersionSource, string> 
   rollback: "XML 版本回滚",
   pre_rollback: "回滚前自动存档",
   disk_resize: "磁盘扩容",
+  iso_eject: "弹出安装 ISO",
   baseline: "初始基线",
 };
 

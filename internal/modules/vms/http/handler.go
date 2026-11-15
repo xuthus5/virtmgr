@@ -121,6 +121,23 @@ func (h *Handler) UpdateXML(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
+func (h *Handler) EjectISO(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	result, err := h.service.EjectISO(r.Context(), vmsapp.EjectISOCommand{
+		UUID:    chi.URLParam(r, "uuid"),
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Export(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	session, ok := authctx.Session(r.Context())
 	if !ok {
@@ -580,6 +597,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/clone", h.Clone)
 		mutating.Post("/vms/{uuid}/backups", h.Backup)
 		mutating.Put("/vms/{uuid}/xml", h.UpdateXML)
+		mutating.Post("/vms/{uuid}/iso/eject", h.EjectISO)
 		mutating.Delete("/vms/{uuid}", h.Delete)
 		mutating.Patch("/vms/{uuid}/autostart", h.SetAutostart)
 		mutating.Patch("/vms/{uuid}/resources", h.UpdateResources)

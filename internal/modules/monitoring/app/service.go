@@ -44,6 +44,7 @@ type MetricsSource interface {
 type HostSource interface {
 	Host(ctx context.Context) (domain.Host, error)
 	ListVMs(ctx context.Context) ([]domain.VM, error)
+	ListStoragePools(ctx context.Context) ([]domain.StoragePool, error)
 }
 
 type AuditRecorder interface {
@@ -283,7 +284,11 @@ func (s *Service) sampleAndEvaluate(ctx context.Context) {
 			s.report(err)
 		}
 	}
-	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, now)
+	pools, poolErr := s.hosts.ListStoragePools(ctx)
+	if poolErr != nil {
+		s.report(fmt.Errorf("list storage pools for alerts: %w", poolErr))
+	}
+	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, pools, now)
 }
 
 func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics domain.ResourceMetrics) domain.MetricSample {
@@ -295,7 +300,7 @@ func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics doma
 	}
 }
 
-func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, now time.Time) {
+func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, now time.Time) {
 	rules, err := s.repository.ListAlertRules(ctx)
 	if err != nil {
 		s.report(err)
@@ -305,7 +310,7 @@ func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics
 		if !rule.Enabled {
 			continue
 		}
-		value, target, ok := ruleValue(rule.Metric, host, vms)
+		value, target, ok := ruleValue(rule.Metric, host, vms, pools)
 		if !ok {
 			continue
 		}
@@ -313,7 +318,7 @@ func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics
 	}
 }
 
-func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []domain.MetricSample) (float64, string, bool) {
+func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool) (float64, string, bool) {
 	hostMemory := percent(host.MemoryUsedBytes, host.MemoryTotalBytes)
 	switch metric {
 	case domain.AlertMetricHostCPUPercent:
@@ -326,9 +331,30 @@ func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []dom
 		return maxVMValue(vms, func(sample domain.MetricSample) float64 {
 			return percent(sample.MemoryUsedBytes, sample.MemoryTotalBytes)
 		})
+	case domain.AlertMetricStoragePoolPercent:
+		return maxStoragePoolValue(pools)
 	default:
 		return 0, "", false
 	}
+}
+
+func maxStoragePoolValue(pools []domain.StoragePool) (float64, string, bool) {
+	bestValue := float64(-1)
+	bestName := ""
+	for _, pool := range pools {
+		if pool.State != "" && pool.State != domain.StoragePoolStateActive {
+			continue
+		}
+		if pool.CapacityBytes == 0 {
+			continue
+		}
+		value := percent(pool.AllocationBytes, pool.CapacityBytes)
+		if value > bestValue {
+			bestValue = value
+			bestName = pool.Name
+		}
+	}
+	return bestValue, bestName, bestName != ""
 }
 
 func maxVMValue(samples []domain.MetricSample, value func(domain.MetricSample) float64) (float64, string, bool) {

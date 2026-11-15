@@ -335,16 +335,21 @@ export function StoragePage() {
                       <span>{formatBytes(selected.allocationBytes)} / {formatBytes(selected.capacityBytes)}</span>
                     </div>
                     {volumesQuery.data.items.length ? (
-                      <Table className="min-w-[960px]">
-                        <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>格式</TableHead><TableHead>容量</TableHead><TableHead>已分配</TableHead><TableHead>路径</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
+                      <Table className="min-w-[1080px]">
+                        <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>格式</TableHead><TableHead>容量</TableHead><TableHead>已分配</TableHead><TableHead>路径</TableHead><TableHead>使用关系</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
                         <TableBody>
-                          {volumesQuery.data.items.map((volume) => (
-                            <TableRow key={volume.path || volume.name} data-testid={`storage-volume-row-${volume.name}`}>
+                          {volumesQuery.data.items.map((volume) => {
+                            const usedBy = volume.usedBy ?? [];
+                            const inUse = usedBy.length > 0;
+                            return <TableRow key={volume.path || volume.name} data-testid={`storage-volume-row-${volume.name}`}>
                               <TableCell><p className="font-medium">{volume.name}</p><p className="text-[10px] text-muted-foreground">{volume.type}</p></TableCell>
                               <TableCell><Badge variant="outline">{volume.format || "-"}</Badge></TableCell>
                               <TableCell className="tabular-nums">{formatBytes(volume.capacityBytes)}</TableCell>
                               <TableCell className="tabular-nums">{formatBytes(volume.allocationBytes)}</TableCell>
                               <TableCell><span className="block max-w-72 truncate font-mono text-xs text-muted-foreground" title={volume.path}>{volume.path || "-"}</span></TableCell>
+                              <TableCell data-testid={`storage-volume-usage-${volume.name}`}>
+                                {inUse ? <div className="space-y-1"><Badge variant="warning">使用中</Badge><p className="max-w-56 text-xs text-muted-foreground">{usedBy.map((usage) => `${usage.vmName} · ${usage.target}${usage.readOnly ? "（只读）" : ""}`).join("，")}</p></div> : <Badge variant="secondary">空闲</Badge>}
+                              </TableCell>
                               <TableCell>
                                 <Button
                                   type="button"
@@ -352,15 +357,15 @@ export function StoragePage() {
                                   size="sm"
                                   data-testid={`delete-volume-${volume.name}`}
                                   aria-label={`删除存储卷 ${volume.name}`}
-                                  title={canManage ? "删除未被虚拟机占用的存储卷" : createDisabledReason}
-                                  disabled={!canManage || !selectedActive || deleteMutation.isPending}
+                                  title={inUse ? `被 ${usedBy.map((usage) => usage.vmName).join("、")} 引用，不能删除` : canManage ? "删除未被虚拟机占用的存储卷" : createDisabledReason}
+                                  disabled={!canManage || !selectedActive || deleteMutation.isPending || inUse}
                                   onClick={() => openDelete(volume)}
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />删除
                                 </Button>
                               </TableCell>
                             </TableRow>
-                          ))}
+                          })}
                         </TableBody>
                       </Table>
                     ) : <p className="p-5 text-sm text-muted-foreground">该存储池中没有卷。</p>}
@@ -380,6 +385,7 @@ export function StoragePage() {
               将从 <span className="font-medium text-foreground">{selected?.name}</span> 存储池永久删除 <span className="font-medium text-foreground">{deleteTarget?.name}</span>。被虚拟机引用的卷不能删除。
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteTarget?.usedBy?.length ? <p role="alert" className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">该卷正被 {deleteTarget.usedBy.map((usage) => `${usage.vmName}（${usage.target}）`).join("、")} 使用，请先移除对应磁盘设备。</p> : null}
           <div className="space-y-2">
             <Label htmlFor="delete-volume-name">输入存储卷名称确认</Label>
             <Input id="delete-volume-name" value={deleteName} onChange={(event) => setDeleteName(event.target.value)} placeholder={deleteTarget?.name} autoComplete="off" />

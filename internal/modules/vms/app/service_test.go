@@ -1840,12 +1840,25 @@ func (f fakeImageRepository) GetVMImage(context.Context, int64) (domain.VMImage,
 }
 
 type fakeImageVolumes struct {
-	clonedPool   string
-	clonedVolume string
-	targetPool   string
-	targetName   string
-	deleted      []string
-	cloneErr     error
+	clonedPool    string
+	clonedVolume  string
+	targetPool    string
+	targetName    string
+	deleted       []string
+	cloneErr      error
+	poolAvailable uint64
+	poolErr       error
+}
+
+func (f *fakeImageVolumes) GetStoragePool(_ context.Context, name string) (domain.StoragePool, error) {
+	if f.poolErr != nil {
+		return domain.StoragePool{}, f.poolErr
+	}
+	available := f.poolAvailable
+	if available == 0 {
+		available = 1 << 50
+	}
+	return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive, AvailableBytes: available}, nil
 }
 
 func (f *fakeImageVolumes) CloneStorageVolume(_ context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error) {
@@ -1927,5 +1940,23 @@ func TestCreateVMFromImageRejectsCloneFailureAndMixedDiskSources(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("mixed source error = %v", err)
+	}
+}
+
+func TestCreateVMFromImageRejectsInsufficientTargetPool(t *testing.T) {
+	volumes := &fakeImageVolumes{poolAvailable: 1 << 20}
+	repository := &recordingRepository{}
+	service := New(repository, &fakeAuditRecorder{}, false, WithImages(fakeImageRepository{image: domain.VMImage{
+		ID: 4, Name: "base", Pool: "images", Volume: "base.qcow2", Format: "qcow2", CapacityBytes: 20 << 30, AllocationBytes: 8 << 30,
+	}}, volumes))
+	_, err := service.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "web-04", VCPUs: 2, MemoryMiB: 2048, ImageID: 4, TargetPool: "vms"},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrStorageInsufficient) {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if volumes.clonedVolume != "" || len(repository.createdSpecs) != 0 {
+		t.Fatalf("clone=%q specs=%+v", volumes.clonedVolume, repository.createdSpecs)
 	}
 }

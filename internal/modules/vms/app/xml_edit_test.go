@@ -11,10 +11,18 @@ import (
 
 type xmlEditRepository struct {
 	fakeVMRepository
+	configXML   string
 	definedUUID string
 	definedXML  string
 	defineErr   error
 	calls       int
+}
+
+func (f *xmlEditRepository) GetVMXML(_ context.Context, uuid string, format domain.VMXMLFormat) (domain.VMXML, error) {
+	if f.configXML == "" {
+		return f.fakeVMRepository.GetVMXML(context.Background(), uuid, format)
+	}
+	return domain.VMXML{UUID: uuid, Name: "api-01", Format: format, XML: f.configXML}, nil
 }
 
 func (f *xmlEditRepository) DefineVMXML(_ context.Context, uuid, xmlText string) (domain.VMXML, error) {
@@ -160,5 +168,61 @@ func TestUpdateXMLAuditsBackendFailureAndFailsClosedOnAuditError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "record VM XML update audit") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestEjectISOUpdatesPersistentShutoffVMAndAudits(t *testing.T) {
+	vm := persistentVM()
+	vm.State = domain.VMStateShutoff
+	xmlText := `<domain><name>` + vm.Name + `</name><uuid>` + vm.UUID + `</uuid><devices><disk type="file" device="disk"><source file="/images/root.qcow2"/><target dev="vda" bus="virtio"/><boot order="2"/></disk><disk type="file" device="cdrom"><source file="/images/install.iso"/><target dev="sda" bus="sata"/><readonly/><boot order="1"/></disk></devices></domain>`
+	repository := &xmlEditRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{vm}}, configXML: xmlText}
+	audit := &fakeAuditRecorder{}
+	operator := adminSession()
+	operator.User.Role = domain.RoleOperator
+	result, err := New(repository, audit, false).EjectISO(context.Background(), EjectISOCommand{
+		UUID: vm.UUID, Request: MutationContext{Session: operator, RequestID: "req-eject", SourceIP: "127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("EjectISO() error = %v", err)
+	}
+	if result.UUID != vm.UUID || repository.calls != 1 || strings.Contains(repository.definedXML, "install.iso") {
+		t.Fatalf("result=%+v calls=%d xml=%s", result, repository.calls, repository.definedXML)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.iso.eject" || audit.events[0].Result != "success" || audit.events[0].Detail["target"] != "sda" {
+		t.Fatalf("audit = %+v", audit.events)
+	}
+}
+
+func TestEjectISORejectsRunningOrMissingISO(t *testing.T) {
+	running := persistentVM()
+	running.State = domain.VMStateRunning
+	shutoff := persistentVM()
+	shutoff.State = domain.VMStateShutoff
+	for _, test := range []struct {
+		name string
+		vm   domain.VM
+		xml  string
+		want error
+	}{
+		{name: "running", vm: running, xml: `<domain><name>` + running.Name + `</name><uuid>` + running.UUID + `</uuid></domain>`, want: domain.ErrActionNotAllowed},
+		{name: "missing iso", vm: shutoff, xml: `<domain><name>` + running.Name + `</name><uuid>` + running.UUID + `</uuid><devices><disk device="disk"><source file="/images/root.qcow2"/><target dev="vda"/></disk></devices></domain>`, want: domain.ErrActionNotAllowed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vm := test.vm
+			if vm.Name != "api-01" {
+				vm.Name = "api-01"
+			}
+			if vm.UUID != "uuid-a" {
+				vm.UUID = "uuid-a"
+			}
+			repository := &xmlEditRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{vm}}, configXML: test.xml}
+			_, err := New(repository, &fakeAuditRecorder{}, false).EjectISO(context.Background(), EjectISOCommand{UUID: vm.UUID, Request: MutationContext{Session: adminSession()}})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error = %v", err)
+			}
+			if repository.calls != 0 {
+				t.Fatalf("DefineVMXML calls = %d", repository.calls)
+			}
+		})
 	}
 }

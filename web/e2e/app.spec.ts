@@ -140,6 +140,9 @@ test("存储页展示存储池和卷", async ({ page }) => {
   await expect(page.getByTestId("storage-pool-active")).toHaveText("2");
   await expect(page.getByTestId("storage-volume-total")).toHaveText("共 4 个卷");
   await expect(page.getByText("demo-db-01.qcow2", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("storage-volume-usage-demo-web-01.qcow2")).toContainText("使用中");
+  await expect(page.getByTestId("storage-volume-usage-demo-web-01.qcow2")).toContainText("demo-web-01");
+  await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toBeDisabled();
   await expect(page.getByTestId("storage-create-volume")).toBeDisabled();
   await expect(page.getByTestId("storage-upload-iso")).toBeDisabled();
   await expect(page.getByTestId("storage-create-pool")).toBeDisabled();
@@ -153,6 +156,7 @@ test("存储页展示存储池和卷", async ({ page }) => {
   await page.getByRole("button", { name: "iso-store", exact: true }).click();
   await expect(page.getByTestId("storage-volume-total")).toHaveText("共 2 个卷");
   await expect(page.getByText("debian-13-netinst.iso", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("storage-volume-usage-debian-13-netinst.iso")).toContainText("空闲");
 
   await page.getByRole("button", { name: "archive", exact: true }).click();
   await expect(page.getByText("后端服务暂不可用", { exact: true })).toBeVisible();
@@ -739,6 +743,7 @@ test("镜像库展示演示镜像并在只读模式禁用写操作", async ({ pa
   await expect(row).toContainText("qcow2");
   await expect(row).toContainText("未计算");
   await expect(page.getByTestId("image-create-toggle")).toBeDisabled();
+  await expect(page.getByTestId("image-upload-toggle")).toBeDisabled();
   await expect(row.getByRole("button", { name: "刷新", exact: true })).toBeDisabled();
   await expect(page.getByTestId("image-read-only-notice")).toContainText("只读模式");
 });

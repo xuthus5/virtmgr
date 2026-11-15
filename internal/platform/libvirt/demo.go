@@ -237,6 +237,36 @@ func (d *DemoBackend) DefineVMXML(_ context.Context, uuid, xmlText string) (doma
 		return domain.VMXML{}, fmt.Errorf("%w: domain name and UUID must match the existing VM", domain.ErrInvalidInput)
 	}
 	xmlText = strings.TrimSpace(xmlText)
+	details, err := parseDomainXML(xmlText)
+	if err != nil {
+		return domain.VMXML{}, err
+	}
+	existingDisks := make(map[string]domain.Disk, len(vm.Disks))
+	for _, disk := range vm.Disks {
+		existingDisks[disk.Target+"\x00"+disk.Source] = disk
+	}
+	for index := range details.Disks {
+		disk := &details.Disks[index]
+		if existing, ok := existingDisks[disk.Target+"\x00"+disk.Source]; ok {
+			disk.CapacityBytes = existing.CapacityBytes
+			disk.AllocationBytes = existing.AllocationBytes
+			continue
+		}
+		for _, volumes := range d.volumes {
+			for _, volume := range volumes {
+				if volume.Path == disk.Source {
+					disk.CapacityBytes = volume.CapacityBytes
+					disk.AllocationBytes = volume.AllocationBytes
+				}
+			}
+		}
+	}
+	vm.Disks = details.Disks
+	vm.CloudInit = details.CloudInit
+	vm.AgentConfigured = details.GuestAgent
+	vm.Firmware = details.Firmware
+	vm.SecureBoot = details.SecureBoot
+	d.vms[uuid] = vm
 	d.xmlConfig[uuid] = xmlText
 	return domain.VMXML{UUID: vm.UUID, Name: vm.Name, Format: domain.VMXMLFormatConfig, XML: xmlText}, nil
 }

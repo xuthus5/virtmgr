@@ -234,6 +234,10 @@ export const api = {
     `/api/v1/vms/${encodeURIComponent(uuid)}/xml`,
     { method: "PUT", body: JSON.stringify(input) },
   ),
+  ejectVMISO: (uuid: string) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/iso/eject`,
+    { method: "POST" },
+  ),
   vmConfigVersions: (uuid: string) => request<VMConfigVersionList>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/config-versions`,
   ),

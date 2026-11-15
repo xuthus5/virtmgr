@@ -17,6 +17,7 @@ const metricLabels: Record<AlertMetric, string> = {
   host_memory_percent: "宿主机内存使用率",
   vm_cpu_percent: "虚拟机 CPU 使用率",
   vm_memory_percent: "虚拟机内存使用率",
+  storage_pool_percent: "存储池使用率（最高活跃池）",
 };
 
 const operatorLabels: Record<AlertOperator, string> = {

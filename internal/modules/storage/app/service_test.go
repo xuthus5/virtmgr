@@ -15,6 +15,7 @@ import (
 type fakeRepository struct {
 	pools               []domain.StoragePool
 	volumes             []domain.StorageVolume
+	vms                 []domain.VM
 	poolsErr            error
 	volumesErr          error
 	getPool             domain.StoragePool
@@ -39,6 +40,10 @@ type fakeRepository struct {
 	deletedName         string
 }
 
+func (f *fakeRepository) ListVMs(context.Context) ([]domain.VM, error) {
+	return f.vms, nil
+}
+
 func (f *fakeRepository) ListStoragePools(context.Context) ([]domain.StoragePool, error) {
 	return f.pools, f.poolsErr
 }
@@ -48,7 +53,7 @@ func (f *fakeRepository) GetStoragePool(_ context.Context, name string) (domain.
 		return domain.StoragePool{}, f.getPoolErr
 	}
 	if f.getPool.Name == "" {
-		return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive}, nil
+		return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive, AvailableBytes: 1 << 50}, nil
 	}
 	return f.getPool, nil
 }
@@ -158,6 +163,26 @@ func TestListVolumesSortsAndValidates(t *testing.T) {
 	}
 	if _, err := service.ListVolumes(context.Background(), "../default"); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("invalid pool error = %v", err)
+	}
+}
+
+func TestListVolumesAddsVMUsageRelationships(t *testing.T) {
+	repository := &fakeRepository{
+		volumes: []domain.StorageVolume{
+			{Name: "web.qcow2", Path: "/var/lib/libvirt/images/web.qcow2"},
+			{Name: "free.qcow2", Path: "/var/lib/libvirt/images/free.qcow2"},
+		},
+		vms: []domain.VM{{UUID: "uuid-web", Name: "web-01", Disks: []domain.Disk{{Target: "vda", Source: "/var/lib/libvirt/images/web.qcow2"}}}},
+	}
+	result, err := New(repository, nil, false).ListVolumes(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("ListVolumes() error = %v", err)
+	}
+	if len(result.Items) != 2 || len(result.Items[1].UsedBy) != 1 || result.Items[1].UsedBy[0].VMName != "web-01" {
+		t.Fatalf("volumes = %+v", result.Items)
+	}
+	if len(result.Items[0].UsedBy) != 0 {
+		t.Fatalf("free volume usedBy = %+v", result.Items[0].UsedBy)
 	}
 }
 

@@ -567,6 +567,7 @@ export type VMConfigVersionSource =
   | "rollback"
   | "pre_rollback"
   | "disk_resize"
+  | "iso_eject"
   | "baseline";
 
 export type VMConfigVersion = {
@@ -950,7 +951,7 @@ export type MetricHistoryFilters = {
   limit?: number;
 };
 
-export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent";
+export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent" | "storage_pool_percent";
 export type AlertOperator = "gt" | "gte" | "lt" | "lte";
 export type AlertState = "ok" | "pending" | "firing";
 
@@ -1075,6 +1076,14 @@ export type StorageVolume = {
   format?: string;
   capacityBytes: number;
   allocationBytes: number;
+  usedBy?: StorageVolumeUsage[];
+};
+
+export type StorageVolumeUsage = {
+  vmUuid: string;
+  vmName: string;
+  target: string;
+  readOnly: boolean;
 };
 
 export type StorageVolumeFormat = "qcow2" | "raw";

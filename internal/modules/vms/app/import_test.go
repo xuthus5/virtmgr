@@ -15,6 +15,7 @@ import (
 type fakeImportVolumes struct {
 	mu                 sync.Mutex
 	pools              map[string][]domain.StorageVolume
+	available          map[string]uint64
 	unavailable        map[string]bool
 	cloneErr           error
 	createErr          error
@@ -27,6 +28,19 @@ type fakeImportVolumes struct {
 	createdPool        string
 	createdVolumeSpecs []domain.StorageVolumeCreateSpec
 	deleted            []string
+}
+
+func (f *fakeImportVolumes) GetStoragePool(_ context.Context, name string) (domain.StoragePool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.pools[name]; !ok {
+		return domain.StoragePool{}, domain.ErrNotFound
+	}
+	available, ok := f.available[name]
+	if !ok {
+		available = 1 << 50
+	}
+	return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive, AvailableBytes: available}, nil
 }
 
 func (f *fakeImportVolumes) ListStorageVolumes(_ context.Context, poolName string) ([]domain.StorageVolume, error) {
@@ -104,6 +118,7 @@ func newImportVolumes(format string) *fakeImportVolumes {
 			"vms":    {},
 		},
 		unavailable: map[string]bool{},
+		available:   map[string]uint64{},
 	}
 }
 
@@ -155,6 +170,22 @@ func TestImportQCOW2AndRawStartsTaskAndKeepsSource(t *testing.T) {
 				t.Fatalf("audit = %+v", audit.events)
 			}
 		})
+	}
+}
+
+func TestImportRejectsInsufficientTargetPoolBeforeTask(t *testing.T) {
+	volumes := newImportVolumes("qcow2")
+	volumes.available["vms"] = 1 << 30
+	tasks := newFakeTaskRecorder()
+	service := New(&recordingRepository{}, &fakeAuditRecorder{}, false, WithTaskRecorder(tasks), WithImportVolumes(volumes))
+	_, err := service.Import(context.Background(), ImportCommand{
+		Spec: validImportSpec(), Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrStorageInsufficient) {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if tasks.startedKind != "" || volumes.targetName != "" {
+		t.Fatalf("task kind=%q targetName=%q", tasks.startedKind, volumes.targetName)
 	}
 }
 

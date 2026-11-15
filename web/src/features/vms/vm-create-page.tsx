@@ -77,6 +77,7 @@ export function VMCreatePage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(initialForm);
   const [diskPool, setDiskPool] = useState("");
+  const [isoPool, setIsoPool] = useState("");
   const [sourceMode, setSourceMode] = useState<"disk" | "image">("disk");
   const [selectedImageID, setSelectedImageID] = useState("");
   const [error, setError] = useState("");
@@ -86,10 +87,16 @@ export function VMCreatePage() {
   const activeNetworks = (networksQuery.data?.items ?? []).filter((network) => network.active);
   const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
   const volumesQuery = useStorageVolumesQuery(diskPool);
+  const isoVolumesQuery = useStorageVolumesQuery(isoPool);
   const diskVolumes = (volumesQuery.data?.items ?? []).filter((volume) => {
     const format = (volume.format || "").toLowerCase();
     return (format === "qcow2" || format === "raw") && /\.(qcow2|raw)$/i.test(volume.name);
   });
+  const isoVolumes = (isoVolumesQuery.data?.items ?? []).filter((volume) => {
+    const format = (volume.format || "").toLowerCase();
+    return /\.iso$/i.test(volume.name) && (format === "raw" || format === "iso" || format === "");
+  });
+  const selectedISOVolume = isoVolumes.find((volume) => volume.path === form.isoPath);
   const selectedVolume = diskVolumes.find((volume) => volume.path === form.diskPath);
   const templates = templatesQuery.data?.items ?? [];
   const images = imagesQuery.data?.items ?? [];
@@ -118,6 +125,15 @@ export function VMCreatePage() {
     const preferred = activePools.find((pool) => pool.name === "default") ?? activePools[0];
     setDiskPool(preferred.name);
   }, [activePools, diskPool]);
+
+  useEffect(() => {
+    if (!activePools.length) return;
+    if (activePools.some((pool) => pool.name === isoPool)) return;
+    const preferred = activePools.find((pool) => pool.name === "iso-store")
+      ?? activePools.find((pool) => pool.name === "default")
+      ?? activePools[0];
+    setIsoPool(preferred.name);
+  }, [activePools, isoPool]);
 
   const mutation = useMutation({
     mutationFn: (input: VMCreateInput) => api.createVM(input),
@@ -403,9 +419,40 @@ export function VMCreatePage() {
                 </select>
               </div>
               <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="vm-iso-path">ISO 路径（可选）</Label>
+                <Label>从存储池选择 ISO（可选）</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <select
+                    aria-label="ISO 存储池"
+                    data-testid="vm-iso-pool"
+                    value={isoPool}
+                    onChange={(event) => setIsoPool(event.target.value)}
+                    disabled={!canCreate || !activePools.length}
+                    className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    {!activePools.length ? <option value="">{poolsQuery.isLoading ? "正在读取存储池..." : "没有活跃存储池"}</option> : null}
+                    {activePools.map((pool) => <option key={pool.uuid || pool.name} value={pool.name}>{pool.name} · {pool.targetPath || "无目标路径"}</option>)}
+                  </select>
+                  <select
+                    aria-label="ISO 安装介质"
+                    data-testid="vm-iso-volume"
+                    value={selectedISOVolume?.name ?? ""}
+                    onChange={(event) => {
+                      const volume = isoVolumes.find((item) => item.name === event.target.value);
+                      update("isoPath", volume?.path ?? "");
+                    }}
+                    disabled={!canCreate || !isoVolumes.length}
+                    className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    <option value="">{isoVolumesQuery.isLoading ? "正在读取 ISO..." : "不挂载安装介质"}</option>
+                    {isoVolumes.map((volume) => <option key={volume.path || volume.name} value={volume.name}>{volume.name} · {formatBytes(volume.capacityBytes)}</option>)}
+                  </select>
+                </div>
+                <p className="text-xs text-muted-foreground">{isoVolumesQuery.isError ? "ISO 列表加载失败，可继续使用下方绝对路径。" : `${isoVolumes.length} 个 ISO 可选；也可以手动填写绝对路径。`}</p>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="vm-iso-path">ISO 绝对路径（可选）</Label>
                 <Input id="vm-iso-path" value={form.isoPath} onChange={(event) => update("isoPath", event.target.value)} placeholder="/var/lib/libvirt/images/install.iso" disabled={!canCreate} />
-                <p className="text-xs text-muted-foreground">填写后挂载为 CD-ROM；默认光盘优先，可按下方启动顺序调整。</p>
+                <p className="text-xs text-muted-foreground">选择存储卷会自动写入绝对路径；填写后挂载为只读 CD-ROM，默认光盘优先，可按下方启动顺序调整。</p>
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="vm-boot-order">启动顺序</Label>

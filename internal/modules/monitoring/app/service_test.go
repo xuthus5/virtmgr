@@ -102,13 +102,32 @@ func (alertMetrics) VM(context.Context, string) (domain.VMMetrics, error) {
 	return domain.VMMetrics{}, nil
 }
 
-type alertHosts struct{}
+type alertHosts struct{ pools []domain.StoragePool }
 
 func (alertHosts) Host(context.Context) (domain.Host, error) {
 	return domain.Host{Name: "host-a"}, nil
 }
 
 func (alertHosts) ListVMs(context.Context) ([]domain.VM, error) { return nil, nil }
+
+func (h alertHosts) ListStoragePools(context.Context) ([]domain.StoragePool, error) {
+	return h.pools, nil
+}
+
+func TestStoragePoolAlertUsesMostUtilizedActivePool(t *testing.T) {
+	pools := []domain.StoragePool{
+		{Name: "default", State: domain.StoragePoolStateActive, CapacityBytes: 100, AllocationBytes: 40},
+		{Name: "images", State: domain.StoragePoolStateActive, CapacityBytes: 200, AllocationBytes: 150},
+		{Name: "offline", State: domain.StoragePoolStateInactive, CapacityBytes: 100, AllocationBytes: 100},
+	}
+	value, target, ok := ruleValue(domain.AlertMetricStoragePoolPercent, domain.ResourceMetrics{}, nil, pools)
+	if !ok || target != "images" || value != 75 {
+		t.Fatalf("storage pool rule value = %v target=%q ok=%v", value, target, ok)
+	}
+	if metric, err := domain.NormalizeAlertMetric("storage_pool_percent"); err != nil || metric != domain.AlertMetricStoragePoolPercent {
+		t.Fatalf("NormalizeAlertMetric() = %q, %v", metric, err)
+	}
+}
 
 func TestAlertRuleTransitionsAndWebhook(t *testing.T) {
 	var notifications []domain.AlertNotification

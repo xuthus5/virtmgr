@@ -21,6 +21,7 @@ type Repository interface {
 	PerformStoragePoolAction(ctx context.Context, name string, action domain.StoragePoolAction) error
 	DeleteStoragePool(ctx context.Context, name string) error
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
+	ListVMs(ctx context.Context) ([]domain.VM, error)
 	CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error)
 	UploadStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec, reader io.Reader) (domain.StorageVolume, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
@@ -221,10 +222,44 @@ func (s *Service) ListVolumes(ctx context.Context, poolName string) (domain.Stor
 	if err != nil {
 		return domain.StorageVolumeList{}, err
 	}
+	vms, err := s.repository.ListVMs(ctx)
+	if err != nil {
+		return domain.StorageVolumeList{}, err
+	}
+	for index := range volumes {
+		volumes[index].UsedBy = storageVolumeUsage(volumes[index], vms)
+	}
 	sort.Slice(volumes, func(i, j int) bool {
 		return strings.ToLower(volumes[i].Name) < strings.ToLower(volumes[j].Name)
 	})
 	return domain.StorageVolumeList{Pool: poolName, Items: volumes, Total: len(volumes)}, nil
+}
+
+func storageVolumeUsage(volume domain.StorageVolume, vms []domain.VM) []domain.StorageVolumeUsage {
+	result := make([]domain.StorageVolumeUsage, 0)
+	for _, vm := range vms {
+		for _, disk := range vm.Disks {
+			if !storageSourceMatchesVolume(disk.Source, volume) {
+				continue
+			}
+			result = append(result, domain.StorageVolumeUsage{
+				VMUUID: vm.UUID, VMName: vm.Name, Target: disk.Target, ReadOnly: disk.ReadOnly,
+			})
+		}
+	}
+	return result
+}
+
+func storageSourceMatchesVolume(source string, volume domain.StorageVolume) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	volumePath := strings.TrimSpace(volume.Path)
+	if volumePath != "" && filepath.Clean(source) == filepath.Clean(volumePath) {
+		return true
+	}
+	return filepath.Base(source) == volume.Name
 }
 
 func (s *Service) CreateVolume(ctx context.Context, command CreateVolumeCommand) (domain.StorageVolume, error) {
@@ -242,6 +277,9 @@ func (s *Service) CreateVolume(ctx context.Context, command CreateVolumeCommand)
 	spec, err := normalizeVolumeCreateSpec(command.Spec)
 	if err != nil {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+command.Spec.Name, storageVolumeSpecDetail(command.Spec), err)
+	}
+	if err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(spec.Format, spec.CapacityBytes, 0)); err != nil {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+spec.Name, storageVolumeSpecDetail(spec), err)
 	}
 	volume, err := s.repository.CreateStorageVolume(ctx, command.Pool, spec)
 	if err != nil {
@@ -280,6 +318,9 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 	}
 	if command.Size < int64(minVolumeBytes) {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
+	}
+	if err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(format, uint64(command.Size), 0)); err != nil {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, err)
 	}
 	taskID := ""
 	if s.tasks != nil {
@@ -331,6 +372,17 @@ func uploadVolumeFormat(name string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func (s *Service) ensureVolumeCapacity(ctx context.Context, poolName string, required uint64) error {
+	pool, err := s.repository.GetStoragePool(ctx, poolName)
+	if err != nil {
+		return err
+	}
+	if !domain.StoragePoolHasCapacity(pool, required) {
+		return fmt.Errorf("%w: storage pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, poolName, required, pool.AvailableBytes)
+	}
+	return nil
 }
 
 func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand) error {

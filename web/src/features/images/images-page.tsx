@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Database, HardDrive, Image as ImageIcon, Layers3, LoaderCircle, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
-import { ApiError, api } from "@/api/client";
+import { AlertTriangle, CheckCircle2, Database, HardDrive, Image as ImageIcon, Layers3, LoaderCircle, Plus, RefreshCw, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { api } from "@/api/client";
 import type { VMImage, VMImageInput } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
@@ -35,13 +35,18 @@ const initialForm: ImageForm = {
   name: "", description: "", pool: "", volume: "", osFamily: "linux", osName: "", architecture: "x86_64",
 };
 
+const minImageBytes = 1 << 20;
+const maxImageBytes = 256 * 1024 ** 3;
+
+type ImageFormMode = "register" | "upload";
+
 function formatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : timeFormatter.format(date);
 }
 
 function imageError(cause: unknown, fallback: string) {
-  return cause instanceof ApiError ? cause.message : fallback;
+  return cause instanceof Error && cause.message ? cause.message : fallback;
 }
 
 export function ImagesPage() {
@@ -50,7 +55,9 @@ export function ImagesPage() {
   const query = useImagesQuery();
   const poolsQuery = useStoragePoolsQuery();
   const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<ImageFormMode>("register");
   const [form, setForm] = useState<ImageForm>(initialForm);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<VMImage | null>(null);
   const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
@@ -80,6 +87,40 @@ export function ImagesPage() {
       void queryClient.invalidateQueries({ queryKey: imagesQueryKey });
     },
     onError: (cause) => setNotice({ tone: "error", text: imageError(cause, "登记镜像失败，请稍后重试。") }),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async () => {
+      if (!uploadFile) throw new Error("请选择要上传的镜像文件。");
+      if (!/\.(qcow2|raw)$/i.test(uploadFile.name)) throw new Error("仅支持 .qcow2 和 .raw 镜像文件。");
+      if (uploadFile.size < minImageBytes || uploadFile.size > maxImageBytes) {
+        throw new Error(`镜像大小必须在 ${formatBytes(minImageBytes)} 到 ${formatBytes(maxImageBytes)} 之间。`);
+      }
+      const uploaded = await api.uploadStorageVolume(form.pool, uploadFile);
+      try {
+        return await api.registerImage({
+          name: form.name.trim(), description: form.description.trim(), pool: form.pool,
+          volume: uploaded.name, osFamily: form.osFamily.trim(), osName: form.osName.trim(), architecture: form.architecture.trim(),
+        });
+      } catch (cause) {
+        try {
+          await api.deleteStorageVolume(form.pool, uploaded.name);
+          throw cause;
+        } catch (cleanupCause) {
+          if (cleanupCause === cause) throw cause;
+          throw new Error(`${imageError(cause, "镜像登记失败。")}；上传卷 ${uploaded.name} 自动清理失败，请到存储页手动处理。`);
+        }
+      }
+    },
+    onSuccess: (image) => {
+      setNotice({ tone: "success", text: `镜像 ${image.name} 已上传并登记。可点击刷新计算 SHA-256。` });
+      setForm(initialForm);
+      setUploadFile(null);
+      setFormOpen(false);
+      void queryClient.invalidateQueries({ queryKey: imagesQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["storage"] });
+    },
+    onError: (cause) => setNotice({ tone: "error", text: imageError(cause, "上传镜像失败，请稍后重试。") }),
   });
 
   const refreshMutation = useMutation({
@@ -120,14 +161,20 @@ export function ImagesPage() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice(null);
+    if (formMode === "upload") {
+      uploadMutation.mutate();
+      return;
+    }
     registerMutation.mutate({
       name: form.name.trim(), description: form.description.trim(), pool: form.pool,
       volume: form.volume, osFamily: form.osFamily.trim(), osName: form.osName.trim(), architecture: form.architecture.trim(),
     });
   }
 
-  function openCreate() {
+  function openCreate(mode: ImageFormMode) {
+    setFormMode(mode);
     setForm({ ...initialForm, pool: activePools[0]?.name ?? "" });
+    setUploadFile(null);
     setFormOpen(true);
     setNotice(null);
   }
@@ -137,8 +184,8 @@ export function ImagesPage() {
       <PageHeader
         title="镜像库"
         breadcrumb="总览 / 镜像库"
-        description="登记存储池中的 qcow2/raw 基础磁盘，作为新建虚拟机和模板的系统盘来源。第一阶段仅保存元数据，不会搬移或删除底层卷。"
-        actions={<Button data-testid="image-create-toggle" onClick={openCreate} disabled={!canManage} title={canManage ? undefined : disabledReason}><Plus className="h-4 w-4" />登记镜像</Button>}
+        description="上传或登记存储池中的 qcow2/raw 基础磁盘，作为新建虚拟机和模板的系统盘来源。创建虚拟机时使用全量克隆。"
+        actions={<div className="flex flex-wrap gap-2"><Button variant="outline" data-testid="image-upload-toggle" onClick={() => openCreate("upload")} disabled={!canManage} title={canManage ? undefined : disabledReason}><Upload className="h-4 w-4" />上传镜像</Button><Button data-testid="image-create-toggle" onClick={() => openCreate("register")} disabled={!canManage} title={canManage ? undefined : disabledReason}><Plus className="h-4 w-4" />登记已有卷</Button></div>}
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -153,21 +200,39 @@ export function ImagesPage() {
       {formOpen ? (
         <Card className="mb-4" data-testid="image-form-card">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" />登记已有磁盘卷</CardTitle>
-            <CardDescription>只接受活跃存储池中的 qcow2/raw 卷。登记不会修改磁盘内容，也不会上传文件。</CardDescription>
+            <CardTitle className="flex items-center gap-2"><ImageIcon className="h-4 w-4 text-primary" />{formMode === "upload" ? "上传并登记新镜像" : "登记已有磁盘卷"}</CardTitle>
+            <CardDescription>{formMode === "upload" ? "上传 qcow2/raw 文件到目标存储池，完成后自动登记为镜像。只支持 1 MiB 至 256 GiB 的文件。" : "只接受活跃存储池中的 qcow2/raw 卷。登记不会修改磁盘内容，也不会上传文件。"}</CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={submit} data-testid="image-form">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2"><Label htmlFor="image-name">镜像名称</Label><Input id="image-name" data-testid="image-name" value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="ubuntu-24.04-cloud" required maxLength={64} /></div>
                 <div className="space-y-2"><Label htmlFor="image-pool">存储池</Label><select id="image-pool" data-testid="image-pool" value={form.pool} onChange={(event) => { update("pool", event.target.value); update("volume", ""); }} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">{!activePools.length ? <option value="">{poolsQuery.isLoading ? "正在读取存储池..." : "没有活跃存储池"}</option> : null}{activePools.map((pool) => <option key={pool.uuid || pool.name} value={pool.name}>{pool.name} · {pool.targetPath || "无目标路径"}</option>)}</select></div>
-                <div className="space-y-2"><Label htmlFor="image-volume">磁盘卷</Label><select id="image-volume" data-testid="image-volume" value={form.volume} onChange={(event) => selectVolume(event.target.value)} required className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="">{volumesQuery.isLoading ? "正在读取存储卷..." : "选择 qcow2/raw 卷"}</option>{volumes.map((volume) => <option key={volume.path || volume.name} value={volume.name}>{volume.name} · {formatBytes(volume.capacityBytes)}</option>)}</select></div>
+                {formMode === "upload" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="image-upload-file">镜像文件</Label>
+                    <Input id="image-upload-file" data-testid="image-upload-file" type="file" accept=".qcow2,.raw" required onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      setUploadFile(file);
+                      if (file) {
+                        setForm((current) => ({
+                          ...current,
+                          volume: file.name,
+                          name: current.name.trim() || file.name.replace(/\.(qcow2|raw)$/i, ""),
+                        }));
+                      }
+                    }} className="h-9 py-1 text-xs" />
+                    <p className="text-xs text-muted-foreground">{uploadFile ? `${uploadFile.name} · ${formatBytes(uploadFile.size)}` : "支持 .qcow2 / .raw"}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2"><Label htmlFor="image-volume">磁盘卷</Label><select id="image-volume" data-testid="image-volume" value={form.volume} onChange={(event) => selectVolume(event.target.value)} required className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="">{volumesQuery.isLoading ? "正在读取存储卷..." : "选择 qcow2/raw 卷"}</option>{volumes.map((volume) => <option key={volume.path || volume.name} value={volume.name}>{volume.name} · {formatBytes(volume.capacityBytes)}</option>)}</select></div>
+                )}
                 <div className="space-y-2"><Label htmlFor="image-description">描述</Label><Input id="image-description" value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Ubuntu 24.04 LTS Cloud Image" maxLength={512} /></div>
                 <div className="space-y-2"><Label htmlFor="image-os-family">OS 家族</Label><Input id="image-os-family" value={form.osFamily} onChange={(event) => update("osFamily", event.target.value)} placeholder="linux" maxLength={32} /></div>
                 <div className="space-y-2"><Label htmlFor="image-os-name">OS 名称</Label><Input id="image-os-name" value={form.osName} onChange={(event) => update("osName", event.target.value)} placeholder="Ubuntu 24.04 LTS" maxLength={64} /></div>
                 <div className="space-y-2"><Label htmlFor="image-architecture">架构</Label><Input id="image-architecture" value={form.architecture} onChange={(event) => update("architecture", event.target.value)} placeholder="x86_64" maxLength={32} /></div>
               </div>
-              <div className="flex flex-wrap gap-2"><Button type="submit" data-testid="image-submit" disabled={registerMutation.isPending || !form.name.trim() || !form.pool || !form.volume}>{registerMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}登记镜像</Button><Button type="button" variant="outline" onClick={() => setFormOpen(false)}>取消</Button></div>
+              <div className="flex flex-wrap gap-2"><Button type="submit" data-testid="image-submit" disabled={(formMode === "upload" ? uploadMutation.isPending : registerMutation.isPending) || !form.name.trim() || !form.pool || (formMode === "upload" ? !uploadFile : !form.volume)}>{formMode === "upload" ? (uploadMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />) : (registerMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />)}{formMode === "upload" ? (uploadMutation.isPending ? "正在上传..." : "上传并登记") : "登记镜像"}</Button><Button type="button" variant="outline" onClick={() => setFormOpen(false)} disabled={uploadMutation.isPending || registerMutation.isPending}>取消</Button></div>
             </form>
           </CardContent>
         </Card>
@@ -197,7 +262,7 @@ export function ImagesPage() {
         </CardContent>
       </Card>
 
-      <div className="mt-4 flex items-start gap-2 rounded-md border bg-muted/25 px-3 py-2 text-xs text-muted-foreground"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>当前创建虚拟机使用全量克隆，不会与基础镜像共享写入链。链接克隆、镜像上传和跨池自动搬移不在第一阶段内。</p></div>
+      <div className="mt-4 flex items-start gap-2 rounded-md border bg-muted/25 px-3 py-2 text-xs text-muted-foreground"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>当前创建虚拟机使用全量克隆，不会与基础镜像共享写入链。镜像上传只支持 qcow2/raw，链接克隆与跨池自动搬移暂未提供。</p></div>
 
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>

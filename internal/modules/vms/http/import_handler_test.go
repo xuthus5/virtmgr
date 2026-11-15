@@ -11,6 +11,10 @@ import (
 
 type handlerImportVolumes struct{}
 
+func (handlerImportVolumes) GetStoragePool(_ context.Context, name string) (domain.StoragePool, error) {
+	return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive, AvailableBytes: 1 << 50}, nil
+}
+
 func (handlerImportVolumes) ListStorageVolumes(_ context.Context, poolName string) ([]domain.StorageVolume, error) {
 	switch poolName {
 	case "images":

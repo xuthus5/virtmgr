@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Disc3, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { Disk, Role, VM } from "@/api/types";
 import {
@@ -46,6 +46,7 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const [target, setTarget] = useState("");
   const [attachError, setAttachError] = useState("");
   const [detachTarget, setDetachTarget] = useState<string | null>(null);
+  const [ejectTarget, setEjectTarget] = useState<Disk | null>(null);
   const poolsQuery = useStoragePoolsQuery(attachOpen);
   const activePools = (poolsQuery.data?.items ?? []).filter((item) => item.state === "active");
   const selectedPool = pool || activePools[0]?.name || "";
@@ -97,6 +98,23 @@ export function VMDisksCard({ vm, role, readOnly }: {
       setNotice({ tone: "success", text: `磁盘 ${diskTarget} 已移除。` });
     },
     onError: (cause) => setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "移除磁盘失败，请稍后重试。" }),
+  });
+
+  const ejectISOMutation = useMutation({
+    mutationFn: () => api.ejectVMISO(vm.uuid),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      setEjectTarget(null);
+      setNotice({ tone: "success", text: "安装 ISO 已弹出，主磁盘已设为第一启动设备。" });
+    },
+    onError: (cause) => {
+      setEjectTarget(null);
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "弹出 ISO 失败，请稍后重试。" });
+    },
   });
 
   function openResize(disk: Disk) {
@@ -152,6 +170,16 @@ export function VMDisksCard({ vm, role, readOnly }: {
             <TableBody>
               {vm.disks.map((disk, index) => {
                 const disabledReason = vmDiskResizeDisabledReason(role, readOnly, vm, disk);
+                const installerISO = disk.device === "cdrom" && /\.iso$/i.test(disk.source || "") && !/-cidata\.iso$/i.test(disk.source || "");
+                const ejectDisabledReason = readOnly
+                  ? "系统当前处于只读模式"
+                  : !role || role === "viewer"
+                    ? "当前账号没有虚拟机操作权限"
+                    : !vm.persistent
+                      ? "临时虚拟机不能弹出 ISO"
+                      : vm.state !== "shutoff" && vm.state !== "crashed"
+                        ? "请先关闭虚拟机再弹出 ISO"
+                        : "";
                 return (
                   <TableRow key={`${disk.target}-${index}`} data-testid={`vm-disk-row-${disk.target || index}`}>
                     <TableCell className="font-mono text-xs">{disk.target || "-"}</TableCell>
@@ -175,7 +203,18 @@ export function VMDisksCard({ vm, role, readOnly }: {
                     </TableCell>
                     <TableCell><Badge variant={disk.readOnly ? "secondary" : "outline"}>{disk.readOnly ? "只读" : "读写"}</Badge></TableCell>
                     <TableCell className="text-right">
-                      {disk.device === "disk" ? (
+                      {installerISO ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid={`vm-iso-eject-${disk.target || index}`}
+                          disabled={Boolean(ejectDisabledReason) || ejectISOMutation.isPending}
+                          title={ejectDisabledReason || "移除安装 ISO，并切换为硬盘优先启动"}
+                          onClick={() => { setNotice(null); setEjectTarget(disk); }}
+                        >
+                          {ejectISOMutation.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Disc3 className="h-3.5 w-3.5" />}弹出 ISO
+                        </Button>
+                      ) : disk.device === "disk" ? (
                         <div className="flex justify-end gap-1">
                           <Button
                             variant="outline"
@@ -296,6 +335,21 @@ export function VMDisksCard({ vm, role, readOnly }: {
             <AlertDialogCancel disabled={detachMutation.isPending}>取消</AlertDialogCancel>
             <Button variant="destructive" data-testid="vm-disk-detach-submit" disabled={detachMutation.isPending} onClick={() => { if (detachTarget) detachMutation.mutate(detachTarget); }}>
               {detachMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}确认移除
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={ejectTarget !== null} onOpenChange={(open) => { if (!open && !ejectISOMutation.isPending) setEjectTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>弹出安装 ISO？</AlertDialogTitle>
+            <AlertDialogDescription>将从 <span className="font-medium text-foreground">{vm.name}</span> 的持久配置移除 <span className="font-mono text-xs">{ejectTarget?.source}</span>，并把主磁盘调整为第一启动设备。ISO 文件与 cloud-init 介质不会被删除。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={ejectISOMutation.isPending}>取消</AlertDialogCancel>
+            <Button data-testid="vm-iso-eject-submit" disabled={ejectISOMutation.isPending} onClick={() => ejectISOMutation.mutate()}>
+              {ejectISOMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Disc3 className="h-4 w-4" />}确认弹出
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

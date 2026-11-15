@@ -229,6 +229,39 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await expect(page.getByRole("link", { name: "e2e-created-01", exact: true })).toHaveCount(0);
 });
 
+test("可写模式选择存储池 ISO 创建虚拟机并弹出安装介质", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/new");
+  await expect(page.getByRole("heading", { name: "新建虚拟机", exact: true })).toBeVisible();
+
+  await page.getByLabel("名称", { exact: true }).fill("e2e-iso-eject-01");
+  await page.getByLabel("存储池", { exact: true }).selectOption("default");
+  await page.getByLabel("存储卷", { exact: true }).selectOption("demo-db-01.qcow2");
+  await expect(page.getByTestId("vm-iso-pool")).toHaveValue("iso-store");
+  await page.getByTestId("vm-iso-volume").selectOption("debian-13-netinst.iso");
+  await expect(page.getByLabel("ISO 绝对路径（可选）", { exact: true })).toHaveValue("/var/lib/libvirt/iso/debian-13-netinst.iso");
+  await page.getByRole("button", { name: "创建虚拟机", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
+  await expect(page.getByRole("heading", { name: "e2e-iso-eject-01", exact: true })).toBeVisible();
+  const isoRow = page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" });
+  await expect(isoRow).toBeVisible();
+  const ejectButtons = page.locator('[data-testid^="vm-iso-eject-"]');
+  await expect(ejectButtons).toHaveCount(1);
+  await ejectButtons.first().click();
+  await expect(page.getByRole("alertdialog")).toContainText("弹出安装 ISO？");
+  await page.getByTestId("vm-iso-eject-submit").click();
+  await expect(page.getByText("安装 ISO 已弹出，主磁盘已设为第一启动设备。", { exact: true })).toBeVisible();
+  await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" })).toHaveCount(0);
+  await expect(page.getByTestId("vm-disk-source").first()).toContainText("demo-db-01.qcow2");
+
+  await page.getByTestId("vm-delete-button").click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-iso-eject-01");
+  await dialog.getByTestId("confirm-delete-vm").click();
+  await expect(page).toHaveURL(/\/vms$/);
+});
+
 test("可写模式创建存储卷并刷新列表", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "存储", exact: true }).click();
@@ -266,11 +299,9 @@ test("可写模式创建存储卷并刷新列表", async ({ page }) => {
   await expect(page.getByTestId("storage-volume-row-e2e-volume-01.qcow2")).toHaveCount(0);
   await expect(page.getByTestId("storage-pool-volumes-default")).toHaveText("4");
 
-  await page.getByTestId("delete-volume-demo-web-01.qcow2").click();
-  await page.getByRole("alertdialog").getByLabel("输入存储卷名称确认").fill("demo-web-01.qcow2");
-  await page.getByRole("alertdialog").getByTestId("confirm-delete-volume").click();
-  await expect(page.getByRole("alertdialog").getByRole("alert")).toHaveText("存储卷仍被虚拟机使用");
-  await page.getByRole("alertdialog").getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByTestId("storage-volume-usage-demo-web-01.qcow2")).toContainText("demo-web-01");
+  await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toBeDisabled();
+  await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toHaveAttribute("title", /demo-web-01.*不能删除/);
 });
 
 test("可写模式展示审计记录并支持筛选", async ({ page }) => {
@@ -292,8 +323,8 @@ test("可写模式展示审计记录并支持筛选", async ({ page }) => {
   await expect(page.getByTestId("audit-empty")).toBeVisible();
 
   await page.getByTestId("audit-action-filter").selectOption("");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 2 条审计记录");
-  await expect(page.locator('[data-testid^="audit-row-"]').filter({ hasText: "失败" })).toHaveCount(2);
+  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
+  await expect(page.locator('[data-testid^="audit-row-"]').filter({ hasText: "失败" })).toHaveCount(1);
 });
 
 test("可写模式上传存储卷并刷新列表", async ({ page }) => {
@@ -705,6 +736,26 @@ test("可写模式切换虚拟机开机自启动", async ({ page }) => {
   await expect(row).toContainText("更新开机自启动");
   await expect(row).toContainText("demo-build-01");
   await expect(row).toContainText("成功");
+});
+
+test("可写模式创建存储池使用率告警规则", async ({ page }) => {
+  await login(page);
+  await page.goto("/host");
+  const card = page.getByTestId("host-alert-rules");
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "新建规则", exact: true }).click();
+  const modal = page.getByTestId("alert-rule-modal");
+  await expect(modal).toBeVisible();
+  await page.getByTestId("alert-rule-name").fill("e2e-storage-alert");
+  await page.getByLabel("指标", { exact: true }).selectOption("storage_pool_percent");
+  await page.getByTestId("alert-rule-threshold").fill("1");
+  modal.getByRole("button", { name: "保存规则", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("告警规则 e2e-storage-alert 已保存");
+  const row = card.getByRole("row").filter({ hasText: "e2e-storage-alert" });
+  await expect(row).toContainText("存储池使用率（最高活跃池）");
+  await card.getByRole("button", { name: "删除规则 e2e-storage-alert" }).click();
+  await page.getByTestId("alert-rule-delete-modal").getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("告警规则 e2e-storage-alert 已删除");
 });
 
 test("管理员可运行时切换只读模式", async ({ page }) => {
@@ -1222,6 +1273,39 @@ test("可写模式登记、刷新并移除镜像条目", async ({ page }) => {
 
   await page.getByRole("link", { name: "存储", exact: true }).click();
   await expect(page.getByText("demo-db-01.qcow2", { exact: true }).first()).toBeVisible();
+});
+
+test("可写模式上传 qcow2 镜像并自动登记", async ({ page }) => {
+  await login(page);
+  await page.goto("/images");
+  await expect(page.getByTestId("image-total")).toHaveText("1");
+  await page.getByTestId("image-upload-toggle").click();
+  await expect(page.getByTestId("image-form")).toBeVisible();
+  await page.getByTestId("image-name").fill("e2e-uploaded-image");
+  await page.getByTestId("image-upload-file").setInputFiles({
+    name: "e2e-uploaded-image.qcow2",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(1024 * 1024, 2),
+  });
+  await expect(page.getByTestId("image-upload-file")).toBeVisible();
+  await page.getByTestId("image-submit").click();
+  await expect(page.getByTestId("image-notice")).toContainText("已上传并登记");
+  await expect(page.getByTestId("image-total")).toHaveText("2");
+  const row = page.getByRole("row").filter({ hasText: "e2e-uploaded-image" });
+  await expect(row).toContainText("e2e-uploaded-image.qcow2");
+
+  await row.getByRole("button", { name: "移除", exact: true }).click();
+  await page.getByTestId("confirm-delete-image").click();
+  await expect(page.getByTestId("image-notice")).toContainText("底层磁盘卷未被删除");
+  await expect(page.getByTestId("image-total")).toHaveText("1");
+
+  await page.goto("/storage");
+  await page.getByRole("button", { name: "default", exact: true }).click();
+  await page.getByTestId("delete-volume-e2e-uploaded-image.qcow2").click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByLabel("输入存储卷名称确认").fill("e2e-uploaded-image.qcow2");
+  await dialog.getByTestId("confirm-delete-volume").click();
+  await expect(page.getByTestId("storage-volume-row-e2e-uploaded-image.qcow2")).toHaveCount(0);
 });
 
 test("模板绑定镜像并从镜像全量克隆创建虚拟机", async ({ page }) => {

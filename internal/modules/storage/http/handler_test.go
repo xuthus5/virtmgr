@@ -38,6 +38,10 @@ type handlerRepository struct {
 	deletedName         string
 }
 
+func (f *handlerRepository) ListVMs(context.Context) ([]domain.VM, error) {
+	return nil, nil
+}
+
 func (f *handlerRepository) ListStoragePools(context.Context) ([]domain.StoragePool, error) {
 	return f.pools, f.err
 }
@@ -47,7 +51,7 @@ func (f *handlerRepository) GetStoragePool(_ context.Context, name string) (doma
 		return domain.StoragePool{}, f.getPoolErr
 	}
 	if f.getPool.Name == "" {
-		return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive}, nil
+		return domain.StoragePool{Name: name, State: domain.StoragePoolStateActive, AvailableBytes: 1 << 50}, nil
 	}
 	return f.getPool, nil
 }

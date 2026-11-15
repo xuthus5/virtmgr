@@ -52,7 +52,7 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
 test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await login(page);
-  for (const path of ["/images", "/settings", "/tasks"]) {
+  for (const path of ["/images", "/settings", "/tasks", "/storage", "/vms/new"]) {
     await page.goto(path);
     await expect(page.getByRole("main")).toBeVisible();
     for (const width of [320, 390]) {

@@ -172,6 +172,8 @@ func mapError(err error) (int, string, string) {
 		return stdhttp.StatusNotFound, "NOT_FOUND", "请求的资源不存在"
 	case errors.Is(err, domain.ErrConflict):
 		return stdhttp.StatusConflict, "CONFLICT", "资源状态已发生变化"
+	case errors.Is(err, domain.ErrStorageInsufficient):
+		return stdhttp.StatusConflict, "STORAGE_INSUFFICIENT", "目标存储池剩余容量不足"
 	case errors.Is(err, domain.ErrInvalidInput):
 		return stdhttp.StatusBadRequest, "INVALID_INPUT", "请求参数不合法"
 	case errors.Is(err, domain.ErrTooLarge):
