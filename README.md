@@ -51,7 +51,7 @@ All screenshots use the built-in demo backend, not production host data.
 |---|---|
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains by state, tag, and owner; persist filters locally and favorite frequently used VMs; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
-| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
+| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, full clone from a registered image, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
 | VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, structured Guest Agent information, controlled file/password/SSH/process actions, policy health history, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
@@ -59,14 +59,15 @@ All screenshots use the built-in demo backend, not production host data.
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with interval or daily-time retention policies |
 | Backups | Central cold-backup catalog, manual integrity checks, restore as a new VM, interval/daily schedules, retention, pinning, failed-task retry, and task SSE state |
+| Image library | Register existing qcow2/raw volumes with OS metadata; refresh allocation and SHA-256 on demand; bind images to templates and create VMs by full clone without deleting the source volume when unregistering |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; stream ISO, qcow2, and raw image uploads; protect in-use volumes |
 | Networking | NAT and isolated networks, bridge details, IPv4/DHCP configuration, live leases, static DHCP hosts with CSV import/export, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
 | Observability | SSE events and task state, backup retry, seven-day host/running-VM history, Prometheus `/metrics`, CPU/memory threshold Webhook alerts, structured logs, and health endpoints |
-| Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable/retention-managed audit trail, CSP and security headers |
+| Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, scoped and revocable Bearer API tokens, OpenAPI 3.1, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable/retention-managed audit trail, CSP and security headers |
 | System management | Version/commit/build time, online SQLite export, audit retention, and global read-only settings |
 | User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, locally persisted list filters and favorites, accessible dialogs, and explicit confirmation for destructive actions |
-| Templates | Reusable VM specifications, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
+| Templates | Reusable VM specifications, optional image binding, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
 
 ## Architecture
 
@@ -273,6 +274,8 @@ Changes to the database, libvirt connection, or TLS paths require a service rest
 
 VirtMgr uses local accounts. Passwords are hashed with Argon2id, sessions are stored as hashes in SQLite, and the browser receives only an `HttpOnly` and `SameSite=Strict` session cookie. Every state-changing API request requires the session's CSRF token in `X-CSRF-Token`. Failed logins are rate-limited per username and source address and return `429 TOO_MANY_ATTEMPTS`; unknown and disabled accounts use the same password-hashing cost to reduce account-enumeration signals.
 
+Users can also create scoped Bearer API tokens from Settings. A `read` token is limited to safe methods, while `write` also includes read; tokens support an expiration and immediate revocation, store only a hash in SQLite, and reveal the plaintext once at creation. Bearer requests do not use browser CSRF but remain subject to token scope, role, read-only mode, and audit checks. Token-authenticated clients cannot create, list, or revoke tokens.
+
 | Role | Read access | VM lifecycle and create/clone/backup | Snapshots, storage, networks, templates | VNC console | Edit domain XML | Users, settings, audit |
 |---|---:|---:|---:|---:|---:|---:|
 | `viewer` | Yes | No | No | No | No | No |
@@ -287,7 +290,7 @@ Administrators can create users, change roles, disable accounts, reset other use
 
 - **Libvirt is authoritative.** VirtMgr does not store a second VM inventory and degrades explicitly when libvirt is unavailable.
 - **Destructive operations require confirmation.** Force off, reset, snapshot revert, volume deletion, and VM deletion use explicit dialogs; some delete flows require typing the resource name.
-- **Long-running work becomes a task.** Storage volume uploads, cloning, and cold backups expose progress, steps, failures, and related resources through the task center.
+- **Long-running work becomes a task.** Storage volume uploads, cloning, and cold backups expose progress, steps, failures, and related resources through the task center. Supported tasks can be cancelled at safe checkpoints; cancellation is cooperative and may leave intermediate files until cleanup.
 - **Backups restore as new VMs.** A backup contains the persistent domain XML, a SHA-256 manifest, and writable file disks, but not RAM state. In-place restore and RAM-state restore are not provided.
 - **Disk expansion does not resize guest partitions.** VirtMgr grows the qcow2/raw virtual disk only. Linux guests may still need `growpart` plus `resize2fs`/`xfs_growfs`; Windows guests require volume expansion in Disk Management. Shrinking is not supported.
 - **CPU and memory changes respect libvirt limits.** Running domains can be adjusted within their active maximum; increasing the maximum generally requires shutting the VM down first.
@@ -299,20 +302,24 @@ Administrators can create users, change roles, disable accounts, reset other use
 
 ## API
 
-The API is exposed under `/api/v1` and uses JSON. Authentication is cookie-based; mutating requests also require `X-CSRF-Token`.
+The API is exposed under `/api/v1` and uses JSON. Browser sessions use cookies and `X-CSRF-Token` for mutating requests; automation can use a Bearer API token with a `read` or `write` scope. The OpenAPI 3.1 contract is available at `GET /api/v1/openapi.json`.
 
 Representative endpoint groups include:
 
 | Area | Examples |
 |---|---|
 | Session | `POST /api/v1/session`, `GET /api/v1/session`, `DELETE /api/v1/session` |
+| Automation | `GET/POST /api/v1/api-tokens`, `DELETE /api/v1/api-tokens/{id}`, `GET /api/v1/openapi.json` |
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
 | Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/guest-agent`, `/guest-agent/files`, `/guest-agent/password`, `/guest-agent/ssh-keys`, `/guest-agent/processes`, `/guest-agent/users`, `/guest-agent/policy`, `/guest-agent/health`, `/devices`, `/actions/{action}` |
 | VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/console/send-key`, `/console`, `/serial-console`, `/export` |
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
+| Images | `GET/POST /api/v1/images`, `GET/DELETE /api/v1/images/{id}`, `POST /api/v1/images/{id}/refresh` |
 | Networking | `/api/v1/networks`, `/leases`, `/hosts`, `/actions/{action}` |
 | System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/audit-events/export`, `/users`, `/users/me/password`, `/users/{id}/sessions`, `/settings` |
+
+Task cancellation is available at `POST /api/v1/tasks/{id}/cancel` for supported task kinds and safe checkpoints.
 
 The complete route and behavior reference is maintained in [docs/architecture-design.md](docs/architecture-design.md).
 
@@ -367,7 +374,9 @@ scripts/                  Development and E2E helpers
 - Graphical consoles currently support VNC only; SPICE is not supported. Serial consoles support libvirt PTY devices, with one active browser session per serial device.
 - Container deployment requires the host libvirt socket and a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
+- The image library currently supports full clones only. Linked clones, image uploads, format conversion, and cross-pool automatic movement are not implemented.
 - Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
+- Alerts use the existing rule-level Webhook only. Notification centers, SMTP, Slack/Teams, PagerDuty, alert silencing, and escalation policies are not provided.
 - VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.
 - Modern Chrome, Edge, Firefox, and Safari are recommended.
 

@@ -19,7 +19,7 @@ export function useTaskQuery(id: string | null) {
     staleTime: 0,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "succeeded" || status === "failed" || status === "interrupted" ? false : 1_500;
+      return status === "succeeded" || status === "failed" || status === "interrupted" || status === "cancelled" ? false : 1_500;
     },
   });
 }

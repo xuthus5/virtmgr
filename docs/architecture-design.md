@@ -43,18 +43,19 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 
 当前实现已完成第一条可运行闭环：
 
-- 本地管理员登录、Argon2id 密码、HttpOnly 会话、CSRF token。
-- SQLite 使用 `modernc.org/sqlite`，保存用户、会话、任务表、审计、设置和定时快照策略；虚拟机与快照状态不落库。
+- 本地管理员登录、Argon2id 密码、HttpOnly 会话、CSRF token，以及按用户签发、可撤销且带 read/write 作用域的 Bearer API Token。
+- SQLite 使用 `modernc.org/sqlite`，保存用户、会话、API Token 哈希、任务、审计、设置、镜像登记、模板和定时策略；虚拟机与快照状态不落库。
 - libvirt 只读能力：宿主机信息、虚拟机列表、详情、磁盘、网卡、VNC 图形信息和当前允许动作。
 - 物理主机页读取宿主机、存储池、虚拟网络和虚拟机分配汇总，并展示异常提醒与容量使用率。
 - 物理主机设备：`GET /host/devices` 读取 libvirt 节点设备，解析 PCI、USB、网络、块设备和 DRM 能力；主机页展示设备地址、厂商/型号、驱动和在线状态。
 - 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件、安全启动和硬件建模参数进入创建审计，并从运行态域 XML 回读。
 - Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
-- 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径和启动策略。新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
+- 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径、可选镜像绑定和启动策略。模板只保存镜像引用，不拥有镜像或系统盘；新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
+- 镜像库第一阶段：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理已有 qcow2/raw 存储卷的登记。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 复制来源卷为独立系统盘，目标路径不得与来源相同；失败时清理已克隆磁盘和新域。当前只提供全量克隆，不支持链接克隆、镜像上传、格式转换或跨池自动搬移。
 - Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户和固定命令进程管理；手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
@@ -63,10 +64,11 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 磁盘扩容写能力：详情页通过 `PATCH /vms/{uuid}/disks/{target}` 扩容可写文件型 qcow2/raw 数据盘，请求体为字节容量。仅支持扩大、不支持缩容；容量通过 `Domain.GetBlockInfo` 回读，运行域使用 `Domain.BlockResize`，关机域优先使用 `StorageVol.Resize`，目录卷内未单独注册的嵌套文件使用临时目录池调整后清理。CD-ROM、只读盘、非文件后端、临时域、Viewer 和只读模式拒绝修改，成功/失败均记录 `vm.disk.resize` 审计。宿主机容量扩展不替代客户机内分区/文件系统扩容。
 - 服务端按 `viewer` / `operator` / `admin` 和全局只读模式判定权限，动作按 libvirt 当前状态校验并写审计。
 - 用户与账号安全：管理员可创建本地账号、调整角色、禁用/启用用户、重置其他账号密码并查看/撤销登录会话；所有本地账号可验证当前密码后自助改密。改密保留当前会话并撤销其他会话，管理员重置会撤销目标账号全部会话；密码和会话写操作均记录审计，只读模式拒绝用户写操作。
+- API Token：设置页可为当前浏览器会话创建 Token，选择 read 或 write（write 隐含 read）和 0 至 3650 天有效期。明文只在创建响应出现一次，SQLite 仅保存哈希；列表不返回明文，撤销立即生效，过期或用户禁用后 Bearer 认证失败。Bearer 请求跳过浏览器 CSRF，但仍受 Token 作用域、角色、只读模式和审计约束；Token 不能调用 Token 管理接口。OpenAPI 3.1 契约通过公开的 `GET /api/v1/openapi.json` 提供。
 - 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）创建、启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。
 - 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离网络、启停网络并删除未激活网络。模式、地址推导和删除约束由后端校验，写操作记录审计。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
-- 任务中心基础：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端每 5 秒刷新，展示进度、步骤、失败原因和关联虚拟机。存储卷上传已作为第一个真实生产者，在流式读取时更新任务进度。
+- 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、冷备份相关任务和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
 - 控制台：Operator/Admin 可在虚拟机详情内嵌或独立窗口中打开 noVNC 与 xterm.js；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD` 或 console stream，并在打开时记录审计。
 - 域 XML：`GET /api/v1/vms/{uuid}/xml?format=live|config` 默认 live，使用 `DOMAIN_XML_INACTIVE` 读取 config；Admin 可通过 `PUT /api/v1/vms/{uuid}/xml` 在可写模式编辑持久配置，服务端锁定名称/UUID、拒绝 QEMU hook 命名空间，并以 `DOMAIN_DEFINE_VALIDATE` 校验后定义，审计不保存 XML 正文。
@@ -431,8 +433,8 @@ type Backend interface {
 | HTTP | `go-chi/chi/v5` |
 | libvirt | `libvirt.org/go/libvirt`（CGO） |
 | 日志 | `log/slog`，JSON 输出，携带 request ID |
-| 数据库 | SQLite WAL（`modernc.org/sqlite`），只存用户、会话索引、任务、审计、设置 |
-| API 契约 | OpenAPI 3.1 + 生成 TypeScript 类型 |
+| 数据库 | SQLite WAL（`modernc.org/sqlite`），存用户、会话、API Token 哈希、任务、审计、设置、镜像登记、模板和策略 |
+| API 契约 | OpenAPI 3.1，通过 `/api/v1/openapi.json` 发布 |
 | 实时事件 | 进程内环形事件总线 + SSE；保留最近 500 条，控制台使用 WebSocket |
 | 测试 | Go 单元测试 + fake backend + 测试 libvirtd 集成测试 |
 
@@ -447,7 +449,7 @@ type Backend interface {
 - lucide-react 图标、sonner 通知。
 - CodeMirror 展示和编辑 libvirt XML。
 - 新增 `noVNC` 与 `xterm.js` 用于图形/串口控制台。
-- 使用 OpenAPI 生成 API 类型，避免手写重复类型。
+- 保留 OpenAPI 契约作为文档和外部集成基础；前端类型当前手写并有单元测试覆盖，后续可按需要引入生成流程。
 
 ### 3.3 SQLite 落地
 

@@ -7,6 +7,7 @@ import { BackupsPage } from "@/features/backups/backups-page";
 import { LoginPage } from "@/features/auth/login-page";
 import { NetworksPage } from "@/features/networks/networks-page";
 import { HostPage } from "@/features/host/host-page";
+import { ImagesPage } from "@/features/images/images-page";
 import { EventsPage } from "@/features/events/events-page";
 import { OverviewPage } from "@/features/overview/overview-page";
 import { StoragePage } from "@/features/storage/storage-page";
@@ -64,6 +65,7 @@ const vmCreateRoute = createRoute({
   component: VMCreatePage,
 });
 const templatesRoute = createRoute({ getParentRoute: () => appRoute, path: "/templates", component: TemplatesPage });
+const imagesRoute = createRoute({ getParentRoute: () => appRoute, path: "/images", component: ImagesPage });
 const storageRoute = createRoute({ getParentRoute: () => appRoute, path: "/storage", component: StoragePage });
 const networksRoute = createRoute({ getParentRoute: () => appRoute, path: "/networks", component: NetworksPage });
 const hostRoute = createRoute({ getParentRoute: () => appRoute, path: "/host", component: HostPage });
@@ -102,7 +104,7 @@ const vncConsoleRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   loginRoute,
   vncConsoleRoute,
-  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
+  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
 ]);
 
 export const router = createRouter({

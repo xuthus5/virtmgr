@@ -18,6 +18,7 @@ import {
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
 import { sessionQueryKey, useSessionQuery } from "@/features/auth/use-session";
+import { APITokensCard } from "@/features/settings/api-tokens-card";
 import { settingsQueryKey, useSettingsQuery } from "@/features/settings/use-settings-query";
 
 export function SettingsPage() {
@@ -170,6 +171,10 @@ export function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-4">
+        <APITokensCard />
       </div>
 
       <AlertDialog open={confirmWrite} onOpenChange={setConfirmWrite}>

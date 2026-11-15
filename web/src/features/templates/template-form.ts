@@ -6,6 +6,7 @@ export type TemplateFormState = {
   vcpus: string;
   memoryMiB: string;
   diskFormat: string;
+  imageId: string;
   network: string;
   isoPath: string;
   firmware: VMFirmware;
@@ -25,6 +26,7 @@ export const initialTemplateForm: TemplateFormState = {
   vcpus: "2",
   memoryMiB: "2048",
   diskFormat: "qcow2",
+  imageId: "",
   network: "default",
   isoPath: "",
   firmware: "bios",
@@ -45,6 +47,7 @@ export function templateToForm(template: VMTemplate): TemplateFormState {
     vcpus: String(template.vcpus),
     memoryMiB: String(template.memoryMiB),
     diskFormat: template.diskFormat,
+    imageId: template.imageId ? String(template.imageId) : "",
     network: template.network,
     isoPath: template.isoPath ?? "",
     firmware: template.firmware,
@@ -66,6 +69,7 @@ export function formToTemplateInput(form: TemplateFormState): VMTemplateInput {
     vcpus: Number(form.vcpus),
     memoryMiB: Number(form.memoryMiB),
     diskFormat: form.diskFormat,
+    imageId: Number(form.imageId) > 0 ? Number(form.imageId) : undefined,
     network: form.network.trim(),
     isoPath: form.isoPath.trim(),
     firmware: form.firmware,
@@ -84,6 +88,7 @@ export type TemplateVMCreateDefaults = {
   vcpus: number;
   memoryMiB: number;
   diskFormat: string;
+  imageId: number;
   network: string;
   isoPath: string;
   firmware: VMFirmware;
@@ -102,6 +107,7 @@ export function templateVMCreateDefaults(template: VMTemplate): TemplateVMCreate
     vcpus: template.vcpus,
     memoryMiB: template.memoryMiB,
     diskFormat: template.diskFormat,
+    imageId: template.imageId ?? 0,
     network: template.network,
     isoPath: template.isoPath ?? "",
     firmware: template.firmware,

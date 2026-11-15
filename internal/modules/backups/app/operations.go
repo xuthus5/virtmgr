@@ -116,6 +116,9 @@ func (s *Service) Verify(ctx context.Context, command VerifyCommand) (domain.Tas
 		CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), verifyTimeout)
+	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
+		registrar.RegisterCancel(taskID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.executeVerify(jobContext, taskID, item, command, detail)
@@ -202,6 +205,9 @@ func (s *Service) Restore(ctx context.Context, command RestoreCommand) (domain.T
 		CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
+		registrar.RegisterCancel(taskID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.executeRestore(jobContext, taskID, item, command, detail)
@@ -287,6 +293,9 @@ func (s *Service) Delete(ctx context.Context, command DeleteCommand) (domain.Tas
 		CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), deleteTimeout)
+	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
+		registrar.RegisterCancel(taskID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.executeDelete(jobContext, taskID, item, command, detail)

@@ -64,6 +64,8 @@ type Backend interface {
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
 	CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error)
 	UploadStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec, reader io.Reader) (domain.StorageVolume, error)
+	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
+	StorageVolumeChecksum(ctx context.Context, poolName, volumeName string) (string, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)
 	ListDHCPLeases(ctx context.Context, networkName string) ([]domain.DHCPLease, error)

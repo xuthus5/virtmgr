@@ -48,3 +48,25 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
   await expect(page.getByTestId("vm-cloud-init-preview")).toBeVisible();
   await expect(page.getByTestId("vm-cloud-init-mode-source")).toBeDisabled();
 });
+
+test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  for (const path of ["/images", "/settings", "/tasks"]) {
+    await page.goto(path);
+    await expect(page.getByRole("main")).toBeVisible();
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      const layout = await page.evaluate(() => ({
+        viewportWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+      }));
+      expect(layout.documentWidth, `${path} ${width}px document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+      expect(layout.bodyWidth, `${path} ${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    }
+  }
+  await page.goto("/images");
+  await expect(page.getByRole("heading", { name: "镜像库", exact: true })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "ubuntu-24.04-cloud-base" })).toBeVisible();
+});

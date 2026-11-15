@@ -94,6 +94,7 @@ const taskStatusLabel: Record<TaskStatus, string> = {
   succeeded: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  cancelled: "已取消",
 };
 
 const actionMeta: Record<VMAction, ActionMeta> = {

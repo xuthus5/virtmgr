@@ -77,6 +77,15 @@ type GuestAgentDataCleaner interface {
 	DeleteGuestAgentVMData(ctx context.Context, vmUUID string) error
 }
 
+type ImageRepository interface {
+	GetVMImage(ctx context.Context, id int64) (domain.VMImage, error)
+}
+
+type ImageVolumeRepository interface {
+	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
+	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
+}
+
 type TaskRecorder interface {
 	Start(ctx context.Context, kind, targetKind, targetID, actor, step string) (string, error)
 	Progress(ctx context.Context, id string, progress int, step string) error
@@ -97,6 +106,8 @@ type Service struct {
 	metadata       VMMetadataRepository
 	snapshotAgent  GuestAgentSnapshotRecorder
 	guestAgentData GuestAgentDataCleaner
+	images         ImageRepository
+	imageVolumes   ImageVolumeRepository
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -123,6 +134,13 @@ func WithTaskRecorder(recorder TaskRecorder) Option {
 func WithGuestAgentSnapshotRecorder(recorder GuestAgentSnapshotRecorder) Option {
 	return func(service *Service) {
 		service.snapshotAgent = recorder
+	}
+}
+
+func WithImages(repository ImageRepository, volumes ImageVolumeRepository) Option {
+	return func(service *Service) {
+		service.images = repository
+		service.imageVolumes = volumes
 	}
 }
 
@@ -529,11 +547,33 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", spec.Name, specDetail(spec), err)
 	}
+	detail := specDetail(normalized)
+	clonedVolume := ""
+	imageName := ""
+	if normalized.ImageID > 0 {
+		image, err := s.prepareImageDisk(ctx, &normalized)
+		if err != nil {
+			return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", spec.Name, detail, err)
+		}
+		detail["imageId"] = image.ID
+		detail["imageName"] = image.Name
+		detail["targetPool"] = normalized.TargetPool
+		imageName = image.Name
+		clonedVolume = filepath.Base(normalized.DiskPath)
+	}
 	vm, err := s.repository.CreateVM(ctx, normalized)
 	if err != nil {
-		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", normalized.Name, specDetail(normalized), err)
+		if clonedVolume != "" && s.imageVolumes != nil {
+			_ = s.imageVolumes.DeleteStorageVolume(ctx, normalized.TargetPool, clonedVolume)
+		}
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", normalized.Name, detail, err)
 	}
-	detail := specDetail(normalized)
+	detail = specDetail(normalized)
+	if normalized.ImageID > 0 {
+		detail["imageId"] = normalized.ImageID
+		detail["imageName"] = imageName
+		detail["targetPool"] = normalized.TargetPool
+	}
 	detail["uuid"] = vm.UUID
 	detail["state"] = string(vm.State)
 	s.captureConfigVersion(ctx, command.Request, vm.UUID, domain.VMConfigSourceCreate, 0, "创建虚拟机后保存初始配置")
@@ -541,6 +581,39 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 		return domain.VM{}, fmt.Errorf("record VM create audit: %w", err)
 	}
 	return vm, nil
+}
+
+func (s *Service) prepareImageDisk(ctx context.Context, spec *domain.VMCreateSpec) (domain.VMImage, error) {
+	if s.images == nil || s.imageVolumes == nil {
+		return domain.VMImage{}, domain.ErrUnavailable
+	}
+	image, err := s.images.GetVMImage(ctx, spec.ImageID)
+	if err != nil {
+		return domain.VMImage{}, err
+	}
+	if image.Format != "qcow2" && image.Format != "raw" {
+		return domain.VMImage{}, domain.ErrInvalidInput
+	}
+	targetPool := strings.TrimSpace(spec.TargetPool)
+	if targetPool == "" {
+		targetPool = image.Pool
+	}
+	if !storagePoolNamePattern.MatchString(targetPool) {
+		return domain.VMImage{}, domain.ErrInvalidInput
+	}
+	targetName := imageDiskName(spec.Name, image.Format)
+	volume, err := s.imageVolumes.CloneStorageVolume(ctx, image.Pool, image.Volume, targetPool, targetName)
+	if err != nil {
+		return domain.VMImage{}, err
+	}
+	spec.DiskPath = volume.Path
+	spec.DiskFormat = image.Format
+	spec.TargetPool = targetPool
+	return image, nil
+}
+
+func imageDiskName(vmName, format string) string {
+	return strings.TrimSpace(vmName) + "-disk." + format
 }
 
 func (s *Service) Delete(ctx context.Context, command DeleteCommand) error {
@@ -1361,9 +1434,13 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.DiskPath = strings.TrimSpace(spec.DiskPath)
 	spec.DiskFormat = strings.ToLower(strings.TrimSpace(spec.DiskFormat))
+	spec.TargetPool = strings.TrimSpace(spec.TargetPool)
 	spec.Network = strings.TrimSpace(spec.Network)
 	spec.ISOPath = strings.TrimSpace(spec.ISOPath)
-	if spec.DiskFormat == "" {
+	if spec.ImageID < 0 {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: image id must be positive", domain.ErrInvalidInput)
+	}
+	if spec.ImageID == 0 && spec.DiskFormat == "" {
 		spec.DiskFormat = "qcow2"
 	}
 	if spec.Network == "" {
@@ -1378,12 +1455,26 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	if spec.MemoryMiB < minMemoryMiB || spec.MemoryMiB > maxMemoryMiB {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: memory must be between %d and %d MiB", domain.ErrInvalidInput, minMemoryMiB, maxMemoryMiB)
 	}
-	if !validAbsolutePath(spec.DiskPath) {
-		return domain.VMCreateSpec{}, fmt.Errorf("%w: disk path must be absolute", domain.ErrInvalidInput)
-	}
-	spec.DiskPath = filepath.Clean(spec.DiskPath)
-	if _, ok := supportedFormats[spec.DiskFormat]; !ok {
-		return domain.VMCreateSpec{}, fmt.Errorf("%w: disk format must be qcow2 or raw", domain.ErrInvalidInput)
+	if spec.ImageID > 0 {
+		if spec.DiskPath != "" {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: disk path and image id are mutually exclusive", domain.ErrInvalidInput)
+		}
+		if spec.DiskFormat != "" {
+			if _, ok := supportedFormats[spec.DiskFormat]; !ok {
+				return domain.VMCreateSpec{}, fmt.Errorf("%w: disk format must be qcow2 or raw", domain.ErrInvalidInput)
+			}
+		}
+		if spec.TargetPool != "" && !storagePoolNamePattern.MatchString(spec.TargetPool) {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid target storage pool", domain.ErrInvalidInput)
+		}
+	} else {
+		if !validAbsolutePath(spec.DiskPath) {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: disk path must be absolute", domain.ErrInvalidInput)
+		}
+		spec.DiskPath = filepath.Clean(spec.DiskPath)
+		if _, ok := supportedFormats[spec.DiskFormat]; !ok {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: disk format must be qcow2 or raw", domain.ErrInvalidInput)
+		}
 	}
 	diskBus, ok := domain.NormalizeVMDiskBus(string(spec.DiskBus))
 	if !ok {
@@ -1467,6 +1558,12 @@ func specDetail(spec domain.VMCreateSpec) map[string]any {
 		"guestAgent": spec.GuestAgentEnabled(),
 		"autostart":  spec.Autostart,
 		"start":      spec.Start,
+	}
+	if spec.ImageID > 0 {
+		detail["imageId"] = spec.ImageID
+	}
+	if spec.TargetPool != "" {
+		detail["targetPool"] = spec.TargetPool
 	}
 	if spec.ISOPath != "" {
 		detail["isoPath"] = spec.ISOPath

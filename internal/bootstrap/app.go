@@ -12,6 +12,8 @@ import (
 	"log/slog"
 
 	"virtmgr/internal/domain"
+	apitokensapp "virtmgr/internal/modules/apitokens/app"
+	apitokenshttp "virtmgr/internal/modules/apitokens/http"
 	audithistoryapp "virtmgr/internal/modules/audithistory/app"
 	audithistoryhttp "virtmgr/internal/modules/audithistory/http"
 	authapp "virtmgr/internal/modules/auth/app"
@@ -26,6 +28,8 @@ import (
 	guestagenthttp "virtmgr/internal/modules/guestagent/http"
 	hostapp "virtmgr/internal/modules/host/app"
 	hosthttp "virtmgr/internal/modules/host/http"
+	imagesapp "virtmgr/internal/modules/images/app"
+	imageshttp "virtmgr/internal/modules/images/http"
 	monitoringapp "virtmgr/internal/modules/monitoring/app"
 	monitoringhttp "virtmgr/internal/modules/monitoring/http"
 	networksapp "virtmgr/internal/modules/networks/app"
@@ -97,6 +101,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	if err := store.DeleteLoginAttemptsBefore(ctx, time.Now().Add(-24*time.Hour)); err != nil {
 		logger.Warn("login_attempts_cleanup_failed", "error", err)
 	}
+	if err := store.DeleteExpiredAPITokens(ctx, time.Now()); err != nil {
+		logger.Warn("expired_api_tokens_cleanup_failed", "error", err)
+	}
 	mode, err := runtimeconfig.New(ctx, store, cfg.ReadOnly)
 	if err != nil {
 		_ = db.Close()
@@ -135,6 +142,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	eventBus := eventbus.New(500)
 	if cfg.DemoMode {
 		backend = libvirtbackend.NewDemo(eventBus)
+		if err := seedDemoImages(ctx, store); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	} else {
 		backend, err = libvirtbackend.New(cfg.LibvirtURI, cfg.HostName, eventBus)
 		if err != nil {
@@ -143,7 +154,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		}
 	}
 
-	authHandler := authhttp.New(authService, cfg.CookieSecure, cfg.SessionTTL, cfg.ReadOnly, authhttp.WithReadOnlyMode(mode))
+	apiTokenService := apitokensapp.New(store, store)
+	apiTokensHandler := apitokenshttp.New(apiTokenService)
+	authHandler := authhttp.New(authService, cfg.CookieSecure, cfg.SessionTTL, cfg.ReadOnly, authhttp.WithReadOnlyMode(mode), authhttp.WithTokenAuthenticator(apiTokenService))
 	overviewHandler := overviewhttp.New(overviewapp.New(backend))
 	metricsService := resourcemetrics.New(backend)
 	hostHandler := hosthttp.New(hostapp.New(backend, hostapp.WithMetrics(metricsService)))
@@ -162,19 +175,25 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		backupsapp.WithConfigVersionRecorder(configVersionService),
 	)
 	backupsHandler := backupshttp.New(backupService)
-	tasksHandler := taskshttp.New(tasksapp.New(store, tasksapp.WithRetryer(backupService)))
+	tasksHandler := taskshttp.New(tasksapp.New(store,
+		tasksapp.WithRetryer(backupService),
+		tasksapp.WithCancellationRegistry(taskRecorder),
+		tasksapp.WithAuditRecorder(store),
+		tasksapp.WithReadOnlyMode(mode),
+	))
 	configVersionsHandler := configversionshttp.New(configVersionService)
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend)))
+	imagesHandler := imageshttp.New(imagesapp.New(store, backend, store, cfg.ReadOnly, imagesapp.WithReadOnlyMode(mode)))
 	guestAgentService := guestagentapp.New(backend, store, cfg.ReadOnly,
 		guestagentapp.WithReadOnlyMode(mode),
 		guestagentapp.WithPolicyRepository(store),
 		guestagentapp.WithTaskRecorder(taskRecorder),
 	)
 	guestAgentHandler := guestagenthttp.New(guestAgentService)
-	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
+	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode), templatesapp.WithImages(store)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
 		snapshotpoliciesapp.WithErrorHandler(func(err error) { logger.Error("snapshot_scheduler_failed", "error", err) }),
@@ -190,6 +209,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		backend:          backend,
 		db:               db,
 		auth:             authHandler,
+		apiTokens:        apiTokensHandler,
 		overview:         overviewHandler,
 		host:             hostHandler,
 		events:           eventsHandler,
@@ -198,6 +218,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		networks:         networksHandler,
 		vms:              vmsHandler,
 		guestAgent:       guestAgentHandler,
+		images:           imagesHandler,
 		templates:        templatesHandler,
 		snapshotPolicies: snapshotPoliciesHandler,
 		auditHistory:     auditHistoryHandler,
@@ -346,6 +367,9 @@ func (a *App) cleanupExpiredSessions(ctx context.Context) {
 			if err := a.store.DeleteLoginAttemptsBefore(ctx, now.Add(-24*time.Hour)); err != nil {
 				a.logger.Warn("login_attempts_cleanup_failed", "error", err)
 			}
+			if err := a.store.DeleteExpiredAPITokens(ctx, now); err != nil {
+				a.logger.Warn("expired_api_tokens_cleanup_failed", "error", err)
+			}
 		case <-ctx.Done():
 			return
 		}
@@ -412,6 +436,7 @@ type routerDependencies struct {
 		PingContext(context.Context) error
 	}
 	auth             *authhttp.Handler
+	apiTokens        *apitokenshttp.Handler
 	overview         *overviewhttp.Handler
 	host             *hosthttp.Handler
 	events           *eventshttp.Handler
@@ -420,6 +445,7 @@ type routerDependencies struct {
 	networks         *networkshttp.Handler
 	vms              *vmshttp.Handler
 	guestAgent       *guestagenthttp.Handler
+	images           *imageshttp.Handler
 	templates        *templateshttp.Handler
 	snapshotPolicies *snapshotpolicieshttp.Handler
 	auditHistory     *audithistoryhttp.Handler
@@ -461,8 +487,10 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 
 	r.Route("/api/v1", func(api chi.Router) {
 		deps.auth.Mount(api)
+		deps.apiTokens.MountPublic(api)
 		api.Group(func(protected chi.Router) {
 			protected.Use(deps.auth.RequireSession)
+			deps.apiTokens.MountProtected(protected, deps.auth.RequireCSRF)
 			deps.overview.Mount(protected)
 			deps.host.Mount(protected)
 			deps.events.Mount(protected)
@@ -471,6 +499,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.networks.Mount(protected, deps.auth.RequireCSRF)
 			deps.vms.Mount(protected, deps.auth.RequireCSRF)
 			deps.guestAgent.Mount(protected, deps.auth.RequireCSRF)
+			deps.images.Mount(protected, deps.auth.RequireCSRF)
 			deps.templates.Mount(protected, deps.auth.RequireCSRF)
 			deps.snapshotPolicies.Mount(protected, deps.auth.RequireCSRF)
 			deps.auditHistory.Mount(protected)

@@ -10,19 +10,23 @@ import (
 )
 
 type fakeRepository struct {
-	created domain.Task
-	updated domain.Task
-	err     error
+	created   domain.Task
+	updated   domain.Task
+	updates   []domain.Task
+	createErr error
+	updateErr error
+	err       error
 }
 
 func (f *fakeRepository) CreateTask(_ context.Context, task domain.Task) error {
 	f.created = task
-	return f.err
+	return f.createErr
 }
 
 func (f *fakeRepository) UpdateTask(_ context.Context, task domain.Task) error {
 	f.updated = task
-	return f.err
+	f.updates = append(f.updates, task)
+	return f.updateErr
 }
 
 func TestRecorderLifecycle(t *testing.T) {
@@ -63,12 +67,12 @@ func TestRecorderLifecycle(t *testing.T) {
 }
 
 func TestRecorderClampsProgressAndPropagatesErrors(t *testing.T) {
-	repository := &fakeRepository{err: domain.ErrUnavailable}
+	repository := &fakeRepository{createErr: domain.ErrUnavailable}
 	recorder := New(repository)
 	if _, err := recorder.Start(context.Background(), "vm.clone", "vm", "uuid-1", "admin", ""); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("Start() error = %v", err)
 	}
-	repository.err = nil
+	repository.createErr = nil
 	recorder.newID = func() (string, error) { return "task_test", nil }
 	if _, err := recorder.Start(context.Background(), "", "vm", "uuid-1", "admin", ""); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("Start() invalid error = %v", err)
@@ -84,6 +88,67 @@ func TestRecorderClampsProgressAndPropagatesErrors(t *testing.T) {
 	}
 	if repository.updated.Progress != 0 {
 		t.Fatalf("progress = %d, want 0", repository.updated.Progress)
+	}
+}
+
+func TestRecorderCancellationWinsOverLateSuccess(t *testing.T) {
+	repository := &fakeRepository{}
+	recorder := New(repository)
+	recorder.newID = func() (string, error) { return "task-cancel", nil }
+	id, err := recorder.Start(context.Background(), "vm.clone", "vm", "uuid-1", "admin", "正在克隆")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled := false
+	recorder.RegisterCancel(id, func() { cancelled = true })
+	if !recorder.MarkCancelled(id) {
+		t.Fatal("MarkCancelled() = false")
+	}
+	if !cancelled {
+		t.Fatal("cancel function was not called")
+	}
+	if err := recorder.Succeed(context.Background(), id, "克隆完成"); err != nil {
+		t.Fatal(err)
+	}
+	if repository.updated.Status != domain.TaskStatusCancelled || repository.updated.Error != "" {
+		t.Fatalf("late success update = %+v", repository.updated)
+	}
+}
+
+func TestRecorderApplyCancelBeforeRegistrationAndReleaseResourceLock(t *testing.T) {
+	repository := &fakeRepository{}
+	recorder := New(repository)
+	ids := []string{"task-first", "task-second", "task-third"}
+	index := 0
+	recorder.newID = func() (string, error) {
+		id := ids[index]
+		index++
+		return id, nil
+	}
+	first, err := recorder.Start(context.Background(), "vm.clone", "vm", "uuid-1", "admin", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorder.Start(context.Background(), "vm.clone", "vm", "uuid-1", "admin", "second"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("second start error = %v", err)
+	}
+	if repository.updated.Status != domain.TaskStatusFailed || repository.updated.Step != "任务被拒绝" {
+		t.Fatalf("conflicting task = %+v", repository.updated)
+	}
+	recorder.RegisterCancel(first, func() {})
+	if !recorder.MarkCancelled(first) {
+		t.Fatal("MarkCancelled() = false")
+	}
+	cancelled := false
+	recorder.RegisterCancel(first, func() { cancelled = true })
+	if !cancelled {
+		t.Fatal("cancel registered after cancellation was not invoked")
+	}
+	if err := recorder.Fail(context.Background(), first, 10, "停止", errors.New("cancelled")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recorder.Start(context.Background(), "vm.clone", "vm", "uuid-1", "admin", "third"); err != nil {
+		t.Fatalf("resource lock was not released: %v", err)
 	}
 }
 

@@ -20,6 +20,7 @@ const taskStatusLabel = {
   succeeded: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  cancelled: "已取消",
 } as const;
 
 export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, disabledReason }: {

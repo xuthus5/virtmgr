@@ -40,11 +40,16 @@ type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
 
+type ImageRepository interface {
+	GetVMImage(ctx context.Context, id int64) (domain.VMImage, error)
+}
+
 type Service struct {
 	repository   Repository
 	audit        AuditRecorder
 	readOnly     bool
 	readOnlyMode domain.ReadOnlyProvider
+	images       ImageRepository
 }
 
 type Option func(*Service)
@@ -52,6 +57,12 @@ type Option func(*Service)
 func WithReadOnlyMode(mode domain.ReadOnlyProvider) Option {
 	return func(service *Service) {
 		service.readOnlyMode = mode
+	}
+}
+
+func WithImages(repository ImageRepository) Option {
+	return func(service *Service) {
+		service.images = repository
 	}
 }
 
@@ -92,6 +103,17 @@ func (s *Service) isReadOnly() bool {
 	return s.readOnly
 }
 
+func (s *Service) validateImage(ctx context.Context, imageID int64) error {
+	if imageID < 1 {
+		return nil
+	}
+	if s.images == nil {
+		return domain.ErrUnavailable
+	}
+	_, err := s.images.GetVMImage(ctx, imageID)
+	return err
+}
+
 func (s *Service) List(ctx context.Context) (domain.VMTemplateList, error) {
 	templates, err := s.repository.ListVMTemplates(ctx)
 	if err != nil {
@@ -121,6 +143,9 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VMT
 	if err != nil {
 		return domain.VMTemplate{}, err
 	}
+	if err := s.validateImage(ctx, spec.ImageID); err != nil {
+		return domain.VMTemplate{}, err
+	}
 	if _, err := s.repository.VMTemplateByName(ctx, spec.Name); err == nil {
 		return domain.VMTemplate{}, domain.ErrConflict
 	} else if !errors.Is(err, domain.ErrNotFound) {
@@ -148,6 +173,9 @@ func (s *Service) Update(ctx context.Context, command UpdateCommand) (domain.VMT
 	}
 	spec, err := normalizeSpec(command.Spec)
 	if err != nil {
+		return domain.VMTemplate{}, err
+	}
+	if err := s.validateImage(ctx, spec.ImageID); err != nil {
 		return domain.VMTemplate{}, err
 	}
 	existing, err := s.repository.GetVMTemplate(ctx, command.ID)
@@ -207,6 +235,9 @@ func normalizeSpec(spec domain.VMTemplateSpec) (domain.VMTemplateSpec, error) {
 	spec.CloudInitUserData = strings.TrimSpace(spec.CloudInitUserData)
 	spec.CloudInitNetworkConfig = strings.TrimSpace(spec.CloudInitNetworkConfig)
 	spec.CloudInitVendorData = strings.TrimSpace(spec.CloudInitVendorData)
+	if spec.ImageID < 0 {
+		return domain.VMTemplateSpec{}, fmt.Errorf("%w: image id must be positive", domain.ErrInvalidInput)
+	}
 	if spec.DiskFormat == "" {
 		spec.DiskFormat = "qcow2"
 	}
@@ -279,6 +310,9 @@ func templateDetail(template domain.VMTemplate) map[string]any {
 	}
 	if template.ISOPath != "" {
 		detail["isoPath"] = template.ISOPath
+	}
+	if template.ImageID > 0 {
+		detail["imageId"] = template.ImageID
 	}
 	return detail
 }

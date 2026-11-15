@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, Layers3, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
 import { ApiError, api, unauthorizedEvent } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ const navigation: Array<{ href: string; label: string; icon: LucideIcon; match: 
   { href: "/vms", label: "虚拟机", icon: Server, match: (path) => path.startsWith("/vms") },
   { href: "/backups", label: "备份中心", icon: Archive, match: (path) => path.startsWith("/backups") },
   { href: "/templates", label: "虚拟机模板", icon: LayoutTemplate, match: (path) => path.startsWith("/templates") },
+  { href: "/images", label: "镜像库", icon: Layers3, match: (path) => path.startsWith("/images") },
   { href: "/storage", label: "存储", icon: HardDrive, match: (path) => path.startsWith("/storage") },
   { href: "/networks", label: "网络", icon: NetworkIcon, match: (path) => path.startsWith("/networks") },
   { href: "/host", label: "物理主机", icon: Cpu, match: (path) => path.startsWith("/host") },

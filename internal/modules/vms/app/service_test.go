@@ -1832,3 +1832,100 @@ func withSpec(spec domain.VMCreateSpec, mutate func(*domain.VMCreateSpec)) domai
 	mutate(&spec)
 	return spec
 }
+
+type fakeImageRepository struct{ image domain.VMImage }
+
+func (f fakeImageRepository) GetVMImage(context.Context, int64) (domain.VMImage, error) {
+	return f.image, nil
+}
+
+type fakeImageVolumes struct {
+	clonedPool   string
+	clonedVolume string
+	targetPool   string
+	targetName   string
+	deleted      []string
+	cloneErr     error
+}
+
+func (f *fakeImageVolumes) CloneStorageVolume(_ context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error) {
+	f.clonedPool, f.clonedVolume, f.targetPool, f.targetName = sourcePool, sourceVolume, targetPool, targetName
+	if f.cloneErr != nil {
+		return domain.StorageVolume{}, f.cloneErr
+	}
+	return domain.StorageVolume{Name: targetName, Path: "/var/lib/libvirt/images/" + targetName, Format: "qcow2"}, nil
+}
+
+func (f *fakeImageVolumes) DeleteStorageVolume(_ context.Context, poolName, volumeName string) error {
+	f.deleted = append(f.deleted, poolName+"/"+volumeName)
+	return nil
+}
+
+func TestCreateVMFromImageClonesDiskAndAudits(t *testing.T) {
+	repository := &recordingRepository{}
+	audit := &fakeAuditRecorder{}
+	volumes := &fakeImageVolumes{}
+	service := New(repository, audit, false, WithImages(fakeImageRepository{image: domain.VMImage{
+		ID: 9, Name: "ubuntu-24.04", Pool: "images", Volume: "base.qcow2", Format: "qcow2",
+	}}, volumes))
+	vm, err := service.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "web-01", VCPUs: 2, MemoryMiB: 2048, ImageID: 9, TargetPool: "vms"},
+		Request: MutationContext{Session: operatorSession(), RequestID: "req-image-vm", SourceIP: "127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if vm.Name != "web-01" || len(repository.createdSpecs) != 1 {
+		t.Fatalf("vm = %+v specs = %+v", vm, repository.createdSpecs)
+	}
+	spec := repository.createdSpecs[0]
+	if spec.DiskPath != "/var/lib/libvirt/images/web-01-disk.qcow2" || spec.DiskFormat != "qcow2" || spec.TargetPool != "vms" {
+		t.Fatalf("created spec = %+v", spec)
+	}
+	if volumes.clonedPool != "images" || volumes.clonedVolume != "base.qcow2" || volumes.targetPool != "vms" || volumes.targetName != "web-01-disk.qcow2" {
+		t.Fatalf("clone = %+v", volumes)
+	}
+	if len(audit.events) != 1 || audit.events[0].Detail["imageId"] != int64(9) || audit.events[0].Detail["imageName"] != "ubuntu-24.04" {
+		t.Fatalf("audit = %+v", audit.events)
+	}
+}
+
+func TestCreateVMFromImageRemovesCloneWhenDomainCreationFails(t *testing.T) {
+	repository := &recordingRepository{fakeVMRepository: fakeVMRepository{createErr: domain.ErrConflict}}
+	volumes := &fakeImageVolumes{}
+	service := New(repository, &fakeAuditRecorder{}, false, WithImages(fakeImageRepository{image: domain.VMImage{
+		ID: 4, Name: "base", Pool: "images", Volume: "base.qcow2", Format: "qcow2",
+	}}, volumes))
+	_, err := service.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "web-02", VCPUs: 2, MemoryMiB: 2048, ImageID: 4, TargetPool: "vms"},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(volumes.deleted) != 1 || volumes.deleted[0] != "vms/web-02-disk.qcow2" {
+		t.Fatalf("deleted volumes = %+v", volumes.deleted)
+	}
+}
+
+func TestCreateVMFromImageRejectsCloneFailureAndMixedDiskSources(t *testing.T) {
+	volumes := &fakeImageVolumes{cloneErr: domain.ErrConflict}
+	repository := &recordingRepository{}
+	service := New(repository, &fakeAuditRecorder{}, false, WithImages(fakeImageRepository{image: domain.VMImage{
+		ID: 4, Name: "base", Pool: "images", Volume: "base.qcow2", Format: "qcow2",
+	}}, volumes))
+	_, err := service.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "web-03", VCPUs: 2, MemoryMiB: 2048, ImageID: 4},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrConflict) || len(repository.createdSpecs) != 0 {
+		t.Fatalf("clone failure error = %v specs = %+v", err, repository.createdSpecs)
+	}
+	_, err = service.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "web-04", VCPUs: 2, MemoryMiB: 2048, ImageID: 4, DiskPath: "/tmp/disk.qcow2"},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("mixed source error = %v", err)
+	}
+}

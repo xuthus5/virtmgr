@@ -61,8 +61,9 @@ func (s *Store) UpdateTask(ctx context.Context, task domain.Task) error {
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET status = ?, progress = ?, step = ?, error = ?, updated_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status NOT IN (?, ?, ?, ?)`,
 		string(task.Status), task.Progress, task.Step, task.Error, updatedAt.UTC().Unix(), task.ID,
+		string(domain.TaskStatusSucceeded), string(domain.TaskStatusFailed), string(domain.TaskStatusInterrupted), string(domain.TaskStatusCancelled),
 	)
 	if err != nil {
 		return fmt.Errorf("update task: %w", err)
@@ -75,6 +76,26 @@ func (s *Store) UpdateTask(ctx context.Context, task domain.Task) error {
 		return domain.ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) CancelTask(ctx context.Context, id string, cancelledAt time.Time, step string) (domain.Task, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = ?, progress = progress, step = ?, error = '', updated_at = ?
+		WHERE id = ? AND status IN (?, ?)`,
+		string(domain.TaskStatusCancelled), step, cancelledAt.UTC().Unix(), id,
+		string(domain.TaskStatusQueued), string(domain.TaskStatusRunning),
+	)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("cancel task: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("count cancelled task: %w", err)
+	}
+	if affected == 0 {
+		return domain.Task{}, domain.ErrConflict
+	}
+	return s.GetTask(ctx, id)
 }
 
 func (s *Store) GetTask(ctx context.Context, id string) (domain.Task, error) {

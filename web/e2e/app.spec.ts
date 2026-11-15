@@ -720,3 +720,70 @@ test("只读模式展示虚拟机模板并支持预填新建表单", async ({ pa
   await expect(page.getByTestId("vm-cloud-init-mode-source")).toBeDisabled();
   await expect(page.getByRole("button", { name: "创建虚拟机", exact: true })).toBeDisabled();
 });
+
+test("镜像库展示演示镜像并在只读模式禁用写操作", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "镜像库", exact: true }).click();
+  await expect(page).toHaveURL(/\/images$/);
+  await expect(page.getByRole("heading", { name: "镜像库", exact: true })).toBeVisible();
+  await expect(page.getByTestId("image-total")).toHaveText("1");
+  const row = page.getByRole("row").filter({ hasText: "ubuntu-24.04-cloud-base" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("demo-build-01.qcow2");
+  await expect(row).toContainText("qcow2");
+  await expect(row).toContainText("未计算");
+  await expect(page.getByTestId("image-create-toggle")).toBeDisabled();
+  await expect(row.getByRole("button", { name: "刷新", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("image-read-only-notice")).toContainText("只读模式");
+});
+
+test("系统设置可签发和撤销 API Token 且明文只展示一次", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "系统设置", exact: true }).click();
+  await expect(page.getByTestId("api-token-card")).toBeVisible();
+  await expect(page.getByTestId("api-token-empty")).toBeVisible();
+  await expect(page.getByRole("link", { name: "OpenAPI", exact: true })).toHaveAttribute("href", "/api/v1/openapi.json");
+
+  await page.getByTestId("api-token-create-toggle").click();
+  await page.getByTestId("api-token-name").fill("e2e-read-token");
+  await page.getByTestId("api-token-scope").selectOption("read");
+  await page.getByTestId("api-token-expiry").fill("30");
+  await page.getByTestId("api-token-submit").click();
+
+  await expect(page.getByTestId("api-token-created-panel")).toContainText("只显示一次");
+  await expect(page.getByTestId("api-token-secret")).toHaveText(/^vmt_/);
+  await expect(page.getByTestId("api-token-notice")).toContainText("已创建");
+
+  await page.getByTestId("api-token-create-toggle").click();
+  await page.getByTestId("api-token-name").fill("e2e-write-token");
+  await page.getByTestId("api-token-scope").selectOption("write");
+  await page.getByTestId("api-token-expiry").fill("1");
+  await page.getByTestId("api-token-submit").click();
+  await expect(page.getByTestId("api-token-secret")).toHaveText(/^vmt_/);
+
+  const readRow = page.getByRole("row").filter({ hasText: "e2e-read-token" });
+  const writeRow = page.getByRole("row").filter({ hasText: "e2e-write-token" });
+  await expect(readRow).toContainText("read");
+  await expect(readRow).toContainText("有效");
+  await expect(writeRow).toContainText("write");
+  for (const row of [readRow, writeRow]) {
+    await row.getByRole("button", { name: "撤销", exact: true }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("撤销 API Token？");
+    await dialog.getByTestId("confirm-revoke-api-token").click();
+    await expect(page.getByTestId("api-token-notice")).toContainText("已撤销");
+    await expect(row).toContainText("已撤销");
+    await expect(row.getByRole("button", { name: "撤销", exact: true })).toBeDisabled();
+  }
+});
+
+test("只读模式下可取消任务按钮禁用且任务状态支持已取消筛选", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  const cancel = page.getByTestId("task-cancel-task-demo-clone");
+  await expect(cancel).toBeVisible();
+  await expect(cancel).toBeDisabled();
+  await expect(cancel).toHaveAttribute("title", "系统当前处于只读模式");
+  await page.getByTestId("task-status-filter").selectOption("cancelled");
+  await expect(page.getByTestId("tasks-empty")).toContainText("没有匹配的任务");
+});

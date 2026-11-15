@@ -64,6 +64,10 @@ type TaskRecorder interface {
 	Fail(ctx context.Context, id string, progress int, step string, cause error) error
 }
 
+type TaskCancellationRegistrar interface {
+	RegisterCancel(id string, cancel context.CancelFunc)
+}
+
 type TaskMetadataRecorder interface {
 	SetMetadata(ctx context.Context, id string, metadata map[string]any) error
 }
@@ -283,6 +287,9 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 		CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupTimeout)
+	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
+		registrar.RegisterCancel(taskID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.executeBackup(jobContext, taskID, item, command, detail)

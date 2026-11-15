@@ -5,11 +5,13 @@ import { Ban, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, ListChecks, 
 import { ApiError, api } from "@/api/client";
 import type { Task, TaskStatus } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
+import { useSessionQuery } from "@/features/auth/use-session";
 import { useTasksQuery } from "@/features/tasks/use-tasks-query";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +23,7 @@ const statusLabels: Record<TaskStatus, string> = {
   succeeded: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  cancelled: "已取消",
 };
 
 const kindLabels: Record<string, string> = {
@@ -80,15 +83,15 @@ function taskVMUUID(task: Task) {
 function StatusBadge({ status }: { status: TaskStatus }) {
   const icon = status === "succeeded" ? <CheckCircle2 className="h-3 w-3" />
     : status === "failed" ? <XCircle className="h-3 w-3" />
-      : status === "interrupted" ? <Ban className="h-3 w-3" />
+      : status === "interrupted" || status === "cancelled" ? <Ban className="h-3 w-3" />
         : status === "queued" ? <CircleAlert className="h-3 w-3" /> : <LoaderCircle className="h-3 w-3 animate-spin" />;
-  const variant = status === "succeeded" ? "success" : status === "failed" ? "destructive" : status === "running" ? "warning" : "outline";
+  const variant = status === "succeeded" ? "success" : status === "failed" ? "destructive" : status === "running" ? "warning" : status === "cancelled" ? "secondary" : "outline";
   return <Badge variant={variant} className="whitespace-nowrap">{icon}{statusLabels[status]}</Badge>;
 }
 
-function TaskRow({ task, onRetry, retrying }: { task: Task; onRetry: (task: Task) => void; retrying: boolean }) {
+function TaskRow({ task, onRetry, retrying, onCancel, cancelling, canCancel }: { task: Task; onRetry: (task: Task) => void; retrying: boolean; onCancel: (task: Task) => void; cancelling: boolean; canCancel: boolean }) {
   const vmUUID = taskVMUUID(task);
-  const progressClass = task.status === "failed" ? "bg-destructive" : task.status === "succeeded" ? "bg-success" : task.status === "interrupted" ? "bg-muted-foreground" : "bg-primary";
+  const progressClass = task.status === "failed" ? "bg-destructive" : task.status === "succeeded" ? "bg-success" : task.status === "interrupted" || task.status === "cancelled" ? "bg-muted-foreground" : "bg-primary";
   return (
     <TableRow data-testid={`task-row-${task.id}`} data-status={task.status}>
       <TableCell>
@@ -112,7 +115,11 @@ function TaskRow({ task, onRetry, retrying }: { task: Task; onRetry: (task: Task
       <TableCell><span className="font-mono text-xs">{task.actor}</span></TableCell>
       <TableCell><p className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatTime(task.updatedAt)}</p><p className="text-[10px] text-muted-foreground">{formatDuration(task)}</p></TableCell>
       <TableCell className="text-right">
-        {task.kind === "vm.backup" && (task.status === "failed" || task.status === "interrupted") ? (
+        {task.cancellable ? (
+          <Button variant="outline" size="sm" data-testid={`task-cancel-${task.id}`} disabled={cancelling || !canCancel} title={canCancel ? "在安全检查点取消任务" : "系统当前处于只读模式"} onClick={() => onCancel(task)}>
+            {cancelling ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}取消
+          </Button>
+        ) : task.kind === "vm.backup" && (task.status === "failed" || task.status === "interrupted") ? (
           <Button variant="outline" size="sm" data-testid={`task-retry-${task.id}`} disabled={retrying} onClick={() => onRetry(task)}>
             {retrying ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}重试
           </Button>
@@ -124,11 +131,14 @@ function TaskRow({ task, onRetry, retrying }: { task: Task; onRetry: (task: Task
 
 export function TasksPage() {
   const queryClient = useQueryClient();
+  const session = useSessionQuery();
   const [status, setStatus] = useState<"" | TaskStatus>("");
   const [page, setPage] = useState(1);
   const [streamConnected, setStreamConnected] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [retryingID, setRetryingID] = useState("");
+  const [cancellingID, setCancellingID] = useState("");
+  const [cancelTarget, setCancelTarget] = useState<Task | null>(null);
   const query = useTasksQuery({ status: status || undefined, page, pageSize });
   const tasks = query.data?.items ?? [];
   const total = query.data?.total ?? 0;
@@ -136,6 +146,7 @@ export function TasksPage() {
   const firstItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastItem = Math.min(page * pageSize, total);
   const running = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
+  const canCancel = Boolean(session.data) && !session.data?.readOnly && session.data?.user.role !== "viewer";
 
   useEffect(() => {
     if (typeof EventSource === "undefined") return;
@@ -162,10 +173,31 @@ export function TasksPage() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (task: Task) => api.cancelTask(task.id),
+    onSuccess: (task) => {
+      setCancellingID("");
+      setCancelTarget(null);
+      setNotice({ tone: "success", text: `已请求取消任务 ${task.id}；执行中的 libvirt 操作会在下一个安全检查点停止。` });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+    onError: (cause, task) => {
+      setCancellingID("");
+      setCancelTarget(null);
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : `取消任务 ${task.id} 失败。` });
+    },
+  });
+
   function retry(task: Task) {
     setRetryingID(task.id);
     setNotice(null);
     retryMutation.mutate(task);
+  }
+
+  function cancel(task: Task) {
+    setCancellingID(task.id);
+    setNotice(null);
+    cancelMutation.mutate(task);
   }
 
   return (
@@ -180,7 +212,7 @@ export function TasksPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><ListChecks className="h-4 w-4 text-primary" />任务记录</CardTitle>
-          <CardDescription>任务持久化在 SQLite 中，优先通过 SSE 实时更新，并在连接异常时回退到 5 秒轮询。失败的备份任务可从当前页重试。</CardDescription>
+          <CardDescription>任务持久化在 SQLite 中，优先通过 SSE 实时更新，并在连接异常时回退到 5 秒轮询。取消会在安全检查点生效，失败的备份任务可从当前页重试。</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center" data-testid="tasks-filters">
@@ -191,6 +223,7 @@ export function TasksPage() {
               <option value="succeeded">已完成</option>
               <option value="failed">失败</option>
               <option value="interrupted">已中断</option>
+              <option value="cancelled">已取消</option>
             </select>
             <p className="text-xs text-muted-foreground md:ml-auto" data-testid="tasks-total">共 {total} 个任务</p>
           </div>
@@ -207,7 +240,7 @@ export function TasksPage() {
           ) : null}
           {tasks.length ? <Table className="min-w-[960px]">
             <TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead>目标</TableHead><TableHead>进度</TableHead><TableHead>操作者</TableHead><TableHead>更新时间</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-            <TableBody>{tasks.map((task) => <TaskRow key={task.id} task={task} onRetry={retry} retrying={retryingID === task.id} />)}</TableBody>
+            <TableBody>{tasks.map((task) => <TaskRow key={task.id} task={task} onRetry={retry} retrying={retryingID === task.id} onCancel={(target) => setCancelTarget(target)} cancelling={cancellingID === task.id} canCancel={canCancel} />)}</TableBody>
           </Table> : null}
           {query.data ? <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center" data-testid="tasks-pagination">
             <p className="text-xs text-muted-foreground">显示 {firstItem}-{lastItem}，共 {total} 条</p>
@@ -219,6 +252,21 @@ export function TasksPage() {
           </div> : null}
         </CardContent>
       </Card>
+
+      <AlertDialog open={Boolean(cancelTarget)} onOpenChange={(open) => { if (!open) setCancelTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>取消任务？</AlertDialogTitle>
+            <AlertDialogDescription>任务 {cancelTarget?.id} 将被标记为已取消。正在执行的 libvirt 操作无法强制中断，会在下一个安全检查点停止；已产生的中间文件可能保留。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>继续执行</AlertDialogCancel>
+            <Button variant="destructive" data-testid="confirm-cancel-task" disabled={!cancelTarget || cancelMutation.isPending} onClick={() => { if (cancelTarget) cancel(cancelTarget); }}>
+              {cancelMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}确认取消
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

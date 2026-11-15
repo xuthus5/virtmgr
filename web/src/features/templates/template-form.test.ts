@@ -9,6 +9,7 @@ const template: VMTemplate = {
   vcpus: 4,
   memoryMiB: 4096,
   diskFormat: "qcow2",
+  imageId: 3,
   network: "default",
   isoPath: "/var/lib/libvirt/images/install.iso",
   firmware: "uefi",
@@ -31,14 +32,14 @@ describe("template form model", () => {
     const input = formToTemplateInput(form);
     expect(input).toMatchObject({
       name: "secure-uefi", vcpus: 4, memoryMiB: 4096,
-      firmware: "uefi", secureBoot: true, cloudInit: true,
+      firmware: "uefi", secureBoot: true, cloudInit: true, imageId: 3,
     });
   });
 
   it("builds VM creation defaults without instance identity or disk path", () => {
     const defaults = templateVMCreateDefaults(template);
     expect(defaults).toMatchObject({
-      vcpus: 4, memoryMiB: 4096, diskFormat: "qcow2", network: "default",
+      vcpus: 4, memoryMiB: 4096, diskFormat: "qcow2", imageId: 3, network: "default",
       firmware: "uefi", secureBoot: true, cloudInit: true, guestAgent: true, autostart: true, start: false,
     });
     expect(defaults.cloudInitUserData).toContain("#cloud-config");

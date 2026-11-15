@@ -1188,3 +1188,103 @@ test("管理员固定并回滚域 XML 版本且记录审计", async ({ page }) =
   await expect(row).toContainText("sourceVersion: 1");
   await expect(row).toContainText("playwright restore baseline");
 });
+
+test("可写模式登记、刷新并移除镜像条目", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "镜像库", exact: true }).click();
+  await expect(page).toHaveURL(/\/images$/);
+  await expect(page.getByTestId("image-total")).toHaveText("1");
+  await page.getByTestId("image-create-toggle").click();
+  await expect(page.getByTestId("image-form")).toBeVisible();
+  await page.getByTestId("image-pool").selectOption("default");
+  await page.getByTestId("image-volume").selectOption("demo-db-01.qcow2");
+  await page.getByTestId("image-name").fill("e2e-image");
+  await page.getByLabel("OS 名称", { exact: true }).fill("E2E Linux");
+  await page.getByTestId("image-submit").click();
+
+  await expect(page.getByTestId("image-notice")).toContainText("镜像 e2e-image 已登记");
+  await expect(page.getByTestId("image-total")).toHaveText("2");
+  const row = page.getByRole("row").filter({ hasText: "e2e-image" });
+  await expect(row).toContainText("demo-db-01.qcow2");
+  await expect(row).toContainText("未计算");
+  await row.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.getByTestId("image-notice")).toContainText("SHA-256 已刷新");
+  await expect(row).toContainText("已计算");
+  await expect(row).not.toContainText("未计算");
+
+  await row.getByRole("button", { name: "移除", exact: true }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("不会删除存储池中的卷");
+  await dialog.getByTestId("confirm-delete-image").click();
+  await expect(page.getByTestId("image-notice")).toContainText("底层磁盘卷未被删除");
+  await expect(page.getByTestId("image-total")).toHaveText("1");
+  await expect(page.getByRole("row").filter({ hasText: "e2e-image" })).toHaveCount(0);
+
+  await page.getByRole("link", { name: "存储", exact: true }).click();
+  await expect(page.getByText("demo-db-01.qcow2", { exact: true }).first()).toBeVisible();
+});
+
+test("模板绑定镜像并从镜像全量克隆创建虚拟机", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "虚拟机模板", exact: true }).click();
+  await page.getByTestId("template-create-toggle").click();
+  await page.getByLabel("模板名称", { exact: true }).fill("e2e-image-template");
+  await page.getByLabel("描述", { exact: true }).fill("Image clone template");
+  const imageOption = page.getByTestId("template-image").locator("option").filter({ hasText: "ubuntu-24.04-cloud-base" });
+  await expect(imageOption).toHaveCount(1);
+  const imageId = await imageOption.getAttribute("value");
+  if (!imageId) throw new Error("演示镜像缺少选项值");
+  await page.getByTestId("template-image").selectOption(imageId);
+  await page.getByTestId("template-submit").click();
+  await expect(page.getByTestId("template-success")).toContainText("模板 e2e-image-template 已创建");
+  await expect(page.getByTestId("template-row-e2e-image-template")).toContainText("镜像 · ubuntu-24.04-cloud-base");
+
+  await page.getByTestId("template-use-e2e-image-template").click();
+  await expect(page).toHaveURL(/\/vms\/new\?template=\d+$/);
+  await expect(page.getByTestId("vm-disk-source-image")).toBeChecked();
+  await expect(page.getByTestId("vm-image").locator("option:checked")).toContainText("ubuntu-24.04-cloud-base");
+  await page.getByLabel("名称", { exact: true }).fill("e2e-image-vm");
+  await page.getByRole("button", { name: "创建虚拟机", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
+  await expect(page.getByRole("heading", { name: "e2e-image-vm", exact: true })).toBeVisible();
+  await expect(page.getByTestId("vm-disk-source")).toHaveText("/var/lib/libvirt/images/e2e-image-vm-disk.qcow2");
+
+  await page.getByTestId("vm-delete-button").click();
+  const vmDialog = page.getByRole("alertdialog");
+  await vmDialog.getByLabel("输入虚拟机名称确认").fill("e2e-image-vm");
+  await vmDialog.getByTestId("confirm-delete-vm").click();
+  await expect(page).toHaveURL(/\/vms$/);
+
+  await page.getByRole("link", { name: "虚拟机模板", exact: true }).click();
+  await page.getByTestId("template-delete-e2e-image-template").click();
+  const templateDialog = page.getByRole("alertdialog");
+  await templateDialog.getByLabel("输入模板名称确认").fill("e2e-image-template");
+  await templateDialog.getByTestId("confirm-delete-template").click();
+  await expect(page.getByTestId("template-row-e2e-image-template")).toHaveCount(0);
+});
+
+test("任务取消确认交互在安全检查点生效", async ({ page }) => {
+  await page.route("**/api/v1/tasks/task-demo-clone/cancel", async (route) => {
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "task-demo-clone", kind: "vm.clone", targetKind: "vm", targetId: "22222222-2222-4222-8222-222222222222",
+        status: "cancelled", progress: 68, step: "任务已取消", actor: "admin", cancellable: false,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }),
+    });
+  });
+  await login(page);
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  const cancel = page.getByTestId("task-cancel-task-demo-clone");
+  await expect(cancel).toBeEnabled();
+  await cancel.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("取消任务？");
+  await expect(dialog).toContainText("下一个安全检查点停止");
+  await dialog.getByTestId("confirm-cancel-task").click();
+  await expect(page.getByTestId("tasks-notice")).toContainText("已请求取消任务 task-demo-clone");
+  await expect(page.getByTestId("tasks-notice")).toContainText("安全检查点");
+});

@@ -139,6 +139,7 @@ func (s *Service) Login(ctx context.Context, username, password, sourceIP string
 			CSRFToken: csrf,
 			User:      user,
 			ExpiresAt: expiresAt,
+			AuthMode:  domain.AuthModeSession,
 		},
 	}, nil
 }
@@ -158,7 +159,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (domain.Sessio
 	if strings.TrimSpace(token) == "" {
 		return domain.Session{}, domain.ErrUnauthorized
 	}
-	return s.sessions.SessionByTokenHash(ctx, HashToken(token))
+	session, err := s.sessions.SessionByTokenHash(ctx, HashToken(token))
+	if err != nil {
+		return domain.Session{}, err
+	}
+	session.AuthMode = domain.AuthModeSession
+	return session, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {

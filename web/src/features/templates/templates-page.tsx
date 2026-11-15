@@ -16,6 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
 import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
+import { useImagesQuery } from "@/features/images/use-images-query";
 import { initialTemplateForm, formToTemplateInput, templateToForm, type TemplateFormState } from "@/features/templates/template-form";
 import { templatesQueryKey, useTemplatesQuery } from "@/features/templates/use-templates-query";
 
@@ -37,6 +38,7 @@ export function TemplatesPage() {
   const session = useSessionQuery();
   const queryClient = useQueryClient();
   const query = useTemplatesQuery();
+  const imagesQuery = useImagesQuery();
   const [formOpen, setFormOpen] = useState(false);
   const [editingID, setEditingID] = useState<number | null>(null);
   const [form, setForm] = useState<TemplateFormState>(initialTemplateForm);
@@ -52,6 +54,7 @@ export function TemplatesPage() {
   const canManage = Boolean(session.data) && !readOnly && !viewer;
   const disabledReason = readOnly ? "系统当前处于只读模式" : viewer ? "当前账号没有管理模板的权限" : "";
   const templates = query.data?.items ?? [];
+  const images = imagesQuery.data?.items ?? [];
 
   const createMutation = useMutation({
     mutationFn: (input: VMTemplateInput) => api.createTemplate(input),
@@ -193,6 +196,14 @@ export function TemplatesPage() {
                   </select>
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="template-image">基础镜像（可选）</Label>
+                  <select id="template-image" data-testid="template-image" value={form.imageId} onChange={(event) => updateField("imageId", event.target.value)} disabled={!canManage} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                    <option value="">{imagesQuery.isLoading ? "正在读取镜像..." : "不使用镜像"}</option>
+                    {images.map((image) => <option key={image.id} value={image.id}>{image.name} · {image.format} · {image.pool}</option>)}
+                  </select>
+                  <p className="text-xs text-muted-foreground">绑定后，使用该模板创建虚拟机时默认从镜像全量克隆系统盘。</p>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="template-network">网络名称</Label>
                   <Input id="template-network" value={form.network} onChange={(event) => updateField("network", event.target.value)} placeholder="default" disabled={!canManage} />
                 </div>
@@ -298,7 +309,7 @@ export function TemplatesPage() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-xs">{template.vcpus} vCPU · {template.memoryMiB} MiB</TableCell>
                       <TableCell><Badge variant={template.firmware === "uefi" ? "default" : "outline"}>{template.firmware === "uefi" ? "UEFI" : "BIOS"}{template.secureBoot ? " · Secure Boot" : ""}</Badge></TableCell>
-                      <TableCell className="text-xs"><p>{template.network}</p><p className="text-muted-foreground">{template.diskFormat}{template.isoPath ? " · ISO" : ""}</p></TableCell>
+                      <TableCell className="text-xs"><p>{template.network}</p><p className="text-muted-foreground">{template.imageId ? `镜像 · ${images.find((image) => image.id === template.imageId)?.name ?? `#${template.imageId}`}` : template.diskFormat}{template.isoPath ? " · ISO" : ""}</p></TableCell>
                       <TableCell><div className="flex flex-wrap gap-1"><Badge variant={template.cloudInit ? "success" : "secondary"}>Cloud-init {template.cloudInit ? "开" : "关"}</Badge><Badge variant={template.guestAgent ? "success" : "secondary"}>QGA {template.guestAgent ? "开" : "关"}</Badge></div></TableCell>
                       <TableCell className="whitespace-nowrap text-xs">{template.autostart ? "自动启动" : "手动启动"}{template.start ? " · 创建后启动" : ""}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(template.updatedAt)}</TableCell>

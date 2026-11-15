@@ -61,6 +61,20 @@ func (h *Handler) Retry(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusAccepted, task)
 }
 
+func (h *Handler) Cancel(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	task, err := h.service.Cancel(r.Context(), chi.URLParam(r, "id"), session, middleware.GetReqID(r.Context()), httpx.SourceIP(r))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, task)
+}
+
 func (h *Handler) Stream(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
@@ -106,6 +120,7 @@ func (h *Handler) Mount(r chi.Router, csrfMiddleware ...func(stdhttp.Handler) st
 			mutating.Use(csrfMiddleware[0])
 		}
 		mutating.Post("/tasks/{id}/retry", h.Retry)
+		mutating.Post("/tasks/{id}/cancel", h.Cancel)
 	})
 }
 

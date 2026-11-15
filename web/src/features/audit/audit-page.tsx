@@ -78,6 +78,12 @@ const actions = [
   { value: "user.password.change", label: "修改密码" },
   { value: "user.password.reset", label: "重置用户密码" },
   { value: "user.session.revoke", label: "撤销用户会话" },
+  { value: "api_token.create", label: "创建 API Token" },
+  { value: "api_token.revoke", label: "撤销 API Token" },
+  { value: "image.register", label: "登记镜像" },
+  { value: "image.refresh", label: "刷新镜像校验值" },
+  { value: "image.unregister", label: "移除镜像条目" },
+  { value: "task.cancel", label: "取消任务" },
   { value: "audit.export", label: "导出审计日志" },
   { value: "settings.readonly.update", label: "更新只读模式" },
 ];

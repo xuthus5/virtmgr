@@ -1,6 +1,8 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentSSHKeyInput, GuestAgentUserList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentSSHKeyInput, GuestAgentUserList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
+
+export const openapiUrl = "/api/v1/openapi.json";
 
 export const unauthorizedEvent = "virtmgr:unauthorized";
 
@@ -412,6 +414,7 @@ export const api = {
   },
   task: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}`),
   retryTask: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+  cancelTask: (id: string) => request<Task>(`/api/v1/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   metricHistory: (filters: MetricHistoryFilters) => {
     const params = new URLSearchParams({ scope: filters.scope, targetId: filters.targetId });
     if (filters.from) params.set("from", filters.from);
@@ -462,6 +465,20 @@ export const api = {
   revokeUserSession: (id: number, sessionId: string) => request<void>(`/api/v1/users/${id}/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
   }),
+  apiTokens: () => request<APITokenList>("/api/v1/api-tokens"),
+  createAPIToken: (input: APITokenCreateInput) => request<APITokenCreated>("/api/v1/api-tokens", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  revokeAPIToken: (id: string) => request<void>(`/api/v1/api-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  images: () => request<VMImageList>("/api/v1/images"),
+  image: (id: number) => request<VMImage>(`/api/v1/images/${id}`),
+  registerImage: (input: VMImageInput) => request<VMImage>("/api/v1/images", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }),
+  refreshImage: (id: number) => request<VMImage>(`/api/v1/images/${id}/refresh`, { method: "POST" }),
+  deleteImage: (id: number) => request<void>(`/api/v1/images/${id}`, { method: "DELETE" }),
   settings: () => request<Settings>("/api/v1/settings"),
   updateSettings: (input: SettingsUpdateInput) => request<Settings>("/api/v1/settings", {
     method: "PUT",

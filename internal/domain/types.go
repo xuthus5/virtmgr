@@ -33,6 +33,31 @@ type Session struct {
 	CSRFToken string
 	User      User
 	ExpiresAt time.Time
+	AuthMode  string
+	TokenID   string
+	Scopes    []string
+}
+
+const (
+	AuthModeSession = "session"
+	AuthModeToken   = "api_token"
+)
+
+func (s Session) IsAPIToken() bool {
+	return s.AuthMode == AuthModeToken
+}
+
+func (s Session) IsAPITokenManagementAllowed() bool {
+	return s.User.ID != 0 && !s.IsAPIToken()
+}
+
+func (s Session) HasScope(scope string) bool {
+	for _, candidate := range s.Scopes {
+		if candidate == "write" || candidate == scope {
+			return true
+		}
+	}
+	return false
 }
 
 type UserSession struct {

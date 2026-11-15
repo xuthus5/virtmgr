@@ -174,6 +174,8 @@ type VMCreateSpec struct {
 	MemoryMiB  uint64         `json:"memoryMiB"`
 	DiskPath   string         `json:"diskPath"`
 	DiskFormat string         `json:"diskFormat"`
+	ImageID    int64          `json:"imageId,omitempty"`
+	TargetPool string         `json:"targetPool,omitempty"`
 	DiskBus    VMDiskBus      `json:"diskBus,omitempty"`
 	Network    string         `json:"network"`
 	NICModel   VMNICModel     `json:"nicModel,omitempty"`

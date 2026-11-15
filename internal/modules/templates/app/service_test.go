@@ -74,9 +74,20 @@ func fromSpec(id int64, spec domain.VMTemplateSpec) domain.VMTemplate {
 		ID: id, Name: spec.Name, Description: spec.Description, VCPUs: spec.VCPUs,
 		MemoryMiB: spec.MemoryMiB, DiskFormat: spec.DiskFormat, Network: spec.Network,
 		ISOPath: spec.ISOPath, Firmware: spec.Firmware, SecureBoot: spec.SecureBoot,
-		CloudInit: spec.CloudInit, CloudInitUserData: spec.CloudInitUserData, GuestAgent: spec.GuestAgentEnabled(),
+		CloudInit: spec.CloudInit, CloudInitUserData: spec.CloudInitUserData,
+		CloudInitNetworkConfig: spec.CloudInitNetworkConfig, CloudInitVendorData: spec.CloudInitVendorData,
+		ImageID: spec.ImageID, GuestAgent: spec.GuestAgentEnabled(),
 		Autostart: spec.Autostart, Start: spec.Start,
 	}
+}
+
+type fakeImageRepository struct{ found bool }
+
+func (f fakeImageRepository) GetVMImage(_ context.Context, id int64) (domain.VMImage, error) {
+	if !f.found || id < 1 {
+		return domain.VMImage{}, domain.ErrNotFound
+	}
+	return domain.VMImage{ID: id, Name: "base"}, nil
 }
 
 type auditRecorder struct{ events []domain.AuditEvent }
@@ -181,6 +192,25 @@ func TestVMTemplateServiceValidationAndPermissions(t *testing.T) {
 	readOnlyService := New(repository, nil, false, WithReadOnlyMode(mode))
 	if _, err := readOnlyService.Create(context.Background(), CreateCommand{Spec: validSpec(), Request: requestFor(domain.RoleAdmin)}); !errors.Is(err, domain.ErrReadOnly) {
 		t.Fatalf("read-only create error = %v", err)
+	}
+}
+
+func TestVMTemplateImageBindingValidation(t *testing.T) {
+	repository := newMemoryRepository()
+	service := New(repository, nil, false)
+	spec := validSpec()
+	spec.ImageID = 3
+	if _, err := service.Create(context.Background(), CreateCommand{Spec: spec, Request: requestFor(domain.RoleOperator)}); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("missing image dependency error = %v", err)
+	}
+	service = New(repository, nil, false, WithImages(fakeImageRepository{found: false}))
+	if _, err := service.Create(context.Background(), CreateCommand{Spec: spec, Request: requestFor(domain.RoleOperator)}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing image error = %v", err)
+	}
+	service = New(repository, nil, false, WithImages(fakeImageRepository{found: true}))
+	created, err := service.Create(context.Background(), CreateCommand{Spec: spec, Request: requestFor(domain.RoleOperator)})
+	if err != nil || created.ImageID != 3 {
+		t.Fatalf("Create() = %+v, %v", created, err)
 	}
 }
 

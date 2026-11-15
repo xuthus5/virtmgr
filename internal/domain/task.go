@@ -13,21 +13,23 @@ const (
 	TaskStatusSucceeded   TaskStatus = "succeeded"
 	TaskStatusFailed      TaskStatus = "failed"
 	TaskStatusInterrupted TaskStatus = "interrupted"
+	TaskStatusCancelled   TaskStatus = "cancelled"
 )
 
 type Task struct {
-	ID         string         `json:"id"`
-	Kind       string         `json:"kind"`
-	TargetKind string         `json:"targetKind"`
-	TargetID   string         `json:"targetId"`
-	Status     TaskStatus     `json:"status"`
-	Progress   int            `json:"progress"`
-	Step       string         `json:"step"`
-	Error      string         `json:"error,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	Actor      string         `json:"actor"`
-	CreatedAt  time.Time      `json:"createdAt"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
+	ID          string         `json:"id"`
+	Kind        string         `json:"kind"`
+	TargetKind  string         `json:"targetKind"`
+	TargetID    string         `json:"targetId"`
+	Status      TaskStatus     `json:"status"`
+	Progress    int            `json:"progress"`
+	Step        string         `json:"step"`
+	Error       string         `json:"error,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Actor       string         `json:"actor"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+	Cancellable bool           `json:"cancellable"`
 }
 
 type TaskQuery struct {
@@ -50,11 +52,24 @@ const (
 
 func ValidTaskStatus(status TaskStatus) bool {
 	switch status {
-	case TaskStatusQueued, TaskStatusRunning, TaskStatusSucceeded, TaskStatusFailed, TaskStatusInterrupted:
+	case TaskStatusQueued, TaskStatusRunning, TaskStatusSucceeded, TaskStatusFailed, TaskStatusInterrupted, TaskStatusCancelled:
 		return true
 	default:
 		return false
 	}
+}
+
+func CancellableTaskKind(kind string) bool {
+	switch kind {
+	case "vm.clone", "vm.backup", "vm.backup.verify", "vm.backup.restore", "vm.backup.delete", "storage.volume.upload":
+		return true
+	default:
+		return false
+	}
+}
+
+func TaskCancellable(task Task) bool {
+	return (task.Status == TaskStatusQueued || task.Status == TaskStatusRunning) && CancellableTaskKind(task.Kind)
 }
 
 func (q TaskQuery) Normalized() TaskQuery {

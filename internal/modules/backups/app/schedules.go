@@ -245,6 +245,11 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	if err != nil {
 		return err
 	}
+	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupTimeout)
+	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
+		registrar.RegisterCancel(taskID, cancel)
+	}
+	defer cancel()
 	item, err := s.repository.CreateBackup(ctx, domain.Backup{
 		ID: backupID, VMUUID: vm.UUID, VMName: vm.Name, RepositoryID: repository.ID,
 		TargetPool: repository.PoolName, Name: name, Status: domain.BackupStatusRunning,
@@ -257,7 +262,7 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 		return err
 	}
 	progress := 0
-	result, err := s.backend.BackupVM(ctx, vm.UUID, domain.VMBackupSpec{BackupID: backupID, Name: name, TargetPool: repository.PoolName}, func(percent int, step string) {
+	result, err := s.backend.BackupVM(jobContext, vm.UUID, domain.VMBackupSpec{BackupID: backupID, Name: name, TargetPool: repository.PoolName}, func(percent int, step string) {
 		if percent < progress {
 			percent = progress
 		}
@@ -265,13 +270,13 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 			percent = 100
 		}
 		progress = percent
-		_ = s.tasks.Progress(ctx, taskID, progress, step)
+		_ = s.tasks.Progress(jobContext, taskID, progress, step)
 	})
 	if err != nil {
 		item.Status = domain.BackupStatusFailed
 		item.Error = err.Error()
 		_, _ = s.repository.UpdateBackup(ctx, item)
-		_ = s.tasks.Fail(ctx, taskID, progress, "定时备份失败", err)
+		_ = s.tasks.Fail(jobContext, taskID, progress, "定时备份失败", err)
 		_ = s.recordAudit(ctx, request, "backup.schedule", vm.UUID, "failure", detail, err)
 		return err
 	}
@@ -286,10 +291,10 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	item.CompletedAt = &completedAt
 	item.Disks = backupDisks(result.Disks)
 	if _, err := s.repository.UpdateBackup(ctx, item); err != nil {
-		_ = s.tasks.Fail(ctx, taskID, 100, "定时备份完成但写入目录失败", err)
+		_ = s.tasks.Fail(jobContext, taskID, 100, "定时备份完成但写入目录失败", err)
 		return err
 	}
-	_ = s.tasks.Succeed(ctx, taskID, fmt.Sprintf("虚拟机 %s 定时备份完成", vm.Name))
+	_ = s.tasks.Succeed(jobContext, taskID, fmt.Sprintf("虚拟机 %s 定时备份完成", vm.Name))
 	detail["backupId"] = item.ID
 	if err := s.recordAudit(ctx, request, "backup.schedule", vm.UUID, "success", detail, nil); err != nil {
 		return err

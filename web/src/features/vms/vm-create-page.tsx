@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, LayoutTemplate, LoaderCircle, Plus, Server } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Image as ImageIcon, LayoutTemplate, LoaderCircle, Plus, Server } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { VMBootOrder, VMCreateInput, VMDiskBus, VMFirmware, VMNICModel, VMTemplate } from "@/api/types";
 import { PageHeader } from "@/components/layout/page-header";
@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
 import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
+import { useImagesQuery } from "@/features/images/use-images-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
@@ -70,11 +71,14 @@ export function VMCreatePage() {
   const networksQuery = useNetworksQuery();
   const poolsQuery = useStoragePoolsQuery();
   const templatesQuery = useTemplatesQuery();
+  const imagesQuery = useImagesQuery();
   const search = useSearch({ strict: false }) as { template?: number };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(initialForm);
   const [diskPool, setDiskPool] = useState("");
+  const [sourceMode, setSourceMode] = useState<"disk" | "image">("disk");
+  const [selectedImageID, setSelectedImageID] = useState("");
   const [error, setError] = useState("");
   const [selectedTemplateID, setSelectedTemplateID] = useState("");
   const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
@@ -88,6 +92,8 @@ export function VMCreatePage() {
   });
   const selectedVolume = diskVolumes.find((volume) => volume.path === form.diskPath);
   const templates = templatesQuery.data?.items ?? [];
+  const images = imagesQuery.data?.items ?? [];
+  const selectedImage = images.find((image) => String(image.id) === selectedImageID);
   const selectedTemplate = templates.find((template) => String(template.id) === selectedTemplateID);
 
   useEffect(() => {
@@ -137,6 +143,13 @@ export function VMCreatePage() {
 
   function applyTemplate(template: VMTemplate) {
     const defaults = templateVMCreateDefaults(template);
+    if (defaults.imageId > 0) {
+      setSourceMode("image");
+      setSelectedImageID(String(defaults.imageId));
+    } else {
+      setSourceMode("disk");
+      setSelectedImageID("");
+    }
     setForm((current) => ({
       ...current,
       vcpus: String(defaults.vcpus),
@@ -176,6 +189,10 @@ export function VMCreatePage() {
     event.preventDefault();
     if (!canCreate) return;
     setError("");
+    if (sourceMode === "image" && (!selectedImageID || !diskPool)) {
+      setError("请选择基础镜像和目标存储池。");
+      return;
+    }
     const cloudInitError = form.cloudInit ? cloudInitBundleValidationError(form.cloudInitUserData, form.cloudInitNetworkConfig, form.cloudInitVendorData) : "";
     if (cloudInitError) {
       setError(cloudInitError);
@@ -185,8 +202,7 @@ export function VMCreatePage() {
       name: form.name.trim(),
       vcpus: Number(form.vcpus),
       memoryMiB: Number(form.memoryMiB),
-      diskPath: form.diskPath.trim(),
-      diskFormat: form.diskFormat,
+      ...(sourceMode === "image" ? { diskPath: "", diskFormat: "", imageId: Number(selectedImageID), targetPool: diskPool } : { diskPath: form.diskPath.trim(), diskFormat: form.diskFormat }),
       diskBus: form.diskBus,
       network: form.network.trim(),
       nicModel: form.nicModel,
@@ -211,7 +227,7 @@ export function VMCreatePage() {
       <PageHeader
         title="新建虚拟机"
         breadcrumb={<span className="inline-flex items-center gap-1.5"><Link to="/vms" className="inline-flex items-center gap-1 hover:text-foreground"><ArrowLeft className="h-3 w-3" />虚拟机</Link><span>/</span><span>新建</span></span>}
-        description="定义一个持久化 libvirt 域。首版要求使用宿主机上已存在的磁盘文件。"
+        description="定义一个持久化 libvirt 域。系统盘可直接使用已有磁盘，也可从镜像库全量克隆。"
       />
 
       {!canCreate ? (
@@ -294,6 +310,20 @@ export function VMCreatePage() {
                 <p className="text-xs text-muted-foreground">仅 UEFI 固件支持，使用 libvirt 安全固件自动选择。</p>
               </div>
               <div className="space-y-2 sm:col-span-2">
+                <Label>系统盘来源</Label>
+                <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="系统盘来源">
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${sourceMode === "disk" ? "border-primary bg-primary/5" : ""}`}>
+                    <input type="radio" name="vm-disk-source" value="disk" data-testid="vm-disk-source-direct" className="mt-0.5 h-4 w-4" checked={sourceMode === "disk"} onChange={() => { setSourceMode("disk"); setSelectedImageID(""); }} disabled={!canCreate} />
+                    <span><span className="block font-medium">使用已有磁盘</span><span className="mt-0.5 block text-xs text-muted-foreground">填写宿主机上已存在的绝对路径，平台不创建磁盘。</span></span>
+                  </label>
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${sourceMode === "image" ? "border-primary bg-primary/5" : ""}`}>
+                    <input type="radio" name="vm-disk-source" value="image" data-testid="vm-disk-source-image" className="mt-0.5 h-4 w-4" checked={sourceMode === "image"} onChange={() => { setSourceMode("image"); if (!selectedImageID && images[0]) setSelectedImageID(String(images[0].id)); }} disabled={!canCreate || !images.length} />
+                    <span><span className="flex items-center gap-1 font-medium"><ImageIcon className="h-3.5 w-3.5" />从镜像克隆</span><span className="mt-0.5 block text-xs text-muted-foreground">从镜像库全量复制系统盘到目标存储池。</span></span>
+                  </label>
+                </div>
+              </div>
+              {sourceMode === "disk" ? <>
+              <div className="space-y-2 sm:col-span-2">
                 <Label>从存储选择磁盘（可选）</Label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <select
@@ -331,6 +361,24 @@ export function VMCreatePage() {
                   <option value="raw">raw</option>
                 </select>
               </div>
+              </> : <>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="vm-image">基础镜像</Label>
+                <select id="vm-image" aria-label="基础镜像" data-testid="vm-image" value={selectedImageID} onChange={(event) => setSelectedImageID(event.target.value)} required disabled={!canCreate || imagesQuery.isLoading} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  {!images.length ? <option value="">{imagesQuery.isLoading ? "正在读取镜像..." : "镜像库为空"}</option> : null}
+                  {images.map((image) => <option key={image.id} value={image.id}>{image.name} · {image.format} · {formatBytes(image.capacityBytes)}</option>)}
+                </select>
+                {selectedImage ? <p className="text-xs text-muted-foreground">{selectedImage.osName || selectedImage.description || "未填写操作系统信息"} · 来源池 {selectedImage.pool}</p> : <p className="text-xs text-warning">镜像库为空，请先前往“镜像库”登记基础磁盘。</p>}
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="vm-image-target-pool">目标存储池</Label>
+                <select id="vm-image-target-pool" aria-label="目标存储池" value={diskPool} onChange={(event) => setDiskPool(event.target.value)} disabled={!canCreate || !activePools.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  {!activePools.length ? <option value="">没有活跃存储池</option> : null}
+                  {activePools.map((pool) => <option key={pool.uuid || pool.name} value={pool.name}>{pool.name} · {pool.targetPath || "无目标路径"}</option>)}
+                </select>
+                <p className="text-xs text-muted-foreground">克隆卷命名为 <span className="font-mono">{form.name || "<name>"}-disk.{selectedImage?.format ?? "qcow2"}</span>；创建域失败时会清理已克隆磁盘。</p>
+              </div>
+              </>}
               <div className="space-y-2">
                 <Label htmlFor="vm-disk-bus">磁盘总线</Label>
                 <select id="vm-disk-bus" value={form.diskBus} onChange={(event) => update("diskBus", event.target.value as VMDiskBus)} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
@@ -459,6 +507,7 @@ export function VMCreatePage() {
               <CardContent className="space-y-3 text-sm">
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">名称</span><span className="max-w-48 truncate font-medium">{form.name || "-"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">计算资源</span><span className="font-medium">{form.vcpus || "0"} vCPU · {form.memoryMiB || "0"} MiB</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">系统盘</span><span className="max-w-52 truncate font-medium">{sourceMode === "image" ? (selectedImage?.name || "未选择镜像") : (form.diskPath || "未选择磁盘")}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">固件</span><span className="font-medium">{form.firmware === "uefi" ? "UEFI" : "BIOS"}{form.secureBoot ? " · Secure Boot" : ""}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Cloud-init</span><span className="font-medium">{form.cloudInit ? "已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Guest Agent</span><span className="font-medium">{form.guestAgent ? "通道已启用" : "未启用"}</span></div>

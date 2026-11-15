@@ -114,3 +114,35 @@ func TestUpdateTask(t *testing.T) {
 		t.Fatalf("missing task error = %v", err)
 	}
 }
+
+func TestCancelTaskAndTerminalStatusProtection(t *testing.T) {
+	store := openTestDB(t)
+	base := time.Unix(1_700_030_000, 0)
+	if err := store.CreateTask(context.Background(), domain.Task{
+		ID: "task-cancel", Kind: "vm.backup", TargetKind: "vm", TargetID: "uuid-1",
+		Status: domain.TaskStatusRunning, Progress: 35, Step: "正在复制磁盘", Actor: "operator", CreatedAt: base, UpdatedAt: base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cancelledAt := base.Add(time.Minute)
+	task, err := store.CancelTask(context.Background(), "task-cancel", cancelledAt, "任务已取消")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != domain.TaskStatusCancelled || task.Progress != 35 || task.Step != "任务已取消" || !task.UpdatedAt.Equal(cancelledAt) {
+		t.Fatalf("cancelled task = %+v", task)
+	}
+	if _, err := store.CancelTask(context.Background(), "task-cancel", cancelledAt, "重复取消"); err != domain.ErrConflict {
+		t.Fatalf("second cancel error = %v", err)
+	}
+	if err := store.UpdateTask(context.Background(), domain.Task{ID: "task-cancel", Status: domain.TaskStatusSucceeded, Progress: 100, Step: "完成"}); err != domain.ErrNotFound {
+		t.Fatalf("terminal update error = %v", err)
+	}
+	stored, err := store.GetTask(context.Background(), "task-cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != domain.TaskStatusCancelled || stored.Progress != 35 {
+		t.Fatalf("terminal task changed = %+v", stored)
+	}
+}

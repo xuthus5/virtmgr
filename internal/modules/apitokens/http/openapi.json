@@ -1,0 +1,102 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VirtMgr API",
+    "version": "1.0.0",
+    "description": "VirtMgr 单机 KVM/libvirt 管理 API。写操作需要 Operator 或 Admin 角色；Bearer Token 使用创建时授予的 read/write 作用域。"
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": { "type": "apiKey", "in": "cookie", "name": "virtmgr_session" },
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "VirtMgr API Token" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "object", "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "requestId": { "type": "string" } } } }
+      },
+      "Session": {
+        "type": "object",
+        "properties": { "user": { "type": "object" }, "authMode": { "type": "string" }, "readOnly": { "type": "boolean" }, "csrfToken": { "type": "string" }, "expiresAt": { "type": "string", "format": "date-time" } }
+      },
+      "APIToken": {
+        "type": "object",
+        "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "scopes": { "type": "array", "items": { "type": "string", "enum": ["read", "write"] } }, "createdAt": { "type": "string", "format": "date-time" }, "expiresAt": { "type": "string", "format": "date-time" }, "lastUsedAt": { "type": "string", "format": "date-time" }, "revokedAt": { "type": "string", "format": "date-time" }, "expired": { "type": "boolean" } }
+      },
+      "Task": {
+        "type": "object",
+        "properties": { "id": { "type": "string" }, "kind": { "type": "string" }, "targetKind": { "type": "string" }, "targetId": { "type": "string" }, "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "interrupted", "cancelled"] }, "progress": { "type": "integer" }, "step": { "type": "string" }, "error": { "type": "string" }, "metadata": { "type": "object", "additionalProperties": true }, "actor": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "cancellable": { "type": "boolean", "description": "任务当前是否可在下一个安全检查点取消；取消不保证立即终止执行。" } }
+      }
+    }
+  },
+  "paths": {
+    "/session": {
+      "post": { "operationId": "login", "summary": "登录并建立浏览器会话", "security": [], "responses": { "200": { "description": "会话建立" }, "401": { "description": "凭据无效" } } },
+      "get": { "operationId": "getSession", "summary": "读取当前会话", "responses": { "200": { "description": "当前会话" } } },
+      "delete": { "operationId": "logout", "summary": "退出当前浏览器会话", "responses": { "204": { "description": "已退出" } } }
+    },
+    "/openapi.json": { "get": { "operationId": "getOpenAPI", "summary": "读取 OpenAPI 契约", "security": [], "responses": { "200": { "description": "OpenAPI JSON" } } } },
+    "/api-tokens": {
+      "get": { "operationId": "listAPITokens", "summary": "列出当前用户的 API Token", "responses": { "200": { "description": "Token 列表" } } },
+      "post": { "operationId": "createAPIToken", "summary": "创建 API Token；明文仅在响应中返回一次", "responses": { "201": { "description": "Token 已创建" }, "400": { "description": "参数无效" } } }
+    },
+    "/api-tokens/{id}": { "delete": { "operationId": "revokeAPIToken", "summary": "撤销当前用户的 API Token", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "204": { "description": "已撤销" }, "404": { "description": "Token 不存在" } } } },
+    "/overview": { "get": { "operationId": "getOverview", "summary": "读取总览", "responses": { "200": { "description": "总览" } } } },
+    "/host": { "get": { "operationId": "getHost", "summary": "读取物理主机信息", "responses": { "200": { "description": "主机信息" } } } },
+    "/host/devices": { "get": { "operationId": "listHostDevices", "summary": "列出 PCI/USB 等宿主设备", "responses": { "200": { "description": "设备列表" } } } },
+    "/host/metrics": { "get": { "operationId": "getHostMetrics", "summary": "读取宿主实时指标", "responses": { "200": { "description": "指标" } } } },
+    "/vms": {
+      "get": { "operationId": "listVMs", "summary": "列出虚拟机", "responses": { "200": { "description": "虚拟机列表" } } },
+      "post": { "operationId": "createVM", "summary": "创建虚拟机；支持 imageId 从镜像库克隆系统盘", "responses": { "201": { "description": "虚拟机已创建" }, "400": { "description": "参数无效" } } }
+    },
+    "/vms/{uuid}": {
+      "get": { "operationId": "getVM", "summary": "读取虚拟机详情", "parameters": [{ "name": "uuid", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "虚拟机详情" } } },
+      "delete": { "operationId": "deleteVM", "summary": "删除关机状态的持久虚拟机", "responses": { "204": { "description": "已删除" } } }
+    },
+    "/vms/{uuid}/actions/{action}": { "post": { "operationId": "performVMAction", "summary": "执行虚拟机生命周期动作", "parameters": [{ "name": "uuid", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "action", "in": "path", "required": true, "schema": { "type": "string", "enum": ["start", "shutdown", "reboot", "reset", "pause", "resume", "destroy"] } }], "responses": { "200": { "description": "虚拟机最新状态" } } } },
+    "/vms/{uuid}/clone": { "post": { "operationId": "cloneVM", "summary": "克隆关机虚拟机并返回任务", "responses": { "202": { "description": "任务已创建" } } } },
+    "/vms/{uuid}/backups": { "post": { "operationId": "backupVM", "summary": "创建冷备份并返回任务", "responses": { "202": { "description": "任务已创建" } } } },
+    "/vms/{uuid}/snapshots": { "get": { "operationId": "listSnapshots", "summary": "列出快照", "responses": { "200": { "description": "快照列表" } } }, "post": { "operationId": "createSnapshot", "summary": "创建快照", "responses": { "201": { "description": "快照已创建" } } } },
+    "/vms/{uuid}/metrics": { "get": { "operationId": "getVMMetrics", "summary": "读取虚拟机指标", "responses": { "200": { "description": "指标" } } } },
+    "/vms/{uuid}/console-token": { "post": { "operationId": "issueConsoleToken", "summary": "签发一次性控制台 Token", "responses": { "201": { "description": "控制台 Token" } } } },
+    "/vms/{uuid}/guest-agent": { "get": { "operationId": "getGuestAgent", "summary": "读取 Guest Agent 状态和客户机信息", "responses": { "200": { "description": "Agent 信息" } } } },
+    "/vms/{uuid}/guest-agent/actions": { "post": { "operationId": "performGuestAgentAction", "summary": "执行受控 Guest Agent 动作", "responses": { "202": { "description": "任务已创建" } } } },
+    "/vms/{uuid}/guest-agent/files": { "get": { "operationId": "readGuestAgentFile", "summary": "读取客户机文件", "responses": { "200": { "description": "文件内容" } } }, "post": { "operationId": "writeGuestAgentFile", "summary": "写入客户机文件", "responses": { "202": { "description": "任务已创建" } } } },
+    "/images": {
+      "get": { "operationId": "listImages", "summary": "列出镜像库", "responses": { "200": { "description": "镜像列表" } } },
+      "post": { "operationId": "registerImage", "summary": "注册已有 qcow2/raw 存储卷为镜像", "responses": { "201": { "description": "镜像已注册" } } }
+    },
+    "/images/{id}": {
+      "get": { "operationId": "getImage", "summary": "读取镜像详情", "responses": { "200": { "description": "镜像详情" } } },
+      "delete": { "operationId": "unregisterImage", "summary": "从镜像库移除条目，不删除存储卷", "responses": { "204": { "description": "已移除" } } }
+    },
+    "/images/{id}/refresh": { "post": { "operationId": "refreshImage", "summary": "刷新镜像容量和 SHA-256", "responses": { "200": { "description": "刷新后的镜像" } } } },
+    "/templates": { "get": { "operationId": "listTemplates", "summary": "列出虚拟机模板", "responses": { "200": { "description": "模板列表" } } }, "post": { "operationId": "createTemplate", "summary": "创建模板", "responses": { "201": { "description": "模板已创建" } } } },
+    "/templates/{id}": { "get": { "operationId": "getTemplate", "summary": "读取模板", "responses": { "200": { "description": "模板详情" } } }, "patch": { "operationId": "updateTemplate", "summary": "更新模板", "responses": { "200": { "description": "模板已更新" } } }, "delete": { "operationId": "deleteTemplate", "summary": "删除模板", "responses": { "204": { "description": "已删除" } } } },
+    "/storage/pools": { "get": { "operationId": "listStoragePools", "summary": "列出存储池", "responses": { "200": { "description": "存储池列表" } } }, "post": { "operationId": "createStoragePool", "summary": "创建目录存储池", "responses": { "201": { "description": "存储池已创建" } } } },
+    "/storage/pools/{pool}/volumes": { "get": { "operationId": "listStorageVolumes", "summary": "列出存储卷", "responses": { "200": { "description": "存储卷列表" } } }, "post": { "operationId": "createStorageVolume", "summary": "创建存储卷", "responses": { "201": { "description": "存储卷已创建" } } } },
+    "/storage/pools/{pool}/volumes/upload": { "post": { "operationId": "uploadStorageVolume", "summary": "流式上传 ISO/qcow2/raw", "responses": { "201": { "description": "存储卷已上传" } } } },
+    "/networks": { "get": { "operationId": "listNetworks", "summary": "列出虚拟网络", "responses": { "200": { "description": "网络列表" } } }, "post": { "operationId": "createNetwork", "summary": "创建 NAT/隔离网络", "responses": { "201": { "description": "网络已创建" } } } },
+    "/networks/{name}/leases": { "get": { "operationId": "listDHCPLeases", "summary": "读取 DHCP 租约", "responses": { "200": { "description": "租约列表" } } } },
+    "/networks/{name}/hosts": { "post": { "operationId": "addDHCPHost", "summary": "添加静态 DHCP 主机", "responses": { "200": { "description": "网络已更新" } } } },
+    "/networks/{name}/hosts/export": { "get": { "operationId": "exportDHCPHosts", "summary": "导出静态 DHCP 主机 CSV", "responses": { "200": { "description": "CSV 附件" } } } },
+    "/tasks": { "get": { "operationId": "listTasks", "summary": "列出后台任务", "responses": { "200": { "description": "任务列表" } } } },
+    "/tasks/{id}": { "get": { "operationId": "getTask", "summary": "读取任务详情", "responses": { "200": { "description": "任务详情" } } } },
+    "/tasks/{id}/retry": { "post": { "operationId": "retryTask", "summary": "重试失败的备份任务", "responses": { "202": { "description": "新任务已创建" } } } },
+    "/tasks/{id}/cancel": { "post": { "operationId": "cancelTask", "summary": "取消可安全终止的任务", "responses": { "202": { "description": "任务已取消" }, "409": { "description": "任务不可取消" } } } },
+    "/tasks/stream": { "get": { "operationId": "streamTasks", "summary": "订阅任务状态 SSE", "responses": { "200": { "description": "text/event-stream" } } } },
+    "/events": { "get": { "operationId": "listEvents", "summary": "读取最近系统事件", "responses": { "200": { "description": "事件列表" } } } },
+    "/events/stream": { "get": { "operationId": "streamEvents", "summary": "订阅实时事件 SSE", "responses": { "200": { "description": "text/event-stream" } } } },
+    "/audit-events": { "get": { "operationId": "listAuditEvents", "summary": "查询审计日志，仅 Admin", "responses": { "200": { "description": "审计记录" } } } },
+    "/audit-events/export": { "get": { "operationId": "exportAuditEvents", "summary": "导出审计日志 JSON/CSV，仅 Admin", "responses": { "200": { "description": "审计附件" } } } },
+    "/users": { "get": { "operationId": "listUsers", "summary": "列出本地用户，仅 Admin", "responses": { "200": { "description": "用户列表" } } }, "post": { "operationId": "createUser", "summary": "创建本地用户，仅 Admin", "responses": { "201": { "description": "用户已创建" } } } },
+    "/settings": { "get": { "operationId": "getSettings", "summary": "读取系统设置", "responses": { "200": { "description": "系统设置" } } }, "put": { "operationId": "updateSettings", "summary": "更新只读模式，仅 Admin", "responses": { "200": { "description": "设置已更新" } } } },
+    "/system/info": { "get": { "operationId": "getSystemInfo", "summary": "读取版本和构建信息", "responses": { "200": { "description": "版本信息" } } } },
+    "/backups": { "get": { "operationId": "listBackups", "summary": "列出备份目录", "responses": { "200": { "description": "备份列表" } } } },
+    "/backup-schedules": { "get": { "operationId": "listBackupSchedules", "summary": "列出备份计划", "responses": { "200": { "description": "计划列表" } } }, "post": { "operationId": "createBackupSchedule", "summary": "创建备份计划", "responses": { "201": { "description": "计划已创建" } } } },
+    "/metrics/history": { "get": { "operationId": "getMetricHistory", "summary": "读取有界历史指标", "responses": { "200": { "description": "指标样本" } } } },
+    "/alert-rules": { "get": { "operationId": "listAlertRules", "summary": "列出告警规则", "responses": { "200": { "description": "规则列表" } } }, "post": { "operationId": "createAlertRule", "summary": "创建阈值告警和 Webhook 规则", "responses": { "201": { "description": "规则已创建" } } } }
+  }
+}

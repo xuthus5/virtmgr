@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"virtmgr/internal/domain"
 	tasksapp "virtmgr/internal/modules/tasks/app"
@@ -14,7 +15,8 @@ import (
 )
 
 type handlerRepository struct {
-	query domain.TaskQuery
+	query     domain.TaskQuery
+	cancelled bool
 }
 
 func (h *handlerRepository) ListTasks(_ context.Context, query domain.TaskQuery) (domain.TaskList, error) {
@@ -27,6 +29,11 @@ func (h *handlerRepository) GetTask(_ context.Context, id string) (domain.Task, 
 		return domain.Task{}, domain.ErrNotFound
 	}
 	return domain.Task{ID: id, Kind: "vm.clone", Status: domain.TaskStatusSucceeded, Progress: 100}, nil
+}
+
+func (h *handlerRepository) CancelTask(_ context.Context, id string, cancelledAt time.Time, step string) (domain.Task, error) {
+	h.cancelled = true
+	return domain.Task{ID: id, Kind: "vm.clone", Status: domain.TaskStatusCancelled, Step: step, UpdatedAt: cancelledAt}, nil
 }
 
 func TestListTasks(t *testing.T) {

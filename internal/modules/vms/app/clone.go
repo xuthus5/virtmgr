@@ -62,6 +62,11 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 		Actor: command.Request.Session.User.Username, CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), cloneTimeout)
+	if registrar, ok := s.tasks.(interface {
+		RegisterCancel(string, context.CancelFunc)
+	}); ok {
+		registrar.RegisterCancel(task.ID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.runClone(jobContext, task.ID, command, detail)

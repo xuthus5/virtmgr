@@ -69,6 +69,11 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 		Actor: command.Request.Session.User.Username, CreatedAt: now, UpdatedAt: now,
 	}
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupTimeout)
+	if registrar, ok := s.tasks.(interface {
+		RegisterCancel(string, context.CancelFunc)
+	}); ok {
+		registrar.RegisterCancel(task.ID, cancel)
+	}
 	go func() {
 		defer cancel()
 		s.runBackup(jobContext, task.ID, command, detail)

@@ -199,3 +199,91 @@ func TestRequireCSRF(t *testing.T) {
 		t.Fatalf("valid csrf status = %d", recorder.Code)
 	}
 }
+
+type stubTokenAuthenticator struct {
+	sessions map[string]domain.Session
+}
+
+func (s stubTokenAuthenticator) Authenticate(_ context.Context, token string) (domain.Session, error) {
+	session, ok := s.sessions[token]
+	if !ok {
+		return domain.Session{}, domain.ErrUnauthorized
+	}
+	return session, nil
+}
+
+func TestRequireSessionEnforcesBearerScopes(t *testing.T) {
+	_, service := newTestHandler(t)
+	authenticator := stubTokenAuthenticator{sessions: map[string]domain.Session{
+		"read-token": {
+			User:     domain.User{ID: 1, Username: "reader", Role: domain.RoleViewer},
+			AuthMode: domain.AuthModeToken,
+			TokenID:  "apitok_read",
+			Scopes:   []string{"read"},
+		},
+		"write-token": {
+			User:     domain.User{ID: 2, Username: "writer", Role: domain.RoleOperator},
+			AuthMode: domain.AuthModeToken,
+			TokenID:  "apitok_write",
+			Scopes:   []string{"read", "write"},
+		},
+	}}
+	handler := New(service, false, time.Hour, true, WithTokenAuthenticator(authenticator))
+	protected := handler.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := SessionFromContext(r.Context())
+		if !ok || !session.IsAPIToken() {
+			t.Fatal("API token session missing from context")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tests := []struct {
+		name   string
+		method string
+		token  string
+		status int
+	}{
+		{name: "read token can GET", method: http.MethodGet, token: "read-token", status: http.StatusNoContent},
+		{name: "read token cannot POST", method: http.MethodPost, token: "read-token", status: http.StatusForbidden},
+		{name: "write token can POST", method: http.MethodPost, token: "write-token", status: http.StatusNoContent},
+		{name: "unknown token is unauthorized", method: http.MethodGet, token: "bad-token", status: http.StatusUnauthorized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "/", nil)
+			request.Header.Set("Authorization", "Bearer "+test.token)
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequireCSRFAllowsOnlyBearerTokenToBypass(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	protected := handler.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	browser := httptest.NewRequest(http.MethodPost, "/", nil)
+	browser = browser.WithContext(authctx.WithSession(browser.Context(), domain.Session{
+		User: domain.User{ID: 1, Username: "admin"}, CSRFToken: "csrf-token",
+	}))
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, browser)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("browser without csrf status = %d", recorder.Code)
+	}
+
+	tokenRequest := httptest.NewRequest(http.MethodPost, "/", nil)
+	tokenRequest = tokenRequest.WithContext(authctx.WithSession(tokenRequest.Context(), domain.Session{
+		User: domain.User{ID: 1, Username: "automation"}, AuthMode: domain.AuthModeToken, Scopes: []string{"write"},
+	}))
+	recorder = httptest.NewRecorder()
+	protected.ServeHTTP(recorder, tokenRequest)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("API token csrf status = %d", recorder.Code)
+	}
+}

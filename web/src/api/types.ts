@@ -58,6 +58,35 @@ export type UserSessionList = {
   total: number;
 };
 
+export type APITokenScope = "read" | "write";
+
+export type APIToken = {
+  id: string;
+  name: string;
+  scopes: APITokenScope[];
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+  expired: boolean;
+};
+
+export type APITokenCreated = {
+  token: string;
+  apiToken: APIToken;
+};
+
+export type APITokenList = {
+  items: APIToken[];
+  total: number;
+};
+
+export type APITokenCreateInput = {
+  name: string;
+  scopes: APITokenScope[];
+  expiresInDays: number;
+};
+
 export type VMState = "running" | "blocked" | "paused" | "shutting-down" | "crashed" | "suspended" | "shutoff" | "unknown";
 
 export type Disk = {
@@ -166,6 +195,8 @@ export type VMCreateInput = {
   memoryMiB: number;
   diskPath: string;
   diskFormat: string;
+  imageId?: number;
+  targetPool?: string;
   diskBus?: VMDiskBus;
   network: string;
   nicModel?: VMNICModel;
@@ -185,6 +216,7 @@ export type VMTemplateInput = {
   vcpus: number;
   memoryMiB: number;
   diskFormat: string;
+  imageId?: number;
   network: string;
   isoPath?: string;
   firmware: VMFirmware;
@@ -202,6 +234,38 @@ export type VMTemplate = VMTemplateInput & {
   id: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type VMImage = {
+  id: number;
+  name: string;
+  description: string;
+  pool: string;
+  volume: string;
+  format: "qcow2" | "raw";
+  osFamily: string;
+  osName: string;
+  architecture: string;
+  capacityBytes: number;
+  allocationBytes: number;
+  sha256?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VMImageInput = {
+  name: string;
+  description: string;
+  pool: string;
+  volume: string;
+  osFamily: string;
+  osName: string;
+  architecture: string;
+};
+
+export type VMImageList = {
+  items: VMImage[];
+  total: number;
 };
 
 export type VMTemplateList = {
@@ -1132,7 +1196,7 @@ export type AuditEventFilters = {
 
 export type AuditExportFormat = "json" | "csv";
 
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted";
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 
 export type Task = {
   id: string;
@@ -1147,6 +1211,7 @@ export type Task = {
   actor: string;
   createdAt: string;
   updatedAt: string;
+  cancellable: boolean;
 };
 
 export type TaskList = {
