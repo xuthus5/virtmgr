@@ -75,6 +75,10 @@ func (f *fakeBackend) ListGuestAgentProcesses(context.Context, string) ([]domain
 	return f.processes, nil
 }
 
+func (f *fakeBackend) ListGuestAgentServices(context.Context, string) ([]domain.GuestAgentService, error) {
+	return []domain.GuestAgentService{{Unit: "nginx.service", Load: "loaded", Active: "active", Sub: "running"}}, nil
+}
+
 func (f *fakeBackend) SignalGuestAgentProcess(_ context.Context, _ string, spec domain.GuestAgentProcessSignalSpec) error {
 	f.signal = spec
 	return nil

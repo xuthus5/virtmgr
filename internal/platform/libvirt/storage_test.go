@@ -37,7 +37,7 @@ func TestParseStorageVolumeXML(t *testing.T) {
 func TestBuildStorageVolumeXML(t *testing.T) {
 	text := buildStorageVolumeXML(domain.StorageVolumeCreateSpec{
 		Name: "data&01.qcow2", Format: "qcow2", CapacityBytes: 20 << 30,
-	})
+	}, storagePoolDefinitionXML{Type: "dir"})
 	var parsed struct {
 		Type     string `xml:"type,attr"`
 		Name     string `xml:"name"`
@@ -63,7 +63,7 @@ func TestBuildStorageVolumeXML(t *testing.T) {
 }
 
 func TestBuildStoragePoolXML(t *testing.T) {
-	text := buildStoragePoolXML(domain.StoragePoolCreateSpec{Name: "data&pool", TargetPath: "/srv/virtmgr/<data>"})
+	text := buildStoragePoolXML(domain.StoragePoolCreateSpec{Name: "data&pool", Type: "dir", TargetPath: "/srv/virtmgr/<data>"})
 	var parsed struct {
 		Type   string `xml:"type,attr"`
 		Name   string `xml:"name"`
@@ -76,6 +76,45 @@ func TestBuildStoragePoolXML(t *testing.T) {
 	}
 	if parsed.Type != "dir" || parsed.Name != "data&pool" || parsed.Target.Path != "/srv/virtmgr/<data>" {
 		t.Fatalf("parsed pool = %+v XML=%s", parsed, text)
+	}
+}
+
+func TestBuildNetworkAndLogicalStoragePoolXML(t *testing.T) {
+	netfs := buildStoragePoolXML(domain.StoragePoolCreateSpec{
+		Name: "nfs&pool", Type: "netfs", SourceHost: "nfs.example", SourcePath: "/export/vms", TargetPath: "/mnt/virtmgr-nfs",
+	})
+	var parsed struct {
+		Type   string `xml:"type,attr"`
+		Source struct {
+			Host struct {
+				Name string `xml:"name,attr"`
+			} `xml:"host"`
+			Dir struct {
+				Path string `xml:"path,attr"`
+			} `xml:"dir"`
+		} `xml:"source"`
+		Target struct {
+			Path string `xml:"path"`
+		} `xml:"target"`
+	}
+	if err := xml.Unmarshal([]byte(netfs), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Type != "netfs" || parsed.Source.Host.Name != "nfs.example" || parsed.Source.Dir.Path != "/export/vms" || parsed.Target.Path != "/mnt/virtmgr-nfs" {
+		t.Fatalf("netfs XML = %s", netfs)
+	}
+
+	logical := buildStoragePoolXML(domain.StoragePoolCreateSpec{Name: "lvm", Type: "logical", VolumeGroup: "vg0", TargetPath: "/dev/vg0"})
+	if !strings.Contains(logical, `type='logical'`) || !strings.Contains(logical, `<name>vg0</name>`) || !strings.Contains(logical, `<path>/dev/vg0</path>`) {
+		t.Fatalf("logical XML = %s", logical)
+	}
+	volume := buildStorageVolumeXML(domain.StorageVolumeCreateSpec{Name: "data.raw", Format: "raw", CapacityBytes: 1 << 30}, storagePoolDefinitionXML{
+		Type: "logical", Target: struct {
+			Path string `xml:"path"`
+		}{Path: "/dev/vg0"},
+	})
+	if !strings.Contains(volume, `type='block'`) || !strings.Contains(volume, `<path>/dev/vg0/data.raw</path>`) || strings.Contains(volume, `<format`) {
+		t.Fatalf("logical volume XML = %s", volume)
 	}
 }
 

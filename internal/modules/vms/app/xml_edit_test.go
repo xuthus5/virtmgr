@@ -226,3 +226,55 @@ func TestEjectISORejectsRunningOrMissingISO(t *testing.T) {
 		})
 	}
 }
+
+func TestAttachISOUpdatesPersistentShutoffVM(t *testing.T) {
+	vm := persistentVM()
+	vm.State = domain.VMStateShutoff
+	vm.Disks = []domain.Disk{{Device: "disk", Target: "vda", Source: "/images/root.qcow2", Format: "qcow2"}}
+	xmlText := `<domain><name>` + vm.Name + `</name><uuid>` + vm.UUID + `</uuid><devices><disk type="file" device="disk"><source file="/images/root.qcow2"/><target dev="vda"/><boot order="1"/></disk></devices></domain>`
+	repository := &xmlEditRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{vm}}, configXML: xmlText}
+	volumes := &fakeImportVolumes{pools: map[string][]domain.StorageVolume{
+		"iso-store": {{Name: "install.iso", Path: "/var/lib/libvirt/iso/install.iso", Format: "raw"}},
+	}}
+	audit := &fakeAuditRecorder{}
+	_, err := New(repository, audit, false, WithISOVolumes(volumes)).AttachISO(context.Background(), AttachISOCommand{
+		UUID: vm.UUID, Pool: " iso-store ", Volume: " install.iso ", Request: MutationContext{Session: operatorSession()},
+	})
+	if err != nil {
+		t.Fatalf("AttachISO() error = %v", err)
+	}
+	if repository.calls != 1 || !strings.Contains(repository.definedXML, "/var/lib/libvirt/iso/install.iso") {
+		t.Fatalf("defined XML = %s calls=%d", repository.definedXML, repository.calls)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.iso.attach" || audit.events[0].Result != "success" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestAttachISORejectsRunningVMAndNonISOVolume(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state domain.VMState
+		path  string
+		want  error
+	}{
+		{name: "running", state: domain.VMStateRunning, path: "/images/install.iso", want: domain.ErrActionNotAllowed},
+		{name: "not iso", state: domain.VMStateShutoff, path: "/images/disk.qcow2", want: domain.ErrInvalidInput},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vm := persistentVM()
+			vm.State = test.state
+			repository := &xmlEditRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{vm}}, configXML: `<domain><name>` + vm.Name + `</name><uuid>` + vm.UUID + `</uuid><devices><disk type="file" device="disk"><source file="/images/root.qcow2"/><target dev="vda"/></disk></devices></domain>`}
+			volumes := &fakeImportVolumes{pools: map[string][]domain.StorageVolume{"iso-store": {{Name: "install.img", Path: test.path}}}}
+			_, err := New(repository, &fakeAuditRecorder{}, false, WithISOVolumes(volumes)).AttachISO(context.Background(), AttachISOCommand{
+				UUID: vm.UUID, Pool: "iso-store", Volume: "install.img", Request: MutationContext{Session: operatorSession()},
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error = %v, want %v", err, test.want)
+			}
+			if repository.calls != 0 {
+				t.Fatal("rejected request reached repository")
+			}
+		})
+	}
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StoragePool, VM, VirtualNetwork } from "@/api/types";
+import type { StoragePool, StorageVolume, Task, VM, VMImage, VMTemplate, VirtualNetwork } from "@/api/types";
 import { buildGlobalSearchItems } from "@/features/search/search-model";
 
 const vm: VM = {
@@ -52,6 +52,28 @@ const pool: StoragePool = {
   volumeCount: 2,
 };
 
+const volume: StorageVolume & { pool: string } = {
+  name: "demo-db-01.qcow2", pool: "default", path: "/var/lib/libvirt/images/demo-db-01.qcow2",
+  type: "file", format: "qcow2", capacityBytes: 80 * 1024 ** 3, allocationBytes: 42 * 1024 ** 3,
+};
+
+const image: VMImage = {
+  id: 7, name: "ubuntu-24.04", description: "Ubuntu cloud image", pool: "default", volume: "ubuntu-24.04.qcow2",
+  format: "qcow2", osFamily: "linux", osName: "Ubuntu 24.04", architecture: "x86_64",
+  capacityBytes: 10 * 1024 ** 3, allocationBytes: 4 * 1024 ** 3, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+};
+
+const template: VMTemplate = {
+  id: 9, name: "web-blueprint", description: "标准 Web 服务模板", vcpus: 4, memoryMiB: 4096, diskFormat: "qcow2",
+  network: "default", firmware: "uefi", secureBoot: true, cloudInit: true, autostart: true, start: false,
+  createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+};
+
+const task: Task = {
+  id: "task-100", kind: "vm.clone", targetKind: "vm", targetId: "demo-db-01", status: "failed", progress: 72,
+  step: "复制磁盘", error: "disk full", actor: "admin", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:01:00Z", cancellable: false,
+};
+
 describe("global search model", () => {
   it("shows quick pages when the query is empty", () => {
     const viewerItems = buildGlobalSearchItems("", "viewer", {});
@@ -85,6 +107,16 @@ describe("global search model", () => {
     const poolResult = buildGlobalSearchItems("iso-store", "operator", { storagePools: [pool] }).find((item) => item.kind === "storage");
     expect(poolResult?.title).toBe("iso-store");
     expect(poolResult?.description).toContain("/var/lib/libvirt/iso");
+  });
+
+  it("matches volumes, images, templates and tasks", () => {
+    const sources = { storageVolumes: [volume], images: [image], templates: [template], tasks: [task] };
+    expect(buildGlobalSearchItems("demo-db-01.qcow2", "operator", sources).find((item) => item.kind === "volume")?.testId).toBe("global-search-volume-default-demo-db-01.qcow2");
+    expect(buildGlobalSearchItems("ubuntu", "operator", sources).find((item) => item.kind === "image")?.title).toBe("ubuntu-24.04");
+    expect(buildGlobalSearchItems("web-blueprint", "operator", sources).find((item) => item.kind === "template")?.description).toContain("4 vCPU");
+    const taskResult = buildGlobalSearchItems("disk full", "operator", sources).find((item) => item.kind === "task");
+    expect(taskResult?.title).toContain("demo-db-01");
+    expect(taskResult?.description).toContain("失败");
   });
 
   it("returns page matches and no unrelated entity results", () => {

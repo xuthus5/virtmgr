@@ -72,6 +72,41 @@ test("全局搜索支持快捷键、资源查找和页面跳转", async ({ page 
   await expect(page.getByTestId("global-search-dialog")).toHaveCount(0);
 });
 
+test("全局搜索覆盖存储卷、镜像、模板和任务", async ({ page }) => {
+  await login(page);
+
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("global-search-input").fill("debian-13-netinst");
+  const volume = page.getByTestId("global-search-volume-iso-store-debian-13-netinst.iso");
+  await expect(volume).toBeVisible();
+  await expect(volume).toContainText("iso-store");
+  await volume.click();
+  await expect(page).toHaveURL(/\/storage$/);
+
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("global-search-input").fill("ubuntu-24.04-cloud-base");
+  const image = page.getByTestId("global-search-image-1");
+  await expect(image).toBeVisible();
+  await expect(image).toContainText("demo-build-01.qcow2");
+  await image.click();
+  await expect(page).toHaveURL(/\/images$/);
+
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("global-search-input").fill("linux-base");
+  const template = page.locator('[data-testid^="global-search-template-"]').filter({ hasText: "linux-base" });
+  await expect(template).toBeVisible();
+  await template.click();
+  await expect(page).toHaveURL(/\/templates$/);
+
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("global-search-input").fill("task-demo-clone");
+  const task = page.getByTestId("global-search-task-task-demo-clone");
+  await expect(task).toBeVisible();
+  await expect(task).toContainText("vm.clone");
+  await task.click();
+  await expect(page).toHaveURL(/\/tasks$/);
+});
+
 test("虚拟机列表支持搜索和状态筛选", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();

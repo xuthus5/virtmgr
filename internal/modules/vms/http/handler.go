@@ -32,6 +32,11 @@ type attachDiskInput struct {
 	domain.VMDiskBus
 }
 
+type attachISOInput struct {
+	Pool   string `json:"pool"`
+	Volume string `json:"volume"`
+}
+
 func New(service *vmsapp.Service) *Handler {
 	return &Handler{service: service}
 }
@@ -130,6 +135,27 @@ func (h *Handler) EjectISO(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	result, err := h.service.EjectISO(r.Context(), vmsapp.EjectISOCommand{
 		UUID:    chi.URLParam(r, "uuid"),
 		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) AttachISO(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input attachISOInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	result, err := h.service.AttachISO(r.Context(), vmsapp.AttachISOCommand{
+		UUID: chi.URLParam(r, "uuid"), Pool: input.Pool, Volume: input.Volume, Request: mutationContext(r, session),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -598,6 +624,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/backups", h.Backup)
 		mutating.Put("/vms/{uuid}/xml", h.UpdateXML)
 		mutating.Post("/vms/{uuid}/iso/eject", h.EjectISO)
+		mutating.Post("/vms/{uuid}/iso/attach", h.AttachISO)
 		mutating.Delete("/vms/{uuid}", h.Delete)
 		mutating.Patch("/vms/{uuid}/autostart", h.SetAutostart)
 		mutating.Patch("/vms/{uuid}/resources", h.UpdateResources)

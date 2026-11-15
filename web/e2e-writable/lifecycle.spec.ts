@@ -75,6 +75,33 @@ test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ p
   await expect(processRow).toHaveCount(0);
 });
 
+test("可写模式 Guest Agent 服务诊断在桌面和移动端可读", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+
+  await page.getByTestId("guest-agent-service-load").click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("已读取 4 个 systemd 服务");
+  await expect(page.getByTestId("guest-agent-service-qemu-guest-agent.service")).toContainText("active/running");
+  await expect(page.getByTestId("guest-agent-service-debug-shell.service")).toContainText("inactive/dead");
+  await expect(page.getByTestId("guest-agent-services")).toContainText("不支持启动、停止、重启或修改服务");
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px Guest Agent 详情不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px Guest Agent 详情 body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    const service = page.getByTestId("guest-agent-service-qemu-guest-agent.service");
+    await expect(service).toBeVisible();
+    const box = await service.boundingBox();
+    expect(box?.width ?? width + 1, `${width}px 服务行应适应视口`).toBeLessThanOrEqual(width);
+  }
+});
+
 test("可写模式批量暂停和恢复虚拟机", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
@@ -229,35 +256,63 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await expect(page.getByRole("link", { name: "e2e-created-01", exact: true })).toHaveCount(0);
 });
 
-test("可写模式选择存储池 ISO 创建虚拟机并弹出安装介质", async ({ page }) => {
+test("可写模式通过存储池挂载、替换并弹出安装 ISO", async ({ page }) => {
   await login(page);
   await page.goto("/vms/new");
   await expect(page.getByRole("heading", { name: "新建虚拟机", exact: true })).toBeVisible();
 
-  await page.getByLabel("名称", { exact: true }).fill("e2e-iso-eject-01");
+  await page.getByLabel("名称", { exact: true }).fill("e2e-iso-attach-01");
   await page.getByLabel("存储池", { exact: true }).selectOption("default");
   await page.getByLabel("存储卷", { exact: true }).selectOption("demo-db-01.qcow2");
-  await expect(page.getByTestId("vm-iso-pool")).toHaveValue("iso-store");
-  await page.getByTestId("vm-iso-volume").selectOption("debian-13-netinst.iso");
-  await expect(page.getByLabel("ISO 绝对路径（可选）", { exact: true })).toHaveValue("/var/lib/libvirt/iso/debian-13-netinst.iso");
+  await page.getByTestId("vm-iso-volume").selectOption("");
+  await expect(page.getByLabel("ISO 绝对路径（可选）", { exact: true })).toHaveValue("");
   await page.getByRole("button", { name: "创建虚拟机", exact: true }).click();
 
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
-  await expect(page.getByRole("heading", { name: "e2e-iso-eject-01", exact: true })).toBeVisible();
-  const isoRow = page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" });
+  await expect(page.getByRole("heading", { name: "e2e-iso-attach-01", exact: true })).toBeVisible();
+  await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: ".iso" })).toHaveCount(0);
+
+  await page.getByTestId("vm-iso-attach-open").click();
+  await expect(page.getByTestId("vm-iso-attach-modal")).toBeVisible();
+  await page.getByTestId("vm-iso-attach-pool").selectOption("iso-store");
+  await page.getByTestId("vm-iso-attach-volume").selectOption("debian-13-netinst.iso");
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px ISO 弹窗不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px ISO 弹窗 body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    await expect(page.getByTestId("vm-iso-attach-submit")).toBeVisible();
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByTestId("vm-iso-attach-submit").click();
+  await expect(page.getByTestId("vm-disk-resize-notice")).toContainText("安装 ISO debian-13-netinst.iso 已挂载");
+  let isoRow = page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" });
   await expect(isoRow).toBeVisible();
+
+  await page.getByTestId("vm-iso-attach-open").click();
+  await page.getByTestId("vm-iso-attach-pool").selectOption("iso-store");
+  await page.getByTestId("vm-iso-attach-volume").selectOption("virtio-win.iso");
+  await page.getByTestId("vm-iso-attach-submit").click();
+  await expect(page.getByTestId("vm-disk-resize-notice")).toContainText("安装 ISO virtio-win.iso 已挂载");
+  isoRow = page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "virtio-win.iso" });
+  await expect(isoRow).toBeVisible();
+  await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" })).toHaveCount(0);
   const ejectButtons = page.locator('[data-testid^="vm-iso-eject-"]');
   await expect(ejectButtons).toHaveCount(1);
   await ejectButtons.first().click();
   await expect(page.getByRole("alertdialog")).toContainText("弹出安装 ISO？");
   await page.getByTestId("vm-iso-eject-submit").click();
   await expect(page.getByText("安装 ISO 已弹出，主磁盘已设为第一启动设备。", { exact: true })).toBeVisible();
-  await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: "debian-13-netinst.iso" })).toHaveCount(0);
+  await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: ".iso" })).toHaveCount(0);
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("demo-db-01.qcow2");
 
   await page.getByTestId("vm-delete-button").click();
   const dialog = page.getByRole("alertdialog");
-  await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-iso-eject-01");
+  await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-iso-attach-01");
   await dialog.getByTestId("confirm-delete-vm").click();
   await expect(page).toHaveURL(/\/vms$/);
 });
@@ -302,6 +357,58 @@ test("可写模式创建存储卷并刷新列表", async ({ page }) => {
   await expect(page.getByTestId("storage-volume-usage-demo-web-01.qcow2")).toContainText("demo-web-01");
   await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toBeDisabled();
   await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toHaveAttribute("title", /demo-web-01.*不能删除/);
+});
+
+test("可写模式创建 NFS 和 LVM 存储池并约束 LVM 卷", async ({ page }) => {
+  await login(page);
+  await page.goto("/storage");
+  await expect(page.getByRole("heading", { name: "存储", exact: true })).toBeVisible();
+
+  await page.getByTestId("storage-create-pool").click();
+  await expect(page.getByTestId("storage-pool-create-form")).toBeVisible();
+  await page.getByTestId("storage-pool-name").fill("e2e-nfs-pool");
+  await page.getByTestId("storage-pool-type").selectOption("netfs");
+  await expect(page.getByTestId("storage-pool-source-host")).toBeVisible();
+  await expect(page.getByTestId("storage-pool-source-path")).toBeVisible();
+  await page.getByTestId("storage-pool-target-path").fill("/mnt/e2e-nfs");
+  await page.getByTestId("storage-pool-source-host").fill("nfs.example.com");
+  await page.getByTestId("storage-pool-source-path").fill("/export/vms");
+  await page.getByTestId("storage-pool-create-submit").click();
+  await expect(page.getByTestId("storage-pool-success")).toContainText("存储池 e2e-nfs-pool 已创建");
+  const nfsRow = page.getByTestId("storage-pool-row-e2e-nfs-pool");
+  await expect(nfsRow).toContainText("netfs");
+  await expect(nfsRow).toContainText("活跃");
+
+  await page.getByTestId("storage-create-pool").click();
+  await page.getByTestId("storage-pool-name").fill("e2e-lvm-pool");
+  await page.getByTestId("storage-pool-type").selectOption("logical");
+  await expect(page.getByTestId("storage-pool-volume-group")).toBeVisible();
+  await page.getByTestId("storage-pool-target-path").fill("/dev/vg0");
+  await page.getByTestId("storage-pool-volume-group").fill("vg0");
+  await page.getByTestId("storage-pool-create-submit").click();
+  await expect(page.getByTestId("storage-pool-success")).toContainText("存储池 e2e-lvm-pool 已创建");
+  const lvmRow = page.getByTestId("storage-pool-row-e2e-lvm-pool");
+  await expect(lvmRow).toContainText("logical");
+  await expect(lvmRow).toContainText("活跃");
+
+  await expect(page.getByTestId("storage-upload-iso")).toBeDisabled();
+  await expect(page.getByTestId("storage-upload-iso")).toHaveAttribute("title", /LVM logical 池不支持文件上传/);
+  await page.getByTestId("storage-create-volume").click();
+  await expect(page.getByTestId("storage-volume-create-form")).toContainText("LVM logical 池仅支持 .raw 块卷");
+  await expect(page.getByLabel("卷格式", { exact: true })).toHaveValue("raw");
+  await expect(page.getByLabel("卷格式", { exact: true }).locator('option[value="qcow2"]')).toBeDisabled();
+  await page.getByRole("button", { name: "取消", exact: true }).last().click();
+
+  for (const name of ["e2e-lvm-pool", "e2e-nfs-pool"]) {
+    await page.getByTestId(`storage-pool-stop-${name}`).click();
+    await expect(page.getByTestId("storage-pool-success")).toContainText(`存储池 ${name} 已停止`);
+    await page.getByTestId(`storage-pool-delete-${name}`).click();
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByLabel("输入存储池名称确认").fill(name);
+    await dialog.getByTestId("confirm-delete-pool").click();
+    await expect(page.getByTestId("storage-pool-success")).toContainText(`存储池 ${name} 已删除`);
+    await expect(page.getByTestId(`storage-pool-row-${name}`)).toHaveCount(0);
+  }
 });
 
 test("可写模式展示审计记录并支持筛选", async ({ page }) => {
@@ -429,8 +536,11 @@ test("可写模式管理存储池生命周期", async ({ page }) => {
     ["storage.pool.delete", "删除存储池"],
   ] as const) {
     await page.getByTestId("audit-action-filter").selectOption(action);
-    await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
-    const auditRow = page.locator('[data-testid^="audit-row-"]').first();
+    const auditRow = page
+      .locator('[data-testid^="audit-row-"]')
+      .filter({ hasText: "e2e-pool-01" })
+      .first();
+    await expect(auditRow).toBeVisible();
     await expect(auditRow).toContainText(label);
     await expect(auditRow).toContainText("e2e-pool-01");
     await expect(auditRow).toContainText("成功");

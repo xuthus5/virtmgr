@@ -194,6 +194,14 @@ type GuestAgentProcessSignalSpec struct {
 	Signal string `json:"signal"`
 }
 
+type GuestAgentService struct {
+	Unit        string `json:"unit"`
+	Load        string `json:"load"`
+	Active      string `json:"active"`
+	Sub         string `json:"sub"`
+	Description string `json:"description,omitempty"`
+}
+
 func ValidGuestAgentProcessSignal(value string) (string, bool) {
 	signal := strings.ToLower(strings.TrimSpace(value))
 	switch signal {

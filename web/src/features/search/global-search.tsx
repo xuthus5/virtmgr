@@ -1,11 +1,15 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Command, CornerDownLeft, HardDrive, LoaderCircle, Network, Search, Server, X } from "lucide-react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { Command, CornerDownLeft, Database, HardDrive, LayoutTemplate, Layers3, ListChecks, LoaderCircle, Network, Search, Server, X } from "lucide-react";
 import type { Role } from "@/api/types";
+import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import { imagesQueryKey } from "@/features/images/use-images-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { buildGlobalSearchItems, type GlobalSearchItem } from "@/features/search/search-model";
 import { useStoragePoolsQuery } from "@/features/storage/use-storage-query";
+import { templatesQueryKey } from "@/features/templates/use-templates-query";
 import { useVMsQuery } from "@/features/vms/use-vms-query";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +17,10 @@ function ResultIcon({ kind }: { kind: GlobalSearchItem["kind"] }) {
   if (kind === "vm") return <Server className="h-4 w-4" />;
   if (kind === "network") return <Network className="h-4 w-4" />;
   if (kind === "storage") return <HardDrive className="h-4 w-4" />;
+  if (kind === "volume") return <Database className="h-4 w-4" />;
+  if (kind === "image") return <Layers3 className="h-4 w-4" />;
+  if (kind === "template") return <LayoutTemplate className="h-4 w-4" />;
+  if (kind === "task") return <ListChecks className="h-4 w-4" />;
   return <CornerDownLeft className="h-4 w-4" />;
 }
 
@@ -26,15 +34,34 @@ export function GlobalSearch({ role }: { role: Role }) {
   const vmsQuery = useVMsQuery("", "", open);
   const networksQuery = useNetworksQuery(open);
   const poolsQuery = useStoragePoolsQuery(open);
+  const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
+  const volumeQueries = useQueries({
+    queries: activePools.map((pool) => ({
+      queryKey: ["storage", "volumes", pool.name],
+      queryFn: () => api.storageVolumes(pool.name),
+      staleTime: 15_000,
+      enabled: open,
+    })),
+  });
+  const storageVolumes = useMemo(() => volumeQueries.flatMap((query, index) =>
+    (query.data?.items ?? []).map((volume) => ({ ...volume, pool: activePools[index]?.name ?? "" })),
+  ), [volumeQueries, activePools]);
+  const imagesQuery = useQuery({ queryKey: imagesQueryKey, queryFn: api.images, staleTime: 15_000, enabled: open });
+  const templatesQuery = useQuery({ queryKey: templatesQueryKey, queryFn: api.templates, staleTime: 15_000, enabled: open });
+  const tasksQuery = useQuery({ queryKey: ["tasks", { page: 1, pageSize: 50 }], queryFn: () => api.tasks({ page: 1, pageSize: 50 }), staleTime: 5_000, enabled: open });
 
   const results = useMemo(() => buildGlobalSearchItems(deferredQuery, role, {
     vms: vmsQuery.data?.items,
     networks: networksQuery.data?.items,
     storagePools: poolsQuery.data?.items,
-  }), [deferredQuery, role, vmsQuery.data, networksQuery.data, poolsQuery.data]);
+    storageVolumes,
+    images: imagesQuery.data?.items,
+    templates: templatesQuery.data?.items,
+    tasks: tasksQuery.data?.items,
+  }), [deferredQuery, role, vmsQuery.data, networksQuery.data, poolsQuery.data, storageVolumes, imagesQuery.data, templatesQuery.data, tasksQuery.data]);
 
-  const loading = open && (vmsQuery.isLoading || networksQuery.isLoading || poolsQuery.isLoading);
-  const sourceError = vmsQuery.isError || networksQuery.isError || poolsQuery.isError;
+  const loading = open && (vmsQuery.isLoading || networksQuery.isLoading || poolsQuery.isLoading || volumeQueries.some((query) => query.isLoading) || imagesQuery.isLoading || templatesQuery.isLoading || tasksQuery.isLoading);
+  const sourceError = vmsQuery.isError || networksQuery.isError || poolsQuery.isError || volumeQueries.some((query) => query.isError) || imagesQuery.isError || templatesQuery.isError || tasksQuery.isError;
 
   useEffect(() => {
     function onShortcut(event: globalThis.KeyboardEvent) {
@@ -133,10 +160,10 @@ export function GlobalSearch({ role }: { role: Role }) {
               <input
                 autoFocus
                 data-testid="global-search-input"
-                aria-label="搜索虚拟机、网络、存储池或页面"
+                aria-label="搜索虚拟机、存储卷、镜像、模板、任务或页面"
                 value={query}
                 onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
-                placeholder="搜索虚拟机、IP、网络、存储池或页面..."
+                placeholder="搜索虚拟机、存储卷、镜像、模板、任务或页面..."
                 className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
               />
               {loading ? <LoaderCircle className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
@@ -149,7 +176,7 @@ export function GlobalSearch({ role }: { role: Role }) {
                 <div className="px-4 py-12 text-center" data-testid="global-search-empty">
                   <Search className="mx-auto h-6 w-6 text-muted-foreground" />
                   <p className="mt-3 text-sm font-medium">没有匹配结果</p>
-                  <p className="mt-1 text-xs text-muted-foreground">尝试虚拟机名称、UUID、IP、网络桥或存储池路径。</p>
+                  <p className="mt-1 text-xs text-muted-foreground">尝试虚拟机名称、存储卷、镜像、模板、任务或页面关键词。</p>
                 </div>
               ) : null}
               {results.map((item, index) => {

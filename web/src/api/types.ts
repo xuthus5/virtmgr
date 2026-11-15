@@ -152,6 +152,11 @@ export type VMDiskAttachInput = {
   bus?: VMDiskBus;
 };
 
+export type VMISOAttachInput = {
+  pool: string;
+  volume: string;
+};
+
 export type VMNetworkAttachInput = {
   network: string;
   model?: VMNICModel;
@@ -797,6 +802,14 @@ export type GuestAgentProcess = {
 };
 
 export type GuestAgentProcessList = { items: GuestAgentProcess[]; total: number };
+export type GuestAgentService = {
+  unit: string;
+  load: string;
+  active: string;
+  sub: string;
+  description?: string;
+};
+export type GuestAgentServiceList = { items: GuestAgentService[]; total: number };
 export type GuestAgentProcessSignalInput = { pid: number; signal: "term" | "kill" };
 export type GuestAgentUser = { username: string; domain?: string; loginTime?: number };
 export type GuestAgentUserList = { items: GuestAgentUser[]; total: number };
@@ -951,7 +964,7 @@ export type MetricHistoryFilters = {
   limit?: number;
 };
 
-export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent" | "storage_pool_percent";
+export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent" | "storage_pool_percent" | "guest_filesystem_percent";
 export type AlertOperator = "gt" | "gte" | "lt" | "lte";
 export type AlertState = "ok" | "pending" | "firing";
 
@@ -1063,8 +1076,11 @@ export type StoragePool = {
 
 export type StoragePoolCreateInput = {
   name: string;
-  type: "dir";
+  type: "dir" | "netfs" | "logical";
   targetPath: string;
+  sourceHost?: string;
+  sourcePath?: string;
+  volumeGroup?: string;
   autostart: boolean;
   start: boolean;
 };

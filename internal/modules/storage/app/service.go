@@ -110,12 +110,14 @@ type UploadVolumeCommand struct {
 }
 
 var (
-	poolNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
-	volumeNamePattern = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f]{1,127}$`)
-	volumeFormats     = map[string]string{"qcow2": ".qcow2", "raw": ".raw"}
-	minVolumeBytes    = uint64(1 << 20)
-	maxVolumeBytes    = uint64(16 << 40)
-	maxUploadBytes    = uint64(256 << 30)
+	poolNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
+	volumeNamePattern      = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f]{1,127}$`)
+	storagePoolHostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$`)
+	volumeGroupPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}$`)
+	volumeFormats          = map[string]string{"qcow2": ".qcow2", "raw": ".raw"}
+	minVolumeBytes         = uint64(1 << 20)
+	maxVolumeBytes         = uint64(16 << 40)
+	maxUploadBytes         = uint64(256 << 30)
 )
 
 func New(repository Repository, audit AuditRecorder, readOnly bool, options ...Option) *Service {
@@ -226,6 +228,9 @@ func (s *Service) ListVolumes(ctx context.Context, poolName string) (domain.Stor
 	if err != nil {
 		return domain.StorageVolumeList{}, err
 	}
+	if volumes == nil {
+		volumes = make([]domain.StorageVolume, 0)
+	}
 	for index := range volumes {
 		volumes[index].UsedBy = storageVolumeUsage(volumes[index], vms)
 	}
@@ -278,8 +283,13 @@ func (s *Service) CreateVolume(ctx context.Context, command CreateVolumeCommand)
 	if err != nil {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+command.Spec.Name, storageVolumeSpecDetail(command.Spec), err)
 	}
-	if err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(spec.Format, spec.CapacityBytes, 0)); err != nil {
+	pool, err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(spec.Format, spec.CapacityBytes, 0))
+	if err != nil {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+spec.Name, storageVolumeSpecDetail(spec), err)
+	}
+	if pool.Type == "logical" && spec.Format != "raw" {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.create", command.Pool+"/"+spec.Name, storageVolumeSpecDetail(spec),
+			fmt.Errorf("%w: logical LVM pools only support raw volumes", domain.ErrInvalidInput))
 	}
 	volume, err := s.repository.CreateStorageVolume(ctx, command.Pool, spec)
 	if err != nil {
@@ -319,8 +329,13 @@ func (s *Service) UploadVolume(ctx context.Context, command UploadVolumeCommand)
 	if command.Size < int64(minVolumeBytes) {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
-	if err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(format, uint64(command.Size), 0)); err != nil {
+	pool, err := s.ensureVolumeCapacity(ctx, command.Pool, domain.StorageProvisionRequiredBytes(format, uint64(command.Size), 0))
+	if err != nil {
 		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail, err)
+	}
+	if pool.Type == "logical" {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.upload", command.Pool+"/"+command.Name, detail,
+			fmt.Errorf("%w: uploads are not supported by logical LVM pools", domain.ErrActionNotAllowed))
 	}
 	taskID := ""
 	if s.tasks != nil {
@@ -374,15 +389,15 @@ func uploadVolumeFormat(name string) (string, bool) {
 	}
 }
 
-func (s *Service) ensureVolumeCapacity(ctx context.Context, poolName string, required uint64) error {
+func (s *Service) ensureVolumeCapacity(ctx context.Context, poolName string, required uint64) (domain.StoragePool, error) {
 	pool, err := s.repository.GetStoragePool(ctx, poolName)
 	if err != nil {
-		return err
+		return domain.StoragePool{}, err
 	}
 	if !domain.StoragePoolHasCapacity(pool, required) {
-		return fmt.Errorf("%w: storage pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, poolName, required, pool.AvailableBytes)
+		return domain.StoragePool{}, fmt.Errorf("%w: storage pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, poolName, required, pool.AvailableBytes)
 	}
-	return nil
+	return pool, nil
 }
 
 func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand) error {
@@ -437,23 +452,62 @@ func normalizeStoragePoolCreateSpec(spec domain.StoragePoolCreateSpec) (domain.S
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.Type = strings.ToLower(strings.TrimSpace(spec.Type))
 	spec.TargetPath = strings.TrimSpace(spec.TargetPath)
+	spec.SourceHost = strings.TrimSpace(spec.SourceHost)
+	spec.SourcePath = strings.TrimSpace(spec.SourcePath)
+	spec.VolumeGroup = strings.TrimSpace(spec.VolumeGroup)
 	if spec.Type == "" {
 		spec.Type = "dir"
-	}
-	if spec.Type != "dir" {
-		return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: only dir storage pools are supported", domain.ErrInvalidInput)
 	}
 	if !poolNamePattern.MatchString(spec.Name) {
 		return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: invalid storage pool name", domain.ErrInvalidInput)
 	}
-	if spec.TargetPath == "" || strings.ContainsAny(spec.TargetPath, "\x00\r\n") || !filepath.IsAbs(spec.TargetPath) {
-		return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: target path must be absolute", domain.ErrInvalidInput)
-	}
-	spec.TargetPath = filepath.Clean(spec.TargetPath)
-	if spec.TargetPath == string(filepath.Separator) {
-		return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: target path cannot be the filesystem root", domain.ErrInvalidInput)
+	switch spec.Type {
+	case "dir":
+		if spec.SourceHost != "" || spec.SourcePath != "" || spec.VolumeGroup != "" {
+			return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: dir pools do not accept network or LVM source fields", domain.ErrInvalidInput)
+		}
+		var err error
+		spec.TargetPath, err = normalizeAbsolutePoolPath(spec.TargetPath, false)
+		if err != nil {
+			return domain.StoragePoolCreateSpec{}, err
+		}
+	case "netfs":
+		if !storagePoolHostPattern.MatchString(spec.SourceHost) || spec.VolumeGroup != "" {
+			return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: NFS pool requires a valid source host and no volume group", domain.ErrInvalidInput)
+		}
+		var err error
+		spec.SourcePath, err = normalizeAbsolutePoolPath(spec.SourcePath, true)
+		if err != nil {
+			return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: NFS export path must be absolute", domain.ErrInvalidInput)
+		}
+		spec.TargetPath, err = normalizeAbsolutePoolPath(spec.TargetPath, false)
+		if err != nil {
+			return domain.StoragePoolCreateSpec{}, err
+		}
+	case "logical":
+		if spec.SourceHost != "" || spec.SourcePath != "" || !volumeGroupPattern.MatchString(spec.VolumeGroup) {
+			return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: LVM pool requires a valid volume group", domain.ErrInvalidInput)
+		}
+		path, err := normalizeAbsolutePoolPath(spec.TargetPath, false)
+		if err != nil || !strings.HasPrefix(path, "/dev/") {
+			return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: LVM target path must be an absolute /dev path", domain.ErrInvalidInput)
+		}
+		spec.TargetPath = path
+	default:
+		return domain.StoragePoolCreateSpec{}, fmt.Errorf("%w: storage pool type must be dir, netfs or logical", domain.ErrInvalidInput)
 	}
 	return spec, nil
+}
+
+func normalizeAbsolutePoolPath(path string, allowRoot bool) (string, error) {
+	if path == "" || strings.ContainsAny(path, "\x00\r\n") || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%w: path must be absolute", domain.ErrInvalidInput)
+	}
+	path = filepath.Clean(path)
+	if path == string(filepath.Separator) && !allowRoot {
+		return "", fmt.Errorf("%w: path cannot be the filesystem root", domain.ErrInvalidInput)
+	}
+	return path, nil
 }
 
 func storageVolumeSpecDetail(spec domain.StorageVolumeCreateSpec) map[string]any {
@@ -467,6 +521,7 @@ func storageVolumeSpecDetail(spec domain.StorageVolumeCreateSpec) map[string]any
 func storagePoolSpecDetail(spec domain.StoragePoolCreateSpec) map[string]any {
 	return map[string]any{
 		"name": spec.Name, "type": spec.Type, "targetPath": spec.TargetPath,
+		"sourceHost": spec.SourceHost, "sourcePath": spec.SourcePath, "volumeGroup": spec.VolumeGroup,
 		"autostart": spec.Autostart, "start": spec.Start,
 	}
 }

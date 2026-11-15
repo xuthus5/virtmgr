@@ -1,4 +1,4 @@
-import type { Role, StoragePool, StoragePoolState, VM, VMState, VirtualNetwork } from "@/api/types";
+import type { Role, StoragePool, StoragePoolState, StorageVolume, Task, TaskStatus, VM, VMImage, VMState, VMTemplate, VirtualNetwork } from "@/api/types";
 import { formatBytes } from "@/lib/utils";
 
 export type StaticSearchPath = "/" | "/vms" | "/templates" | "/storage" | "/networks" | "/host" | "/tasks" | "/events" | "/audit" | "/users" | "/settings";
@@ -15,12 +15,20 @@ export type GlobalSearchItem =
   | (SearchItemBase & { kind: "vm"; uuid: string })
   | (SearchItemBase & { kind: "network"; path: "/networks" })
   | (SearchItemBase & { kind: "storage"; path: "/storage" })
+  | (SearchItemBase & { kind: "volume"; path: "/storage"; pool: string })
+  | (SearchItemBase & { kind: "image"; path: "/images" })
+  | (SearchItemBase & { kind: "template"; path: "/templates" })
+  | (SearchItemBase & { kind: "task"; path: "/tasks" })
   | (SearchItemBase & { kind: "page"; path: StaticSearchPath });
 
 export type SearchSources = {
   vms?: VM[];
   networks?: VirtualNetwork[];
   storagePools?: StoragePool[];
+  storageVolumes?: Array<StorageVolume & { pool: string }>;
+  images?: VMImage[];
+  templates?: VMTemplate[];
+  tasks?: Task[];
 };
 
 type SearchPage = {
@@ -62,6 +70,15 @@ const poolStateLabels: Record<StoragePoolState, string> = {
   degraded: "降级",
   inaccessible: "不可访问",
   unknown: "未知",
+};
+
+const taskStatusLabels: Record<TaskStatus, string> = {
+  queued: "排队中",
+  running: "运行中",
+  succeeded: "已完成",
+  failed: "失败",
+  interrupted: "中断",
+  cancelled: "已取消",
 };
 
 function matches(query: string, fields: Array<string | undefined>) {
@@ -136,6 +153,67 @@ export function buildGlobalSearchItems(query: string, role: Role | undefined, so
         testId: `global-search-storage-${pool.name}`,
       }));
     result.push(...pools);
+
+    const volumes = (sources.storageVolumes ?? [])
+      .filter((volume) => matches(normalized, [volume.name, volume.pool, volume.path, volume.type, volume.format]))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 5)
+      .map<GlobalSearchItem>((volume) => ({
+        id: `volume:${volume.pool}:${volume.name}`,
+        kind: "volume",
+        group: "存储卷",
+        path: "/storage",
+        pool: volume.pool,
+        title: volume.name,
+        description: [volume.pool, volume.format, volume.path, formatBytes(volume.capacityBytes)].filter(Boolean).join(" · "),
+        testId: `global-search-volume-${volume.pool}-${volume.name}`,
+      }));
+    result.push(...volumes);
+
+    const images = (sources.images ?? [])
+      .filter((image) => matches(normalized, [image.name, image.description, image.pool, image.volume, image.format, image.osFamily, image.osName, image.architecture]))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 4)
+      .map<GlobalSearchItem>((image) => ({
+        id: `image:${image.id}`,
+        kind: "image",
+        group: "镜像",
+        path: "/images",
+        title: image.name,
+        description: [image.osName || image.osFamily, image.architecture, image.format, `${image.pool}/${image.volume}`].filter(Boolean).join(" · "),
+        testId: `global-search-image-${image.id}`,
+      }));
+    result.push(...images);
+
+    const templates = (sources.templates ?? [])
+      .filter((template) => matches(normalized, [template.name, template.description, template.network, template.diskFormat, template.firmware, `${template.vcpus} vcpu`, `${template.memoryMiB} mib`]))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 4)
+      .map<GlobalSearchItem>((template) => ({
+        id: `template:${template.id}`,
+        kind: "template",
+        group: "虚拟机模板",
+        path: "/templates",
+        title: template.name,
+        description: [template.description, `${template.vcpus} vCPU`, formatBytes(template.memoryMiB * 1024 ** 2), template.network].filter(Boolean).join(" · "),
+        testId: `global-search-template-${template.id}`,
+      }));
+    result.push(...templates);
+
+    const tasks = (sources.tasks ?? [])
+      .filter((task) => matches(normalized, [task.id, task.kind, task.targetKind, task.targetId, task.step, task.actor, taskStatusLabels[task.status], task.error]))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 4)
+      .map<GlobalSearchItem>((task) => ({
+        id: `task:${task.id}`,
+        kind: "task",
+        group: "任务",
+        path: "/tasks",
+        title: `${task.kind} · ${task.targetId || task.id}`,
+        description: [taskStatusLabels[task.status], `${task.progress}%`, task.step, task.actor].filter(Boolean).join(" · "),
+        testId: `global-search-task-${task.id}`,
+      }));
+    result.push(...tasks);
   }
 
   const visiblePages = pages

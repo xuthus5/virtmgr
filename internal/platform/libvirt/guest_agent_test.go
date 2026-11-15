@@ -80,6 +80,10 @@ func TestGuestAgentOperationGuards(t *testing.T) {
 	if len(processes) != 2 || processes[0].PID != 1 || processes[1].Args != "sshd: /usr/sbin/sshd -D" {
 		t.Fatalf("processes = %+v", processes)
 	}
+	services := parseGuestServices("nginx.service loaded active running A high performance web server\nbad line\nssh.service loaded failed failed OpenBSD Secure Shell server\n")
+	if len(services) != 2 || services[0].Unit != "nginx.service" || services[1].Active != "failed" {
+		t.Fatalf("services = %+v", services)
+	}
 	code, hint := guestAgentDiagnosticFromError(errors.New("permission denied by guest policy"))
 	if code != "permission_denied" || hint == "" {
 		t.Fatalf("diagnostic = %s %s", code, hint)

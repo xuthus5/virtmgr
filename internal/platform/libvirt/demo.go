@@ -34,6 +34,7 @@ type DemoBackend struct {
 	guestFiles     map[string][]byte
 	guestSSHKeys   map[string][]string
 	guestProcesses []domain.GuestAgentProcess
+	guestServices  []domain.GuestAgentService
 	guestUsers     []domain.GuestAgentUser
 }
 
@@ -60,6 +61,12 @@ func NewDemo(sinks ...EventSink) *DemoBackend {
 			{PID: 412, PPID: 1, User: "root", State: "Ssl", Command: "sshd", Args: "sshd: /usr/sbin/sshd -D"},
 			{PID: 918, PPID: 1, User: "www-data", State: "S", Command: "nginx", Args: "nginx: worker process"},
 			{PID: 1042, PPID: 1, User: "root", State: "Ssl", Command: "qemu-ga", Args: "/usr/sbin/qemu-ga"},
+		},
+		guestServices: []domain.GuestAgentService{
+			{Unit: "nginx.service", Load: "loaded", Active: "active", Sub: "running", Description: "A high performance web server and a reverse proxy server"},
+			{Unit: "qemu-guest-agent.service", Load: "loaded", Active: "active", Sub: "running", Description: "QEMU Guest Agent"},
+			{Unit: "ssh.service", Load: "loaded", Active: "active", Sub: "running", Description: "OpenBSD Secure Shell server"},
+			{Unit: "debug-shell.service", Load: "loaded", Active: "inactive", Sub: "dead", Description: "Early root shell on tty9"},
 		},
 		guestUsers: []domain.GuestAgentUser{
 			{Username: "deploy", Domain: "demo", LoginTime: time.Now().Add(-42 * time.Minute).Unix()},
@@ -1207,7 +1214,7 @@ func (d *DemoBackend) CreateStoragePool(_ context.Context, spec domain.StoragePo
 		return domain.StoragePool{}, err
 	}
 	pool := domain.StoragePool{
-		Name: spec.Name, UUID: uuid, Type: "dir", State: domain.StoragePoolStateInactive,
+		Name: spec.Name, UUID: uuid, Type: spec.Type, State: domain.StoragePoolStateInactive,
 		Autostart: spec.Autostart, Persistent: true, TargetPath: spec.TargetPath,
 	}
 	if spec.Start {
@@ -1307,6 +1314,9 @@ func (d *DemoBackend) CreateStorageVolume(_ context.Context, poolName string, sp
 		Name: spec.Name, Path: targetPath + "/" + spec.Name, Type: "file", Format: spec.Format,
 		CapacityBytes: spec.CapacityBytes,
 	}
+	if pool.Type == "logical" {
+		volume.Type = "block"
+	}
 	d.volumes[poolName] = append(d.volumes[poolName], volume)
 	d.publish("storage.volume.created", "info", "storage_volume", poolName+"/"+volume.Name, volume.Name, "存储卷 "+volume.Name+" 已创建")
 	return volume, nil
@@ -1321,6 +1331,9 @@ func (d *DemoBackend) UploadStorageVolume(_ context.Context, poolName string, sp
 	}
 	if pool.State != domain.StoragePoolStateActive {
 		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	if pool.Type == "logical" {
+		return domain.StorageVolume{}, domain.ErrActionNotAllowed
 	}
 	targetPath := pool.TargetPath
 	if reader == nil || spec.CapacityBytes == 0 {

@@ -9,17 +9,18 @@ import (
 type AlertMetric string
 
 const (
-	AlertMetricHostCPUPercent     AlertMetric = "host_cpu_percent"
-	AlertMetricHostMemoryPercent  AlertMetric = "host_memory_percent"
-	AlertMetricVMCPUPercent       AlertMetric = "vm_cpu_percent"
-	AlertMetricVMMemoryPercent    AlertMetric = "vm_memory_percent"
-	AlertMetricStoragePoolPercent AlertMetric = "storage_pool_percent"
+	AlertMetricHostCPUPercent         AlertMetric = "host_cpu_percent"
+	AlertMetricHostMemoryPercent      AlertMetric = "host_memory_percent"
+	AlertMetricVMCPUPercent           AlertMetric = "vm_cpu_percent"
+	AlertMetricVMMemoryPercent        AlertMetric = "vm_memory_percent"
+	AlertMetricStoragePoolPercent     AlertMetric = "storage_pool_percent"
+	AlertMetricGuestFilesystemPercent AlertMetric = "guest_filesystem_percent"
 )
 
 func NormalizeAlertMetric(value string) (AlertMetric, error) {
 	metric := AlertMetric(strings.ToLower(strings.TrimSpace(value)))
 	switch metric {
-	case AlertMetricHostCPUPercent, AlertMetricHostMemoryPercent, AlertMetricVMCPUPercent, AlertMetricVMMemoryPercent, AlertMetricStoragePoolPercent:
+	case AlertMetricHostCPUPercent, AlertMetricHostMemoryPercent, AlertMetricVMCPUPercent, AlertMetricVMMemoryPercent, AlertMetricStoragePoolPercent, AlertMetricGuestFilesystemPercent:
 		return metric, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported alert metric", ErrInvalidInput)

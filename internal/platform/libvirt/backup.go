@@ -193,7 +193,7 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 		reportBackupProgress(progress, 10+index*60/maxInt(1, len(artifacts)), step)
 		targetVolume, err := targetPool.StorageVolCreateXMLFrom(buildStorageVolumeXML(domain.StorageVolumeCreateSpec{
 			Name: artifact.name, Format: artifact.format, CapacityBytes: artifact.capacityBytes,
-		}), sourceVolumes[index], 0)
+		}, storagePoolDefinitionXML{}), sourceVolumes[index], 0)
 		if err != nil {
 			if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
 				return domain.VMBackup{}, domain.ErrConflict
@@ -731,7 +731,7 @@ func createUploadedBackupVolume(conn *libvirt.Connect, pool *libvirt.StoragePool
 	}
 	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(domain.StorageVolumeCreateSpec{
 		Name: name, Format: format, CapacityBytes: size,
-	}), 0)
+	}, storagePoolDefinitionXML{}), 0)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
 			return domain.ErrConflict

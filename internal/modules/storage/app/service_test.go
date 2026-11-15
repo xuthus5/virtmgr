@@ -166,6 +166,19 @@ func TestListVolumesSortsAndValidates(t *testing.T) {
 	}
 }
 
+func TestListVolumesReturnsEmptyArrayInsteadOfNil(t *testing.T) {
+	result, err := New(&fakeRepository{volumes: nil}, nil, false).ListVolumes(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("ListVolumes() error = %v", err)
+	}
+	if result.Items == nil {
+		t.Fatal("ListVolumes() items must be an empty array, not nil")
+	}
+	if result.Total != 0 || len(result.Items) != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestListVolumesAddsVMUsageRelationships(t *testing.T) {
 	repository := &fakeRepository{
 		volumes: []domain.StorageVolume{
@@ -588,6 +601,73 @@ func TestCreatePoolRejectsInvalidRequests(t *testing.T) {
 				t.Fatalf("audit events = %+v", audit.events)
 			}
 		})
+	}
+}
+
+func TestCreatePoolSupportsNFSAndLVM(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		spec domain.StoragePoolCreateSpec
+		want domain.StoragePoolCreateSpec
+	}{
+		{
+			name: "nfs",
+			spec: domain.StoragePoolCreateSpec{Name: "nfs-pool", Type: " NetFS ", SourceHost: " nfs.example ", SourcePath: " /export/vms/../vms ", TargetPath: " /mnt/virtmgr-nfs "},
+			want: domain.StoragePoolCreateSpec{Name: "nfs-pool", Type: "netfs", SourceHost: "nfs.example", SourcePath: "/export/vms", TargetPath: "/mnt/virtmgr-nfs"},
+		},
+		{
+			name: "lvm",
+			spec: domain.StoragePoolCreateSpec{Name: "lvm-pool", Type: "LOGICAL", VolumeGroup: " vg0 ", TargetPath: " /dev/vg0 "},
+			want: domain.StoragePoolCreateSpec{Name: "lvm-pool", Type: "logical", VolumeGroup: "vg0", TargetPath: "/dev/vg0"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{}
+			if _, err := New(repository, &fakeAuditRecorder{}, false).CreatePool(context.Background(), CreatePoolCommand{
+				Spec: test.spec, Request: MutationContext{Session: operatorSession()},
+			}); err != nil {
+				t.Fatalf("CreatePool() error = %v", err)
+			}
+			got := repository.createdPoolSpec
+			if got.Name != test.want.Name || got.Type != test.want.Type || got.SourceHost != test.want.SourceHost ||
+				got.SourcePath != test.want.SourcePath || got.VolumeGroup != test.want.VolumeGroup || got.TargetPath != test.want.TargetPath {
+				t.Fatalf("created spec = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestStoragePoolTypeSpecificValidation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		spec domain.StoragePoolCreateSpec
+	}{
+		{name: "bad nfs host", spec: domain.StoragePoolCreateSpec{Name: "pool-a", Type: "netfs", SourceHost: "nfs/example", SourcePath: "/export", TargetPath: "/mnt/nfs"}},
+		{name: "relative nfs export", spec: domain.StoragePoolCreateSpec{Name: "pool-a", Type: "netfs", SourceHost: "nfs.example", SourcePath: "export", TargetPath: "/mnt/nfs"}},
+		{name: "bad volume group", spec: domain.StoragePoolCreateSpec{Name: "pool-a", Type: "logical", VolumeGroup: "vg/0", TargetPath: "/dev/vg0"}},
+		{name: "non-dev lvm target", spec: domain.StoragePoolCreateSpec{Name: "pool-a", Type: "logical", VolumeGroup: "vg0", TargetPath: "/srv/vg0"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := normalizeStoragePoolCreateSpec(test.spec); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLogicalPoolOnlyAcceptsRawVolumesAndRejectsUploads(t *testing.T) {
+	repository := &fakeRepository{getPool: domain.StoragePool{Name: "lvm-pool", Type: "logical", State: domain.StoragePoolStateActive, AvailableBytes: 1 << 50}}
+	service := New(repository, &fakeAuditRecorder{}, false)
+	request := MutationContext{Session: operatorSession()}
+	if _, err := service.CreateVolume(context.Background(), CreateVolumeCommand{
+		Pool: "lvm-pool", Spec: domain.StorageVolumeCreateSpec{Name: "data.qcow2", Format: "qcow2", CapacityBytes: 1 << 30}, Request: request,
+	}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("qcow2 error = %v", err)
+	}
+	if _, err := service.UploadVolume(context.Background(), UploadVolumeCommand{
+		Pool: "lvm-pool", Name: "install.iso", Size: 2 << 20, Body: strings.NewReader(strings.Repeat("x", 2<<20)), Request: request,
+	}); !errors.Is(err, domain.ErrActionNotAllowed) {
+		t.Fatalf("upload error = %v", err)
 	}
 }
 

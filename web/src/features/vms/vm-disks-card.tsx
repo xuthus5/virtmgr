@@ -45,6 +45,10 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const [bus, setBus] = useState("virtio");
   const [target, setTarget] = useState("");
   const [attachError, setAttachError] = useState("");
+  const [isoOpen, setIsoOpen] = useState(false);
+  const [isoPool, setIsoPool] = useState("");
+  const [isoVolume, setIsoVolume] = useState("");
+  const [isoError, setIsoError] = useState("");
   const [detachTarget, setDetachTarget] = useState<string | null>(null);
   const [ejectTarget, setEjectTarget] = useState<Disk | null>(null);
   const poolsQuery = useStoragePoolsQuery(attachOpen);
@@ -54,6 +58,21 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const eligibleVolumes = (volumesQuery.data?.items ?? []).filter((item) => item.format === "qcow2" || item.format === "raw");
   const selectedVolume = eligibleVolumes.some((item) => item.name === volume) ? volume : eligibleVolumes[0]?.name || "";
   const rootTarget = vm.disks.find((disk) => disk.device === "disk" && !disk.readOnly && disk.source)?.target || "";
+  const isoPoolsQuery = useStoragePoolsQuery(isoOpen);
+  const isoActivePools = (isoPoolsQuery.data?.items ?? []).filter((item) => item.state === "active");
+  const selectedISOPool = isoPool || isoActivePools[0]?.name || "";
+  const isoVolumesQuery = useStorageVolumesQuery(selectedISOPool);
+  const isoVolumes = (isoVolumesQuery.data?.items ?? []).filter((item) => /\.iso$/i.test(item.name) && item.path?.startsWith("/"));
+  const selectedISOVolume = isoVolumes.some((item) => item.name === isoVolume) ? isoVolume : isoVolumes[0]?.name || "";
+  const isoDisabledReason = readOnly
+    ? "系统当前处于只读模式"
+    : !role || role === "viewer"
+      ? "当前账号没有虚拟机操作权限"
+      : !vm.persistent
+        ? "临时虚拟机不能挂载 ISO"
+        : vm.state !== "shutoff" && vm.state !== "crashed"
+          ? "请先关闭虚拟机再挂载 ISO"
+          : "";
 
   const mutation = useMutation({
     mutationFn: (input: { target: string; capacityBytes: number }) => api.resizeVMDisk(vm.uuid, input.target, { capacityBytes: input.capacityBytes }),
@@ -85,6 +104,21 @@ export function VMDisksCard({ vm, role, readOnly }: {
       setNotice({ tone: "success", text: `已从 ${selectedPool}/${selectedVolume} 附加磁盘。` });
     },
     onError: (cause) => setAttachError(cause instanceof ApiError ? cause.message : "附加磁盘失败，请稍后重试。"),
+  });
+
+  const attachISOMutation = useMutation({
+    mutationFn: () => api.attachVMISO(vm.uuid, { pool: selectedISOPool, volume: selectedISOVolume }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      setIsoOpen(false);
+      setIsoVolume("");
+      setIsoError("");
+      setNotice({ tone: "success", text: `安装 ISO ${selectedISOVolume} 已挂载，并切换为光盘优先启动。` });
+    },
+    onError: (cause) => setIsoError(cause instanceof ApiError ? cause.message : "挂载 ISO 失败，请稍后重试。"),
   });
 
   const detachMutation = useMutation({
@@ -145,6 +179,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline">支持热插拔</Badge>
+            <Button size="sm" variant="outline" data-testid="vm-iso-attach-open" disabled={Boolean(isoDisabledReason) || attachISOMutation.isPending} title={isoDisabledReason || "从活跃存储池挂载或替换安装 ISO"} onClick={() => { setIsoError(""); setNotice(null); setIsoOpen(true); }}>
+              <Disc3 className="h-4 w-4" />挂载 ISO
+            </Button>
             <Button size="sm" variant="outline" data-testid="vm-disk-attach-open" disabled={!role || role === "viewer" || readOnly} title={readOnly ? "系统当前处于只读模式" : role === "viewer" ? "当前账号没有磁盘操作权限" : "附加存储卷"} onClick={() => { setAttachError(""); setNotice(null); setAttachOpen(true); }}>
               <Plus className="h-4 w-4" />附加磁盘
             </Button>
@@ -322,6 +359,26 @@ export function VMDisksCard({ vm, role, readOnly }: {
             <div className="space-y-2"><Label htmlFor="vm-disk-attach-target">目标设备（可选）</Label><Input id="vm-disk-attach-target" data-testid="vm-disk-attach-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="留空自动分配，例如 vdb" /></div>
           </div>
           {attachError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{attachError}</p> : null}
+        </div>
+      </Modal>
+
+      <Modal open={isoOpen} onClose={() => { if (!attachISOMutation.isPending) setIsoOpen(false); }} title="挂载安装 ISO" description="仅支持关机或崩溃状态的持久虚拟机。已有安装光盘会被替换，cloud-init 介质保持不变。" testId="vm-iso-attach-modal" footer={<><Button variant="ghost" disabled={attachISOMutation.isPending} onClick={() => setIsoOpen(false)}>取消</Button><Button data-testid="vm-iso-attach-submit" disabled={attachISOMutation.isPending || !selectedISOPool || !selectedISOVolume} onClick={() => attachISOMutation.mutate()}>{attachISOMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Disc3 className="h-4 w-4" />}{attachISOMutation.isPending ? "正在挂载..." : "确认挂载"}</Button></>}>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="vm-iso-attach-pool">存储池</Label>
+            <select id="vm-iso-attach-pool" data-testid="vm-iso-attach-pool" value={selectedISOPool} onChange={(event) => { setIsoPool(event.target.value); setIsoVolume(""); }} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+              {isoActivePools.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+            </select>
+            {!isoActivePools.length && !isoPoolsQuery.isLoading ? <p className="text-xs text-destructive">没有可用活跃存储池。</p> : null}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vm-iso-attach-volume">ISO 存储卷</Label>
+            <select id="vm-iso-attach-volume" data-testid="vm-iso-attach-volume" value={selectedISOVolume} onChange={(event) => setIsoVolume(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+              {isoVolumes.map((item) => <option key={item.name} value={item.name}>{item.name} · {formatBytes(item.capacityBytes)}</option>)}
+            </select>
+            {!isoVolumes.length && selectedISOPool && !isoVolumesQuery.isLoading ? <p className="text-xs text-muted-foreground">该存储池没有可用的 .iso 卷。</p> : null}
+          </div>
+          {isoError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{isoError}</p> : null}
         </div>
       </Modal>
 

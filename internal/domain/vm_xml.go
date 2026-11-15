@@ -23,6 +23,13 @@ type VMISOEjectResult struct {
 	EmptySlot bool
 }
 
+type VMISOAttachResult struct {
+	XML      string
+	Target   string
+	Source   string
+	Replaced bool
+}
+
 type vmXMLIdentityEnvelope struct {
 	XMLName xml.Name
 	Name    string `xml:"name"`
@@ -183,6 +190,149 @@ func EjectVMISOXML(text string) (VMISOEjectResult, error) {
 	}
 	result.XML = xml.Header + buffer.String()
 	return result, nil
+}
+
+// AttachVMISOXML attaches or replaces the installer ISO in a persistent
+// domain definition. The cloud-init CD-ROM is always preserved, and the
+// installer disc becomes the first boot device.
+func AttachVMISOXML(text, isoPath string) (VMISOAttachResult, error) {
+	isoPath = strings.TrimSpace(isoPath)
+	if isoPath == "" || !strings.HasPrefix(isoPath, "/") || strings.ContainsAny(isoPath, "'\r\n\x00") ||
+		!strings.HasSuffix(strings.ToLower(isoPath), ".iso") {
+		return VMISOAttachResult{}, fmt.Errorf("%w: installer ISO path must be an absolute .iso path", ErrInvalidInput)
+	}
+	root, err := parseVMXMLTree(text)
+	if err != nil {
+		return VMISOAttachResult{}, err
+	}
+	domainNode := firstVMXMLChild(root, "domain")
+	if domainNode == nil {
+		return VMISOAttachResult{}, fmt.Errorf("%w: domain XML has no domain element", ErrInvalidInput)
+	}
+	devices := firstVMXMLChild(domainNode, "devices")
+	if devices == nil {
+		return VMISOAttachResult{}, fmt.Errorf("%w: domain XML has no devices element", ErrInvalidInput)
+	}
+
+	var installer *vmXMLNode
+	var primary *vmXMLNode
+	targets := make(map[string]bool)
+	for _, child := range devices.Children {
+		if vmXMLNodeName(child) != "disk" {
+			continue
+		}
+		target := strings.TrimSpace(vmXMLChildText(child, "target", "dev"))
+		if target != "" {
+			targets[target] = true
+		}
+		device := strings.ToLower(strings.TrimSpace(vmXMLAttribute(child, "device")))
+		cloudInit := strings.EqualFold(strings.TrimSpace(vmXMLChildText(child, "serial", "")), "cloud-init")
+		source := strings.TrimSpace(vmXMLChildText(child, "source", "file"))
+		if device == "cdrom" && !cloudInit {
+			if installer == nil || strings.HasSuffix(strings.ToLower(source), ".iso") {
+				installer = child
+			}
+		}
+		if (device == "" || device == "disk") && vmXMLChild(child, "readonly") == nil &&
+			(primary == nil || source != "") {
+			primary = child
+		}
+	}
+	if primary == nil {
+		return VMISOAttachResult{}, fmt.Errorf("%w: no writable system disk is available for ISO boot", ErrInvalidInput)
+	}
+
+	result := VMISOAttachResult{Source: isoPath}
+	if installer != nil {
+		result.Replaced = strings.TrimSpace(vmXMLChildText(installer, "source", "file")) != ""
+		setVMXMLAttribute(installer, "device", "cdrom")
+		setOrReplaceVMXMLChildAttribute(installer, "source", "file", isoPath)
+		ensureVMXMLReadOnly(installer)
+		result.Target = vmXMLChildText(installer, "target", "dev")
+		if result.Target == "" {
+			result.Target = nextVMXMLCDROMTarget(targets)
+			setOrReplaceVMXMLChildAttribute(installer, "target", "dev", result.Target)
+			setVMXMLChildAttribute(installer, "target", "bus", "sata")
+		}
+	} else {
+		result.Target = nextVMXMLCDROMTarget(targets)
+		installer = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "disk"}, Attr: []xml.Attr{
+			{Name: xml.Name{Local: "type"}, Value: "file"},
+			{Name: xml.Name{Local: "device"}, Value: "cdrom"},
+		}}}
+		installer.Children = []*vmXMLNode{
+			{Token: xml.StartElement{Name: xml.Name{Local: "driver"}, Attr: []xml.Attr{
+				{Name: xml.Name{Local: "name"}, Value: "qemu"},
+				{Name: xml.Name{Local: "type"}, Value: "raw"},
+			}}},
+			{Token: xml.StartElement{Name: xml.Name{Local: "source"}, Attr: []xml.Attr{{Name: xml.Name{Local: "file"}, Value: isoPath}}}},
+			{Token: xml.StartElement{Name: xml.Name{Local: "target"}, Attr: []xml.Attr{
+				{Name: xml.Name{Local: "dev"}, Value: result.Target},
+				{Name: xml.Name{Local: "bus"}, Value: "sata"},
+			}}},
+			{Token: xml.StartElement{Name: xml.Name{Local: "readonly"}}},
+		}
+		devices.Children = append(devices.Children, installer)
+	}
+	setOrReplaceVMXMLChildAttribute(installer, "boot", "order", "1")
+	primaryBoot := vmXMLChild(primary, "boot")
+	if primaryBoot == nil || vmXMLAttribute(primaryBoot, "order") == "" || vmXMLAttribute(primaryBoot, "order") == "1" {
+		setOrReplaceVMXMLChildAttribute(primary, "boot", "order", "2")
+	}
+	if osNode := firstVMXMLChild(domainNode, "os"); osNode != nil {
+		for _, boot := range childrenByName(osNode.Children, "boot") {
+			if strings.EqualFold(strings.TrimSpace(vmXMLAttribute(boot, "dev")), "cdrom") {
+				osNode.Children = removeVMXMLNode(osNode.Children, boot)
+			}
+		}
+		osNode.Children = append([]*vmXMLNode{
+			{Token: xml.StartElement{Name: xml.Name{Local: "boot"}, Attr: []xml.Attr{{Name: xml.Name{Local: "dev"}, Value: "cdrom"}}}},
+			{Token: xml.StartElement{Name: xml.Name{Local: "boot"}, Attr: []xml.Attr{{Name: xml.Name{Local: "dev"}, Value: "hd"}}}},
+		}, osNode.Children...)
+	}
+
+	var buffer bytes.Buffer
+	encoder := xml.NewEncoder(&buffer)
+	encoder.Indent("", "  ")
+	for _, child := range root.Children {
+		if err := encodeVMXMLNode(encoder, child); err != nil {
+			return VMISOAttachResult{}, err
+		}
+	}
+	if err := encoder.Flush(); err != nil {
+		return VMISOAttachResult{}, fmt.Errorf("encode attached ISO XML: %w", err)
+	}
+	result.XML = xml.Header + buffer.String()
+	return result, nil
+}
+
+func nextVMXMLCDROMTarget(used map[string]bool) string {
+	for index := 0; index < 26; index++ {
+		target := fmt.Sprintf("sd%c", 'a'+index)
+		if !used[target] {
+			return target
+		}
+	}
+	return "sdz"
+}
+
+func setOrReplaceVMXMLChildAttribute(parent *vmXMLNode, childName, attribute, value string) {
+	child := firstVMXMLChild(parent, childName)
+	if child == nil {
+		child = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: childName}}}
+		parent.Children = append(parent.Children, child)
+	}
+	setVMXMLAttribute(child, attribute, value)
+}
+
+func setVMXMLChildAttribute(parent *vmXMLNode, childName, attribute, value string) {
+	setOrReplaceVMXMLChildAttribute(parent, childName, attribute, value)
+}
+
+func ensureVMXMLReadOnly(disk *vmXMLNode) {
+	if vmXMLChild(disk, "readonly") == nil {
+		disk.Children = append(disk.Children, &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "readonly"}}})
+	}
 }
 
 type vmXMLNode struct {

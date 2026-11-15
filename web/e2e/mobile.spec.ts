@@ -89,3 +89,27 @@ test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page 
     expect(layout.bodyWidth, `/vms/import ${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
   }
 });
+
+test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+  await expect(page.getByTestId("vm-iso-attach-open")).toBeVisible();
+  await expect(page.getByTestId("vm-iso-attach-open")).toBeDisabled();
+  await expect(page.getByTestId("guest-agent-controls")).toHaveCount(0);
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px 虚拟机详情 document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px 虚拟机详情 body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    const isoButton = await page.getByTestId("vm-iso-attach-open").boundingBox();
+    expect(isoButton?.width ?? width + 1, `${width}px ISO 操作按钮应适应视口`).toBeLessThanOrEqual(width);
+  }
+});

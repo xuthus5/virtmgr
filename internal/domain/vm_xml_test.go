@@ -92,3 +92,51 @@ func TestEjectVMISOXMLReportsWhenNoInstallerISOExists(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 }
+
+func TestAttachVMISOXMLReplacesInstallerAndPreservesCloudInit(t *testing.T) {
+	text := `<domain><name>demo</name><uuid>uuid-a</uuid><os><boot dev="hd"/></os><devices>
+<disk type="file" device="disk"><source file="/images/demo.qcow2"/><target dev="vda" bus="virtio"/><boot order="1"/></disk>
+<disk type="file" device="cdrom"><source file="/images/old.iso"/><target dev="sda" bus="sata"/><readonly/><boot order="1"/></disk>
+<disk type="file" device="cdrom"><source file="/images/cidata.iso"/><target dev="sdb" bus="sata"/><readonly/><serial>cloud-init</serial></disk>
+</devices></domain>`
+	result, err := AttachVMISOXML(text, "/images/new.iso")
+	if err != nil {
+		t.Fatalf("AttachVMISOXML() error = %v", err)
+	}
+	if result.Target != "sda" || result.Source != "/images/new.iso" || !result.Replaced {
+		t.Fatalf("result = %+v", result)
+	}
+	if strings.Contains(result.XML, "/images/old.iso") || strings.Count(result.XML, "/images/new.iso") != 1 ||
+		!strings.Contains(result.XML, "/images/cidata.iso") || !strings.Contains(result.XML, "<serial>cloud-init</serial>") {
+		t.Fatalf("attached XML = %s", result.XML)
+	}
+	if !strings.Contains(result.XML, `<boot dev="cdrom"></boot>`) || !strings.Contains(result.XML, `<boot order="2"></boot>`) {
+		t.Fatalf("boot order not updated: %s", result.XML)
+	}
+}
+
+func TestAttachVMISOXMLAddsDiscWhenNoInstallerExists(t *testing.T) {
+	result, err := AttachVMISOXML(`<domain><name>demo</name><uuid>uuid-a</uuid><devices><disk type="file" device="disk"><source file="/images/demo.qcow2"/><target dev="vda" bus="virtio"/></disk></devices></domain>`, "/images/new.iso")
+	if err != nil {
+		t.Fatalf("AttachVMISOXML() error = %v", err)
+	}
+	if result.Target != "sda" || result.Replaced || !strings.Contains(result.XML, `device="cdrom"`) {
+		t.Fatalf("result = %+v xml=%s", result, result.XML)
+	}
+}
+
+func TestAttachVMISOXMLRejectsInvalidPathOrMissingSystemDisk(t *testing.T) {
+	valid := `<domain><name>demo</name><uuid>uuid-a</uuid><devices><disk type="file" device="disk"><source file="/images/demo.qcow2"/><target dev="vda"/></disk></devices></domain>`
+	for _, test := range []struct {
+		xml  string
+		path string
+	}{
+		{xml: valid, path: "images/new.iso"},
+		{xml: valid, path: "/images/new.qcow2"},
+		{xml: `<domain><name>demo</name><uuid>uuid-a</uuid><devices/></domain>`, path: "/images/new.iso"},
+	} {
+		if _, err := AttachVMISOXML(test.xml, test.path); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("AttachVMISOXML(%q) error = %v", test.path, err)
+		}
+	}
+}

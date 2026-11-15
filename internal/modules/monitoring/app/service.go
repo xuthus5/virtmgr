@@ -47,6 +47,10 @@ type HostSource interface {
 	ListStoragePools(ctx context.Context) ([]domain.StoragePool, error)
 }
 
+type GuestAgentSource interface {
+	GetGuestAgentInfo(ctx context.Context, uuid string, refresh bool) (domain.GuestAgentInfo, error)
+}
+
 type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
@@ -93,10 +97,17 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+func WithGuestAgentSource(source GuestAgentSource) Option {
+	return func(service *Service) {
+		service.guestAgent = source
+	}
+}
+
 type Service struct {
 	repository Repository
 	metrics    MetricsSource
 	hosts      HostSource
+	guestAgent GuestAgentSource
 	audit      AuditRecorder
 	now        func() time.Time
 	client     *http.Client
@@ -288,7 +299,7 @@ func (s *Service) sampleAndEvaluate(ctx context.Context) {
 	if poolErr != nil {
 		s.report(fmt.Errorf("list storage pools for alerts: %w", poolErr))
 	}
-	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, pools, now)
+	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, pools, vms, now)
 }
 
 func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics domain.ResourceMetrics) domain.MetricSample {
@@ -300,17 +311,24 @@ func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics doma
 	}
 }
 
-func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, now time.Time) {
+func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, inventory []domain.VM, now time.Time) {
 	rules, err := s.repository.ListAlertRules(ctx)
 	if err != nil {
 		s.report(err)
 		return
 	}
+	guestFilesystems := []guestFilesystemUsage(nil)
+	for _, rule := range rules {
+		if rule.Enabled && rule.Metric == domain.AlertMetricGuestFilesystemPercent {
+			guestFilesystems = s.guestFilesystemUsage(ctx, inventory)
+			break
+		}
+	}
 	for _, rule := range rules {
 		if !rule.Enabled {
 			continue
 		}
-		value, target, ok := ruleValue(rule.Metric, host, vms, pools)
+		value, target, ok := ruleValue(rule.Metric, host, vms, pools, guestFilesystems)
 		if !ok {
 			continue
 		}
@@ -318,7 +336,7 @@ func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics
 	}
 }
 
-func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool) (float64, string, bool) {
+func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, guestFilesystems []guestFilesystemUsage) (float64, string, bool) {
 	hostMemory := percent(host.MemoryUsedBytes, host.MemoryTotalBytes)
 	switch metric {
 	case domain.AlertMetricHostCPUPercent:
@@ -333,9 +351,53 @@ func ruleValue(metric domain.AlertMetric, host domain.ResourceMetrics, vms []dom
 		})
 	case domain.AlertMetricStoragePoolPercent:
 		return maxStoragePoolValue(pools)
+	case domain.AlertMetricGuestFilesystemPercent:
+		return maxGuestFilesystemValue(guestFilesystems)
 	default:
 		return 0, "", false
 	}
+}
+
+type guestFilesystemUsage struct {
+	VMName     string
+	MountPoint string
+	Percent    float64
+}
+
+func (s *Service) guestFilesystemUsage(ctx context.Context, inventory []domain.VM) []guestFilesystemUsage {
+	if s.guestAgent == nil {
+		return nil
+	}
+	result := make([]guestFilesystemUsage, 0)
+	for _, vm := range inventory {
+		if vm.State != domain.VMStateRunning && vm.State != domain.VMStateBlocked {
+			continue
+		}
+		info, err := s.guestAgent.GetGuestAgentInfo(ctx, vm.UUID, false)
+		if err != nil || !info.Connected {
+			continue
+		}
+		for _, filesystem := range info.Filesystems {
+			if filesystem.TotalBytes == 0 || filesystem.UsedBytes > filesystem.TotalBytes {
+				continue
+			}
+			value := percent(filesystem.UsedBytes, filesystem.TotalBytes)
+			result = append(result, guestFilesystemUsage{VMName: vm.Name, MountPoint: filesystem.MountPoint, Percent: value})
+		}
+	}
+	return result
+}
+
+func maxGuestFilesystemValue(filesystems []guestFilesystemUsage) (float64, string, bool) {
+	bestValue := float64(-1)
+	bestTarget := ""
+	for _, filesystem := range filesystems {
+		if filesystem.Percent > bestValue {
+			bestValue = filesystem.Percent
+			bestTarget = strings.TrimSpace(filesystem.VMName + " " + filesystem.MountPoint)
+		}
+	}
+	return bestValue, bestTarget, bestTarget != ""
 }
 
 func maxStoragePoolValue(pools []domain.StoragePool) (float64, string, bool) {

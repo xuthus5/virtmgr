@@ -18,6 +18,7 @@ const metricLabels: Record<AlertMetric, string> = {
   vm_cpu_percent: "虚拟机 CPU 使用率",
   vm_memory_percent: "虚拟机内存使用率",
   storage_pool_percent: "存储池使用率（最高活跃池）",
+  guest_filesystem_percent: "客户机文件系统使用率（Guest Agent）",
 };
 
 const operatorLabels: Record<AlertOperator, string> = {
@@ -100,7 +101,7 @@ export function AlertRulesCard() {
     <Card data-testid="host-alert-rules">
       <CardHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div><CardTitle className="flex items-center gap-2"><BellRing className="h-4 w-4 text-primary" />基础告警</CardTitle><CardDescription>按宿主机和虚拟机 CPU/内存阈值触发，可配置持续时间与 Webhook。仅 Admin 可管理规则。</CardDescription></div>
+          <div><CardTitle className="flex items-center gap-2"><BellRing className="h-4 w-4 text-primary" />基础告警</CardTitle><CardDescription>按宿主机、虚拟机、存储池和 Guest Agent 文件系统阈值触发，可配置持续时间与 Webhook。仅 Admin 可管理规则。</CardDescription></div>
           <Button size="sm" disabled={!admin} title={admin ? "新建告警规则" : "只有管理员可以管理告警规则"} onClick={() => { setEditing(null); setOpen(true); }}><Plus className="h-4 w-4" />新建规则</Button>
         </div>
       </CardHeader>

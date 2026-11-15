@@ -139,7 +139,9 @@ export function StoragePage() {
     : !selectedActive ? "只有活跃存储池可以创建卷" : "";
   const uploadDisabledReason = !canManage
     ? manageDisabledReason
-    : !selectedActive ? "只有活跃存储池可以上传文件" : "";
+    : !selectedActive ? "只有活跃存储池可以上传文件" : selected?.type === "logical" ? "LVM logical 池不支持文件上传，请直接创建 raw 卷" : "";
+  const selectedLogical = selected?.type === "logical";
+  const volumeFormat: StorageVolumeFormat = selectedLogical ? "raw" : createForm.format;
 
   function selectPool(name: string) {
     setSelectedPool(name);
@@ -172,7 +174,7 @@ export function StoragePage() {
       pool: selected.name,
       input: {
         name: createForm.name.trim(),
-        format: createForm.format,
+        format: volumeFormat,
         capacityBytes: Math.round(capacityGiB * 1024 ** 3),
       },
     });
@@ -181,6 +183,10 @@ export function StoragePage() {
   function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !selectedActive || !canManage || !uploadFile) return;
+    if (selected.type === "logical") {
+      setUploadError("LVM logical 池不支持上传文件。");
+      return;
+    }
     if (!/\.(iso|qcow2|raw)$/i.test(uploadFile.name)) {
       setUploadError("请选择 .iso、.qcow2 或 .raw 文件。");
       return;
@@ -240,7 +246,7 @@ export function StoragePage() {
                       variant="outline"
                       data-testid="storage-upload-iso"
                       onClick={() => { setUploadOpen((open) => !open); setUploadError(""); }}
-                      disabled={!canManage || !selectedActive || uploadMutation.isPending}
+                      disabled={!canManage || !selectedActive || selectedLogical || uploadMutation.isPending}
                       title={uploadDisabledReason}
                     >
                       <Upload className="h-4 w-4" />上传镜像/ISO
@@ -297,11 +303,11 @@ export function StoragePage() {
                       <Label htmlFor="storage-volume-format">卷格式</Label>
                       <select
                         id="storage-volume-format"
-                        value={createForm.format}
+                        value={volumeFormat}
                         onChange={(event) => setCreateForm((form) => ({ ...form, format: event.target.value as StorageVolumeFormat }))}
                         className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                       >
-                        <option value="qcow2">qcow2</option>
+                        <option value="qcow2" disabled={selectedLogical}>qcow2</option>
                         <option value="raw">raw</option>
                       </select>
                     </div>
@@ -311,7 +317,7 @@ export function StoragePage() {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">名称需以 .qcow2 或 .raw 结尾，并与卷格式一致。卷由 libvirt 在 {selected.targetPath || "存储池"} 中创建。</p>
+                    <p className="text-xs text-muted-foreground">{selectedLogical ? "LVM logical 池仅支持 .raw 块卷，由 libvirt 在卷组中创建逻辑卷。" : `名称需以 .qcow2 或 .raw 结尾，并与卷格式一致。卷由 libvirt 在 ${selected.targetPath || "存储池"} 中创建。`}</p>
                     <div className="flex items-center gap-2">
                       <Button type="button" variant="ghost" size="sm" onClick={() => { setCreateOpen(false); setCreateError(""); }}>取消</Button>
                       <Button type="submit" size="sm" disabled={createMutation.isPending}>{createMutation.isPending ? "创建中..." : "创建存储卷"}</Button>
@@ -334,11 +340,11 @@ export function StoragePage() {
                       <span data-testid="storage-volume-total">共 {volumesQuery.data.total} 个卷</span>
                       <span>{formatBytes(selected.allocationBytes)} / {formatBytes(selected.capacityBytes)}</span>
                     </div>
-                    {volumesQuery.data.items.length ? (
+                    {(volumesQuery.data.items ?? []).length ? (
                       <Table className="min-w-[1080px]">
                         <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>格式</TableHead><TableHead>容量</TableHead><TableHead>已分配</TableHead><TableHead>路径</TableHead><TableHead>使用关系</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
                         <TableBody>
-                          {volumesQuery.data.items.map((volume) => {
+                          {(volumesQuery.data.items ?? []).map((volume) => {
                             const usedBy = volume.usedBy ?? [];
                             const inUse = usedBy.length > 0;
                             return <TableRow key={volume.path || volume.name} data-testid={`storage-volume-row-${volume.name}`}>

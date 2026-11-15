@@ -120,11 +120,26 @@ func TestStoragePoolAlertUsesMostUtilizedActivePool(t *testing.T) {
 		{Name: "images", State: domain.StoragePoolStateActive, CapacityBytes: 200, AllocationBytes: 150},
 		{Name: "offline", State: domain.StoragePoolStateInactive, CapacityBytes: 100, AllocationBytes: 100},
 	}
-	value, target, ok := ruleValue(domain.AlertMetricStoragePoolPercent, domain.ResourceMetrics{}, nil, pools)
+	value, target, ok := ruleValue(domain.AlertMetricStoragePoolPercent, domain.ResourceMetrics{}, nil, pools, nil)
 	if !ok || target != "images" || value != 75 {
 		t.Fatalf("storage pool rule value = %v target=%q ok=%v", value, target, ok)
 	}
 	if metric, err := domain.NormalizeAlertMetric("storage_pool_percent"); err != nil || metric != domain.AlertMetricStoragePoolPercent {
+		t.Fatalf("NormalizeAlertMetric() = %q, %v", metric, err)
+	}
+}
+
+func TestGuestFilesystemAlertUsesMostUtilizedFilesystem(t *testing.T) {
+	filesystems := []guestFilesystemUsage{
+		{VMName: "db-01", MountPoint: "/", Percent: 61},
+		{VMName: "web-01", MountPoint: "/var/lib", Percent: 92.5},
+		{VMName: "web-01", MountPoint: "/boot", Percent: 44},
+	}
+	value, target, ok := ruleValue(domain.AlertMetricGuestFilesystemPercent, domain.ResourceMetrics{}, nil, nil, filesystems)
+	if !ok || target != "web-01 /var/lib" || value != 92.5 {
+		t.Fatalf("guest filesystem rule value = %v target=%q ok=%v", value, target, ok)
+	}
+	if metric, err := domain.NormalizeAlertMetric("guest_filesystem_percent"); err != nil || metric != domain.AlertMetricGuestFilesystemPercent {
 		t.Fatalf("NormalizeAlertMetric() = %q, %v", metric, err)
 	}
 }

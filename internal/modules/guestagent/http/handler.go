@@ -197,6 +197,21 @@ func (h *Handler) ListProcesses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, map[string]any{"items": result, "total": len(result)})
 }
 
+func (h *Handler) ListServices(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	context, ok := h.mutationContext(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListServices(r.Context(), guestagentapp.ProcessCommand{
+		UUID: chi.URLParam(r, "uuid"), Request: context,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, map[string]any{"items": result, "total": len(result)})
+}
+
 func (h *Handler) SignalProcess(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.GuestAgentProcessSignalSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -297,6 +312,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/vms/{uuid}/guest-agent/files", h.ReadFile)
 	r.Get("/vms/{uuid}/guest-agent/ssh-keys", h.ListSSHKeys)
 	r.Get("/vms/{uuid}/guest-agent/processes", h.ListProcesses)
+	r.Get("/vms/{uuid}/guest-agent/services", h.ListServices)
 	r.Get("/vms/{uuid}/guest-agent/users", h.ListUsers)
 	r.Get("/vms/{uuid}/guest-agent/policy", h.GetPolicy)
 	r.Get("/vms/{uuid}/guest-agent/health", h.Health)

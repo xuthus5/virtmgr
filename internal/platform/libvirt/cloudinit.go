@@ -73,7 +73,7 @@ func (c *Client) createCloudInitSeedLocked(ctx context.Context, vmName string, s
 		return nil, fmt.Errorf("check cloud-init volume %s: %w", name, lookupErr)
 	}
 	volumeSpec := domain.StorageVolumeCreateSpec{Name: name, Format: "raw", CapacityBytes: uint64(len(isoData))}
-	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(volumeSpec), 0)
+	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(volumeSpec, storagePoolDefinitionXML{}), 0)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
 			return nil, domain.ErrConflict

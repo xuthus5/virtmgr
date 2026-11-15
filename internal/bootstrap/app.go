@@ -161,6 +161,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	metricsService := resourcemetrics.New(backend)
 	hostHandler := hosthttp.New(hostapp.New(backend, hostapp.WithMetrics(metricsService)))
 	monitoringService := monitoringapp.New(store, metricsService, backend, store,
+		monitoringapp.WithGuestAgentSource(backend),
 		monitoringapp.WithErrorHandler(func(err error) { logger.Warn("monitoring_sampler_failed", "error", err) }),
 	)
 	monitoringHandler := monitoringhttp.New(monitoringService)
@@ -185,7 +186,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend), vmsapp.WithImportVolumes(backend)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend), vmsapp.WithImportVolumes(backend), vmsapp.WithISOVolumes(backend)))
 	imagesHandler := imageshttp.New(imagesapp.New(store, backend, store, cfg.ReadOnly, imagesapp.WithReadOnlyMode(mode)))
 	guestAgentService := guestagentapp.New(backend, store, cfg.ReadOnly,
 		guestagentapp.WithReadOnlyMode(mode),

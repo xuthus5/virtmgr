@@ -47,6 +47,7 @@ type Backend interface {
 	AddGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	RemoveGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	ListGuestAgentProcesses(ctx context.Context, uuid string) ([]domain.GuestAgentProcess, error)
+	ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
 	ListSnapshots(ctx context.Context, uuid string) ([]domain.VMSnapshot, error)

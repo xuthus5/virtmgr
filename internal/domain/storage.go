@@ -62,11 +62,14 @@ type StoragePool struct {
 }
 
 type StoragePoolCreateSpec struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	TargetPath string `json:"targetPath"`
-	Autostart  bool   `json:"autostart"`
-	Start      bool   `json:"start"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	TargetPath  string `json:"targetPath"`
+	SourceHost  string `json:"sourceHost,omitempty"`
+	SourcePath  string `json:"sourcePath,omitempty"`
+	VolumeGroup string `json:"volumeGroup,omitempty"`
+	Autostart   bool   `json:"autostart"`
+	Start       bool   `json:"start"`
 }
 
 type StorageVolume struct {

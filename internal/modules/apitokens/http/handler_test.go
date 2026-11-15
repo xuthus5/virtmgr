@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,4 +93,172 @@ func TestOpenAPIContractCoversTaskCancellationAndImages(t *testing.T) {
 	if _, ok := document.Components.Schemas.Task.Properties["createdAt"]; !ok {
 		t.Fatal("Task schema is missing createdAt")
 	}
+}
+
+func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
+	var document map[string]any
+	if err := json.Unmarshal(openAPIContract, &document); err != nil {
+		t.Fatalf("parse OpenAPI contract: %v", err)
+	}
+	paths, ok := document["paths"].(map[string]any)
+	if !ok || len(paths) == 0 {
+		t.Fatal("OpenAPI paths are missing")
+	}
+	requiredPaths := []string{
+		"/openapi.json", "/session", "/api-tokens", "/api-tokens/{id}", "/overview",
+		"/host", "/host/devices", "/host/metrics",
+		"/vms", "/vms/import", "/vms/batch-actions", "/vms/{uuid}", "/vms/{uuid}/xml", "/vms/{uuid}/export",
+		"/vms/{uuid}/snapshots", "/vms/{uuid}/snapshots/{snapshot}", "/vms/{uuid}/snapshots/{snapshot}/revert",
+		"/vms/{uuid}/metrics", "/vms/{uuid}/clone", "/vms/{uuid}/backups", "/vms/{uuid}/iso/eject", "/vms/{uuid}/iso/attach",
+		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}",
+		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
+		"/vms/{uuid}/metadata", "/vms/{uuid}/actions/{action}", "/vms/{uuid}/console-token", "/vms/{uuid}/console",
+		"/vms/{uuid}/serial-console", "/vms/{uuid}/console/send-key", "/vms/{uuid}/config-versions",
+		"/vms/{uuid}/config-versions/{version}", "/vms/{uuid}/config-versions/{version}/rollback",
+		"/vms/{uuid}/snapshot-policies", "/snapshot-policies/{id}", "/snapshot-policies/{id}/run",
+		"/vms/{uuid}/guest-agent", "/vms/{uuid}/guest-agent/actions", "/vms/{uuid}/guest-agent/channel",
+		"/vms/{uuid}/guest-agent/files", "/vms/{uuid}/guest-agent/password", "/vms/{uuid}/guest-agent/ssh-keys",
+		"/vms/{uuid}/guest-agent/ssh-keys/add", "/vms/{uuid}/guest-agent/ssh-keys/remove",
+		"/vms/{uuid}/guest-agent/processes", "/vms/{uuid}/guest-agent/processes/signal",
+		"/vms/{uuid}/guest-agent/services", "/vms/{uuid}/guest-agent/users", "/vms/{uuid}/guest-agent/policy",
+		"/vms/{uuid}/guest-agent/health",
+		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
+		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
+		"/networks", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
+		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
+		"/networks/{name}/actions/{action}",
+		"/images", "/images/{id}", "/images/{id}/refresh", "/templates", "/templates/{id}",
+		"/tasks", "/tasks/stream", "/tasks/{id}", "/tasks/{id}/retry", "/tasks/{id}/cancel",
+		"/events", "/events/stream", "/audit-events", "/audit-events/export",
+		"/users", "/users/{id}", "/users/me/password", "/users/{id}/password", "/users/{id}/sessions",
+		"/users/{id}/sessions/{sessionId}", "/settings", "/settings/audit-retention",
+		"/system/info", "/system/database-export",
+		"/backups", "/backups/summary", "/backups/{id}", "/backups/{id}/verify", "/backups/{id}/restore",
+		"/backup-repositories", "/backup-repositories/{id}", "/backup-schedules", "/backup-schedules/{id}",
+		"/backup-schedules/{id}/run", "/metrics/history", "/alert-rules", "/alert-rules/{id}",
+	}
+	for _, path := range requiredPaths {
+		if _, exists := paths[path]; !exists {
+			t.Errorf("OpenAPI path %q is missing", path)
+		}
+	}
+
+	operationIDs := map[string]string{}
+	for path, rawItem := range paths {
+		if !strings.HasPrefix(path, "/") {
+			t.Errorf("path %q must start with /", path)
+		}
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			t.Errorf("path %q is not an object", path)
+			continue
+		}
+		for method, rawOperation := range item {
+			switch method {
+			case "get", "post", "put", "patch", "delete", "options", "head", "trace":
+			default:
+				continue
+			}
+			operation, ok := rawOperation.(map[string]any)
+			if !ok {
+				t.Errorf("%s %s is not an object", method, path)
+				continue
+			}
+			id, _ := operation["operationId"].(string)
+			if strings.TrimSpace(id) == "" {
+				t.Errorf("%s %s is missing operationId", method, path)
+			} else if previous, duplicate := operationIDs[id]; duplicate {
+				t.Errorf("operationId %q is duplicated by %s and %s %s", id, previous, method, path)
+			} else {
+				operationIDs[id] = method + " " + path
+			}
+			if _, ok := operation["summary"].(string); !ok {
+				t.Errorf("%s %s is missing summary", method, path)
+			}
+			if tags, ok := operation["tags"].([]any); !ok || len(tags) == 0 {
+				t.Errorf("%s %s is missing tags", method, path)
+			}
+			responses, ok := operation["responses"].(map[string]any)
+			if !ok || len(responses) == 0 {
+				t.Errorf("%s %s is missing responses", method, path)
+			}
+			assertOpenAPIPathParameters(t, document, path, item, operation)
+		}
+	}
+	if len(operationIDs) < len(requiredPaths) {
+		t.Errorf("operation count = %d, expected at least %d", len(operationIDs), len(requiredPaths))
+	}
+	assertOpenAPIReferences(t, document, document, "#")
+}
+
+func assertOpenAPIPathParameters(t *testing.T, document map[string]any, path string, item, operation map[string]any) {
+	t.Helper()
+	placeholders := map[string]struct{}{}
+	for _, segment := range strings.Split(path, "/") {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			placeholders[strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}")] = struct{}{}
+		}
+	}
+	declared := map[string]struct{}{}
+	collectParameters := func(raw any) {
+		parameters, _ := raw.([]any)
+		for _, value := range parameters {
+			parameter, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			if ref, ok := parameter["$ref"].(string); ok {
+				parameter = resolveOpenAPIRef(document, ref)
+			}
+			if name, ok := parameter["name"].(string); ok {
+				declared[name] = struct{}{}
+			}
+		}
+	}
+	collectParameters(item["parameters"])
+	collectParameters(operation["parameters"])
+	for name := range placeholders {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("path %q is missing parameter %q", path, name)
+		}
+	}
+}
+
+func assertOpenAPIReferences(t *testing.T, root map[string]any, value any, location string) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		if ref, ok := typed["$ref"].(string); ok {
+			if resolveOpenAPIRef(root, ref) == nil {
+				t.Errorf("unresolved OpenAPI reference %q at %s", ref, location)
+			}
+		}
+		for key, child := range typed {
+			assertOpenAPIReferences(t, root, child, location+"/"+key)
+		}
+	case []any:
+		for index, child := range typed {
+			assertOpenAPIReferences(t, root, child, location+"/"+string(rune(index)))
+		}
+	}
+}
+
+func resolveOpenAPIRef(root map[string]any, ref string) map[string]any {
+	if !strings.HasPrefix(ref, "#/") {
+		return nil
+	}
+	var current any = root
+	for _, encoded := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		key := strings.ReplaceAll(strings.ReplaceAll(encoded, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current, ok = object[key]
+		if !ok {
+			return nil
+		}
+	}
+	resolved, _ := current.(map[string]any)
+	return resolved
 }

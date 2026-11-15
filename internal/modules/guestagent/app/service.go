@@ -32,6 +32,7 @@ type VMBackend interface {
 	AddGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	RemoveGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	ListGuestAgentProcesses(ctx context.Context, uuid string) ([]domain.GuestAgentProcess, error)
+	ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
 }
@@ -404,6 +405,31 @@ func (s *Service) ListProcesses(ctx context.Context, command ProcessCommand) ([]
 		return nil, s.recordFailure(ctx, command.Request, "vm.guest_agent.processes.list", command.UUID, nil, err)
 	}
 	return processes, nil
+}
+
+func (s *Service) ListServices(ctx context.Context, command ProcessCommand) ([]domain.GuestAgentService, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return nil, s.recordFailure(ctx, command.Request, "vm.guest_agent.services.list", command.UUID, nil, domain.ErrForbidden)
+	}
+	services, err := s.backend.ListGuestAgentServices(ctx, command.UUID)
+	if err != nil {
+		return nil, s.recordFailure(ctx, command.Request, "vm.guest_agent.services.list", command.UUID, nil, err)
+	}
+	if s.audit != nil {
+		if err := s.audit.RecordAudit(ctx, domain.AuditEvent{
+			OccurredAt: time.Now().UTC(), RequestID: command.Request.RequestID,
+			Actor: command.Request.Session.User.Username, Role: command.Request.Session.User.Role,
+			Action: "vm.guest_agent.services.list", TargetKind: "vm", TargetID: command.UUID,
+			SourceIP: command.Request.SourceIP, Result: "success", Detail: map[string]any{"count": len(services)},
+		}); err != nil {
+			return nil, fmt.Errorf("record guest agent services audit: %w", err)
+		}
+	}
+	return services, nil
 }
 
 func (s *Service) SignalProcess(ctx context.Context, command ProcessSignalCommand) (domain.Task, error) {

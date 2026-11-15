@@ -15,12 +15,16 @@ import { cn } from "@/lib/utils";
 
 type CreatePoolFormState = {
   name: string;
+  type: "dir" | "netfs" | "logical";
   targetPath: string;
+  sourceHost: string;
+  sourcePath: string;
+  volumeGroup: string;
   autostart: boolean;
   start: boolean;
 };
 
-const initialCreatePoolForm: CreatePoolFormState = { name: "", targetPath: "", autostart: false, start: true };
+const initialCreatePoolForm: CreatePoolFormState = { name: "", type: "dir", targetPath: "", sourceHost: "", sourcePath: "", volumeGroup: "", autostart: false, start: true };
 
 const poolStateLabel: Record<StoragePoolState, string> = {
   active: "活跃",
@@ -94,9 +98,9 @@ export function StoragePoolsCard({
       setActionError("");
       setCreateOpen(false);
       setCreateForm(initialCreatePoolForm);
+      await refreshPoolViews(pool.name);
       onSelect(pool.name);
       onNotice(`存储池 ${pool.name} 已创建。`, "storage-pool-success");
-      await refreshPoolViews(pool.name);
     },
     onError: (cause) => {
       setCreateError(cause instanceof ApiError ? cause.message : "创建存储池失败，请稍后重试。");
@@ -138,11 +142,21 @@ export function StoragePoolsCard({
       setCreateError("目标路径必须是绝对路径。");
       return;
     }
+    if (createForm.type === "netfs" && (!createForm.sourceHost.trim() || !createForm.sourcePath.trim().startsWith("/"))) {
+      setCreateError("NFS 需要有效主机名和绝对导出路径。");
+      return;
+    }
+    if (createForm.type === "logical" && (!createForm.volumeGroup.trim() || !targetPath.startsWith("/dev/"))) {
+      setCreateError("LVM 需要卷组名称和 /dev/ 下的目标路径。");
+      return;
+    }
     setCreateError("");
     createMutation.mutate({
       name: createForm.name.trim(),
-      type: "dir",
+      type: createForm.type,
       targetPath,
+      ...(createForm.type === "netfs" ? { sourceHost: createForm.sourceHost.trim(), sourcePath: createForm.sourcePath.trim() } : {}),
+      ...(createForm.type === "logical" ? { volumeGroup: createForm.volumeGroup.trim() } : {}),
       autostart: createForm.autostart,
       start: createForm.start,
     });
@@ -166,7 +180,7 @@ export function StoragePoolsCard({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle>存储池</CardTitle>
-              <CardDescription>点击任意存储池，在下方查看其卷列表。活跃池可刷新或停止，未激活池可启动或删除定义。创建仅支持 libvirt 目录池（dir）。</CardDescription>
+              <CardDescription>点击任意存储池，在下方查看其卷列表。活跃池可刷新或停止，未激活池可启动或删除定义。支持目录池（dir）、NFS（netfs）和 LVM 卷组（logical）。</CardDescription>
             </div>
             <Button
               type="button"
@@ -174,7 +188,7 @@ export function StoragePoolsCard({
               variant="outline"
               data-testid="storage-create-pool"
               disabled={!canManage || createMutation.isPending}
-              title={canManage ? "创建目录类型存储池" : manageDisabledReason}
+              title={canManage ? "创建 dir、NFS 或 LVM 存储池" : manageDisabledReason}
               onClick={() => { setCreateOpen((open) => !open); setCreateError(""); setActionError(""); }}
             >
               <Plus className="h-4 w-4" />新建存储池
@@ -183,16 +197,29 @@ export function StoragePoolsCard({
         </CardHeader>
         {createOpen ? (
           <form onSubmit={handleCreate} className="border-y bg-muted/20 p-4" data-testid="storage-pool-create-form">
-            <div className="grid gap-3 lg:grid-cols-[0.8fr_1.4fr]">
+            <div className="grid gap-3 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="storage-pool-name">存储池名称</Label>
                 <Input id="storage-pool-name" data-testid="storage-pool-name" value={createForm.name} onChange={(event) => setCreateForm((form) => ({ ...form, name: event.target.value }))} placeholder="例如 data-pool" required autoComplete="off" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="storage-pool-target-path">目标路径</Label>
-                <Input id="storage-pool-target-path" data-testid="storage-pool-target-path" value={createForm.targetPath} onChange={(event) => setCreateForm((form) => ({ ...form, targetPath: event.target.value }))} placeholder="/srv/virtmgr/data" required autoComplete="off" className="font-mono" />
+                <Label htmlFor="storage-pool-type">存储池类型</Label>
+                <select id="storage-pool-type" data-testid="storage-pool-type" value={createForm.type} onChange={(event) => setCreateForm((form) => ({ ...form, type: event.target.value as CreatePoolFormState["type"] }))} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+                  <option value="dir">目录（dir）</option>
+                  <option value="netfs">NFS（netfs）</option>
+                  <option value="logical">LVM 卷组（logical）</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="storage-pool-target-path">{createForm.type === "netfs" ? "挂载目标路径" : createForm.type === "logical" ? "设备目标路径" : "目标路径"}</Label>
+                <Input id="storage-pool-target-path" data-testid="storage-pool-target-path" value={createForm.targetPath} onChange={(event) => setCreateForm((form) => ({ ...form, targetPath: event.target.value }))} placeholder={createForm.type === "netfs" ? "/mnt/virtmgr-nfs" : createForm.type === "logical" ? "/dev/vg0" : "/srv/virtmgr/data"} required autoComplete="off" className="font-mono" />
               </div>
             </div>
+            {createForm.type === "netfs" ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2"><Label htmlFor="storage-pool-source-host">NFS 主机</Label><Input id="storage-pool-source-host" data-testid="storage-pool-source-host" value={createForm.sourceHost} onChange={(event) => setCreateForm((form) => ({ ...form, sourceHost: event.target.value }))} placeholder="nfs.example.com" required autoComplete="off" /></div>
+              <div className="space-y-2"><Label htmlFor="storage-pool-source-path">导出路径</Label><Input id="storage-pool-source-path" data-testid="storage-pool-source-path" value={createForm.sourcePath} onChange={(event) => setCreateForm((form) => ({ ...form, sourcePath: event.target.value }))} placeholder="/export/vms" required autoComplete="off" className="font-mono" /></div>
+            </div> : null}
+            {createForm.type === "logical" ? <div className="mt-3 space-y-2"><Label htmlFor="storage-pool-volume-group">LVM 卷组</Label><Input id="storage-pool-volume-group" data-testid="storage-pool-volume-group" value={createForm.volumeGroup} onChange={(event) => setCreateForm((form) => ({ ...form, volumeGroup: event.target.value }))} placeholder="vg0" required autoComplete="off" className="font-mono" /></div> : null}
             <div className="mt-3 flex flex-wrap items-center gap-5 text-sm">
               <label className="flex items-center gap-2" htmlFor="storage-pool-autostart">
                 <input id="storage-pool-autostart" type="checkbox" checked={createForm.autostart} onChange={(event) => setCreateForm((form) => ({ ...form, autostart: event.target.checked }))} className="h-4 w-4 rounded border-input" />
@@ -204,7 +231,7 @@ export function StoragePoolsCard({
               </label>
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">目录必须已存在于宿主机，或由 libvirt 启动池时成功访问；VirtMgr 不直接创建宿主机目录。</p>
+              <p className="text-xs text-muted-foreground">{createForm.type === "netfs" ? "宿主机需具备 NFS 客户端能力；挂载点由 libvirt 管理。" : createForm.type === "logical" ? "卷组必须已存在于宿主机；LVM 池中的新卷仅支持 raw 格式。" : "目录必须已存在于宿主机，或由 libvirt 启动池时成功访问；VirtMgr 不直接创建宿主机目录。"}</p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="ghost" size="sm" onClick={() => { setCreateOpen(false); setCreateError(""); }}>取消</Button>
                 <Button type="submit" size="sm" data-testid="storage-pool-create-submit" disabled={createMutation.isPending}>{createMutation.isPending ? "创建中..." : "创建存储池"}</Button>

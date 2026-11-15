@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { FileText, KeyRound, LoaderCircle, ShieldAlert, Terminal, Users } from "lucide-react";
+import { FileText, KeyRound, LoaderCircle, Server, ShieldAlert, Terminal, Users } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type {
   GuestAgentAuthorizedKeys,
@@ -9,6 +9,7 @@ import type {
   GuestAgentPolicy,
   GuestAgentProcess,
   GuestAgentProcessSignalInput,
+  GuestAgentService,
   GuestAgentUser,
 } from "@/api/types";
 import {
@@ -75,6 +76,7 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
   const [keys, setKeys] = useState("");
   const [authorizedKeys, setAuthorizedKeys] = useState<GuestAgentAuthorizedKeys | null>(null);
   const [processes, setProcesses] = useState<GuestAgentProcess[]>([]);
+  const [services, setServices] = useState<GuestAgentService[]>([]);
   const [users, setUsers] = useState<GuestAgentUser[]>([]);
   const [policy, setPolicy] = useState<GuestAgentPolicy | null>(null);
   const [health, setHealth] = useState<GuestAgentHealthHistory | null>(null);
@@ -124,6 +126,11 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
     mutationFn: (input: GuestAgentProcessSignalInput) => api.signalGuestAgentProcess(uuid, input),
     onSuccess: (task) => { setPending(null); notify("success", `进程信号任务 ${task.id} 已完成。`); void processesMutation.mutate(); },
     onError: (cause) => { setPending(null); notify("error", errorMessage(cause, "发送进程信号失败。")); },
+  });
+  const servicesMutation = useMutation({
+    mutationFn: () => api.guestAgentServices(uuid),
+    onSuccess: (result) => { setServices(result.items); notify("success", `已读取 ${result.total} 个 systemd 服务。`); },
+    onError: (cause) => notify("error", errorMessage(cause, "读取客户机服务失败。")),
   });
   const usersMutation = useMutation({
     mutationFn: () => api.guestAgentUsers(uuid),
@@ -218,6 +225,23 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
           <div className="max-h-56 divide-y overflow-auto rounded-md border text-xs">
             {users.length ? users.map((user) => <div key={`${user.username}-${user.domain}-${user.loginTime}`} className="flex items-center justify-between gap-2 px-2 py-1.5"><span className="font-mono">{user.username}{user.domain ? `@${user.domain}` : ""}</span><span className="text-muted-foreground">{user.loginTime ? new Date(user.loginTime * 1000).toLocaleString("zh-CN") : "-"}</span></div>) : <p className="p-3 text-muted-foreground">尚未读取登录用户。</p>}
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-2 rounded-md border p-3" aria-labelledby="guest-service-heading" data-testid="guest-agent-services">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2"><Server className="h-4 w-4" /><h3 id="guest-service-heading" className="text-sm font-semibold">systemd 服务诊断</h3><Badge variant="outline">只读</Badge></div>
+          <Button variant="outline" size="sm" data-testid="guest-agent-service-load" onClick={() => servicesMutation.mutate()} disabled={servicesMutation.isPending}>{servicesMutation.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}读取</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">仅执行固定的 systemctl 只读查询，不支持启动、停止、重启或修改服务。</p>
+        <div className="max-h-64 divide-y overflow-auto rounded-md border text-xs">
+          {services.length ? services.map((service) => (
+            <div key={service.unit} data-testid={`guest-agent-service-${service.unit}`} className="flex min-w-0 flex-wrap items-center gap-2 px-2 py-1.5 sm:flex-nowrap">
+              <span className="min-w-0 flex-1 truncate font-mono" title={service.unit}>{service.unit}</span>
+              <Badge variant={service.active === "failed" ? "destructive" : service.active === "active" ? "success" : "secondary"}>{service.active}/{service.sub}</Badge>
+              <span className="w-full truncate text-muted-foreground sm:w-64" title={service.description}>{service.description || "-"}</span>
+            </div>
+          )) : <p className="p-3 text-muted-foreground">尚未读取服务状态。仅支持使用 systemd 的 Linux 客户机。</p>}
         </div>
       </section>
 

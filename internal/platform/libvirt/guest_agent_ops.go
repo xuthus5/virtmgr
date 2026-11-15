@@ -306,6 +306,35 @@ func (c *Client) ListGuestAgentProcesses(ctx context.Context, uuid string) ([]do
 	return processes, nil
 }
 
+func (c *Client) ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error) {
+	info, err := c.requireGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool {
+		return capabilities.Processes
+	})
+	if err != nil {
+		return nil, err
+	}
+	if isWindowsGuest(info.OS) {
+		return nil, errors.Join(domain.ErrGuestAgent, errors.New("service diagnostics are currently supported only on Linux guests"))
+	}
+	var output string
+	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
+		var execErr error
+		output, execErr = runFirstGuestCommand(dom, []guestExecCommand{
+			{path: "/bin/systemctl", args: []string{"list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain"}},
+			{path: "/usr/bin/systemctl", args: []string{"list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain"}},
+		})
+		return execErr
+	})
+	if err != nil {
+		return nil, mapGuestAgentOperationError(uuid, "list-services", err)
+	}
+	services := parseGuestServices(output)
+	if len(services) > 500 {
+		services = services[:500]
+	}
+	return services, nil
+}
+
 func (c *Client) SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error {
 	signal, ok := domain.ValidGuestAgentProcessSignal(spec.Signal)
 	if !ok || spec.PID <= 1 {
@@ -515,6 +544,29 @@ func parseGuestProcesses(output string) []domain.GuestAgentProcess {
 		})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].PID < result[j].PID })
+	return result
+}
+
+func parseGuestServices(output string) []domain.GuestAgentService {
+	result := make([]domain.GuestAgentService, 0)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 4 {
+			continue
+		}
+		unit, load, active, sub := fields[0], fields[1], fields[2], fields[3]
+		if !strings.HasSuffix(unit, ".service") || (load != "loaded" && load != "not-found" && load != "masked" && load != "error") {
+			continue
+		}
+		description := ""
+		if len(fields) > 4 {
+			description = strings.Join(fields[4:], " ")
+		}
+		result = append(result, domain.GuestAgentService{
+			Unit: unit, Load: load, Active: active, Sub: sub, Description: description,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Unit < result[j].Unit })
 	return result
 }
 

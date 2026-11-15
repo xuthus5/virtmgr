@@ -306,6 +306,15 @@ func (d *DemoBackend) ListGuestAgentProcesses(ctx context.Context, uuid string) 
 	return append([]domain.GuestAgentProcess(nil), d.guestProcesses...), nil
 }
 
+func (d *DemoBackend) ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error) {
+	if _, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool { return capabilities.Processes }); err != nil {
+		return nil, err
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return append([]domain.GuestAgentService(nil), d.guestServices...), nil
+}
+
 func (d *DemoBackend) SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error {
 	if _, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool { return capabilities.Processes }); err != nil {
 		return err

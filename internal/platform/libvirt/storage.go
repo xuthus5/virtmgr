@@ -16,6 +16,13 @@ import (
 
 type storagePoolXML struct {
 	Type   string `xml:"type,attr"`
+	Source struct {
+		Host struct {
+			Name string `xml:"name,attr"`
+		} `xml:"host"`
+		Dir  string `xml:"dir"`
+		Name string `xml:"name"`
+	} `xml:"source"`
 	Target struct {
 		Path string `xml:"path"`
 	} `xml:"target"`
@@ -262,7 +269,11 @@ func (c *Client) CreateStorageVolume(ctx context.Context, poolName string, spec 
 	} else if !errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
 		return domain.StorageVolume{}, fmt.Errorf("check storage volume %s: %w", spec.Name, err)
 	}
-	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(spec), 0)
+	definition, err := storagePoolDefinition(pool)
+	if err != nil {
+		return domain.StorageVolume{}, err
+	}
+	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(spec, definition), 0)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
 			return domain.StorageVolume{}, domain.ErrConflict
@@ -294,13 +305,20 @@ func (c *Client) UploadStorageVolume(ctx context.Context, poolName string, spec 
 	if info.State != libvirt.STORAGE_POOL_RUNNING {
 		return domain.StorageVolume{}, domain.ErrUnavailable
 	}
+	definition, err := storagePoolDefinition(pool)
+	if err != nil {
+		return domain.StorageVolume{}, err
+	}
+	if definition.Type == "logical" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: uploads are not supported by logical LVM pools", domain.ErrActionNotAllowed)
+	}
 	if existing, err := pool.LookupStorageVolByName(spec.Name); err == nil {
 		_ = existing.Free()
 		return domain.StorageVolume{}, domain.ErrConflict
 	} else if !errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
 		return domain.StorageVolume{}, fmt.Errorf("check storage volume %s: %w", spec.Name, err)
 	}
-	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(spec), 0)
+	volume, err := pool.StorageVolCreateXML(buildStorageVolumeXML(spec, definition), 0)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
 			return domain.StorageVolume{}, domain.ErrConflict
@@ -466,24 +484,50 @@ func diskUsesVolume(source, volumePath, volumeName string) bool {
 	return filepath.Clean(source) == filepath.Clean(volumePath)
 }
 
-func buildStorageVolumeXML(spec domain.StorageVolumeCreateSpec) string {
+func buildStorageVolumeXML(spec domain.StorageVolumeCreateSpec, pool storagePoolDefinitionXML) string {
 	var builder strings.Builder
-	builder.WriteString("<volume type='file'>")
+	volumeType := "file"
+	if pool.Type == "logical" {
+		volumeType = "block"
+	}
+	fmt.Fprintf(&builder, "<volume type='%s'>", volumeType)
 	fmt.Fprintf(&builder, "<name>%s</name>", escapeXML(spec.Name))
 	fmt.Fprintf(&builder, "<capacity unit='bytes'>%d</capacity>", spec.CapacityBytes)
 	builder.WriteString("<allocation unit='bytes'>0</allocation>")
-	fmt.Fprintf(&builder, "<target><format type='%s'/></target>", escapeXML(spec.Format))
+	if volumeType == "block" {
+		fmt.Fprintf(&builder, "<target><path>%s</path></target>", escapeXML(strings.TrimRight(pool.Target.Path, "/")+"/"+spec.Name))
+	} else {
+		fmt.Fprintf(&builder, "<target><format type='%s'/></target>", escapeXML(spec.Format))
+	}
 	builder.WriteString("</volume>")
 	return builder.String()
 }
 
 func buildStoragePoolXML(spec domain.StoragePoolCreateSpec) string {
 	var builder strings.Builder
-	builder.WriteString("<pool type='dir'>")
+	fmt.Fprintf(&builder, "<pool type='%s'>", escapeXML(spec.Type))
 	fmt.Fprintf(&builder, "<name>%s</name>", escapeXML(spec.Name))
+	switch spec.Type {
+	case "netfs":
+		fmt.Fprintf(&builder, "<source><host name='%s'/><dir path='%s'/></source>", escapeXML(spec.SourceHost), escapeXML(spec.SourcePath))
+	case "logical":
+		fmt.Fprintf(&builder, "<source><name>%s</name><format type='lvm2'/></source>", escapeXML(spec.VolumeGroup))
+	}
 	fmt.Fprintf(&builder, "<target><path>%s</path></target>", escapeXML(spec.TargetPath))
 	builder.WriteString("</pool>")
 	return builder.String()
+}
+
+func storagePoolDefinition(pool *libvirt.StoragePool) (storagePoolDefinitionXML, error) {
+	xmlText, err := pool.GetXMLDesc(0)
+	if err != nil {
+		return storagePoolDefinitionXML{}, fmt.Errorf("read storage pool definition: %w", err)
+	}
+	var definition storagePoolDefinitionXML
+	if err := xml.Unmarshal([]byte(xmlText), &definition); err != nil {
+		return storagePoolDefinitionXML{}, fmt.Errorf("decode storage pool definition: %w", err)
+	}
+	return definition, nil
 }
 
 func storagePoolFromLibvirt(pool *libvirt.StoragePool) (domain.StoragePool, error) {
