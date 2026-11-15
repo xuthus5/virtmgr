@@ -1,0 +1,332 @@
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  HardDrive,
+  Info,
+  LoaderCircle,
+  Network,
+  Power,
+  RefreshCw,
+  RotateCcw,
+  Scissors,
+} from "lucide-react";
+import { ApiError, api } from "@/api/client";
+import type {
+  GuestAgentAction,
+  GuestAgentActionInput,
+  GuestAgentInfo,
+  GuestAgentState,
+  VM,
+} from "@/api/types";
+import { ErrorState, LoadingState } from "@/components/feedback/states";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { guestAgentQueryKey, useGuestAgentQuery } from "@/features/guest-agent/use-guest-agent-query";
+import { guestAgentActionUnavailableReason, guestAgentCanAddChannel } from "@/features/guest-agent/guest-agent-model";
+import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { cn, formatBytes, percent } from "@/lib/utils";
+
+const stateMeta: Record<GuestAgentState, { label: string; variant: "success" | "warning" | "destructive" | "secondary" }> = {
+  connected: { label: "已连接", variant: "success" },
+  not_configured: { label: "未配置通道", variant: "secondary" },
+  disconnected: { label: "未连接", variant: "warning" },
+  unresponsive: { label: "无响应", variant: "destructive" },
+  error: { label: "探测异常", variant: "destructive" },
+  unknown: { label: "状态未知", variant: "secondary" },
+};
+
+const actionMeta: Record<GuestAgentAction, { label: string; icon: typeof Power; destructive?: boolean; confirm?: boolean }> = {
+  shutdown: { label: "由代理关机", icon: Power, confirm: true },
+  reboot: { label: "由代理重启", icon: RotateCcw, confirm: true },
+  "sync-time": { label: "同步时间", icon: Clock },
+  trim: { label: "执行 TRIM", icon: Scissors },
+};
+
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+function formatDateTime(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : dateTimeFormatter.format(date);
+}
+
+function capabilityBadges(info: GuestAgentInfo) {
+  const capabilities = [
+    ["主机名", info.capabilities.hostname],
+    ["网络", info.capabilities.network],
+    ["系统信息", info.capabilities.osInfo],
+    ["文件系统", info.capabilities.fsInfo],
+    ["关机", info.capabilities.shutdown],
+    ["重启", info.capabilities.reboot],
+    ["时间同步", info.capabilities.timeSync],
+    ["TRIM", info.capabilities.trim],
+    ["静默快照", info.capabilities.quiesce],
+  ] as const;
+  return capabilities.map(([label, enabled]) => (
+    <Badge key={label} variant={enabled ? "success" : "secondary"}>{label}</Badge>
+  ));
+}
+
+export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
+  vm: VM;
+  canMutate: boolean;
+  disabledReason: string;
+}) {
+  const queryClient = useQueryClient();
+  const query = useGuestAgentQuery(vm.uuid);
+  const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<GuestAgentAction | null>(null);
+
+  const refreshMutation = useMutation({
+    mutationFn: () => api.guestAgent(vm.uuid, true),
+    onSuccess: (info) => {
+      queryClient.setQueryData(guestAgentQueryKey(vm.uuid), info);
+      setNotice({ tone: "success", text: "Guest Agent 状态已刷新。" });
+    },
+    onError: (cause) => {
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "刷新 Guest Agent 状态失败。" });
+    },
+  });
+
+  const actionMutation = useMutation({
+    mutationFn: (input: GuestAgentActionInput) => api.performGuestAgentAction(vm.uuid, input),
+    onSuccess: (_result, input) => {
+      setConfirmAction(null);
+      setNotice({ tone: "success", text: `已提交“${actionMeta[input.action].label}”请求。` });
+      void queryClient.invalidateQueries({ queryKey: guestAgentQueryKey(vm.uuid) });
+      void queryClient.invalidateQueries({ queryKey: vmQueryKey(vm.uuid) });
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+    },
+    onError: (cause) => {
+      setConfirmAction(null);
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "Guest Agent 操作失败。" });
+    },
+  });
+
+  const channelMutation = useMutation({
+    mutationFn: () => api.ensureGuestAgentChannel(vm.uuid),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      setNotice({ tone: "success", text: "已补充 QEMU Guest Agent 通道，启动虚拟机后即可探测代理。" });
+      void queryClient.invalidateQueries({ queryKey: guestAgentQueryKey(vm.uuid) });
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+    },
+    onError: (cause) => {
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "补充 Guest Agent 通道失败。" });
+    },
+  });
+
+  function runAction(action: GuestAgentAction) {
+    const meta = actionMeta[action];
+    if (meta.confirm) {
+      setConfirmAction(action);
+      return;
+    }
+    setNotice(null);
+    actionMutation.mutate({ action });
+  }
+
+  const info = query.data;
+  const state = info ? stateMeta[info.state] : null;
+  const canAddChannel = guestAgentCanAddChannel(vm.state);
+
+  return (
+    <Card className="mt-4" data-testid="vm-guest-agent-card">
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" />Guest Agent</CardTitle>
+            <CardDescription>通过 QEMU Guest Agent 读取客户机信息，并执行受控的关机、重启、时间同步与 TRIM。</CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="guest-agent-refresh"
+            disabled={query.isFetching || refreshMutation.isPending}
+            onClick={() => { setNotice(null); refreshMutation.mutate(); }}
+          >
+            <RefreshCw className={cn("h-4 w-4", (query.isFetching || refreshMutation.isPending) && "animate-spin")} />刷新
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {query.isLoading ? <LoadingState label="正在探测 Guest Agent" /> : null}
+        {query.isError ? <ErrorState message={query.error instanceof Error ? query.error.message : "无法读取 Guest Agent 状态"} onRetry={() => void query.refetch()} /> : null}
+        {info && state ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={state.variant} data-testid="guest-agent-state">{state.label}</Badge>
+              <Badge variant={info.channelConfigured ? "outline" : "secondary"}>{info.channelConfigured ? "QGA 通道已配置" : "QGA 通道未配置"}</Badge>
+              {info.stale ? <Badge variant="warning">显示上次成功状态</Badge> : null}
+              {info.version ? <span className="text-xs text-muted-foreground">qemu-guest-agent {info.version}</span> : null}
+            </div>
+
+            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">主机名</p><p className="mt-1 truncate font-mono text-xs" data-testid="guest-agent-hostname">{info.hostname || vm.hostname || "-"}</p></div>
+              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">操作系统</p><p className="mt-1 truncate" title={info.os.prettyName || info.os.name}>{info.os.prettyName || info.os.name || info.os.id || "-"}</p></div>
+              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">内核 / 架构</p><p className="mt-1 truncate font-mono text-xs">{info.os.kernelRelease || "-"} · {info.os.arch || "-"}</p></div>
+              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">最近响应</p><p className="mt-1">{formatDateTime(info.lastSeenAt)}</p></div>
+            </div>
+
+            {info.lastError ? (
+              <div className="flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning" data-testid="guest-agent-error">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="break-all">{info.lastError}</span>
+              </div>
+            ) : null}
+
+            {info.state !== "connected" ? (
+              <div className="rounded-md border border-dashed px-4 py-4 text-sm">
+                <p className="font-medium">连接引导</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Guest Agent 需要在客户机内安装并启动。新建虚拟机默认会挂载 virtio-serial 通道；已有虚拟机可在关机状态下补充通道。
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {!info.channelConfigured ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      data-testid="guest-agent-add-channel"
+                      disabled={!canMutate || !canAddChannel || channelMutation.isPending}
+                      title={!canMutate ? disabledReason : !canAddChannel ? "请先关闭虚拟机" : "补充 QEMU Guest Agent 通道"}
+                      onClick={() => { setNotice(null); channelMutation.mutate(); }}
+                    >
+                      {channelMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}补充 QGA 通道
+                    </Button>
+                  ) : null}
+                  {!info.channelConfigured && !canAddChannel ? <span className="text-xs text-muted-foreground">关机后可补充通道。</span> : null}
+                </div>
+                <details className="mt-3 rounded-md border bg-muted/20 px-3 py-2 text-xs" data-testid="guest-agent-install-help">
+                  <summary className="cursor-pointer font-medium">客户机安装命令</summary>
+                  <div className="mt-3 space-y-2 text-muted-foreground">
+                    <p>Debian / Ubuntu：<code className="ml-1 rounded bg-background px-1.5 py-0.5 font-mono text-foreground">sudo apt install qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent</code></p>
+                    <p>RHEL / Fedora：<code className="ml-1 rounded bg-background px-1.5 py-0.5 font-mono text-foreground">sudo dnf install qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent</code></p>
+                    <p>Windows：通过 virtio-win ISO 安装 <span className="font-mono text-foreground">guest-agent\qemu-ga-x86_64.msi</span>，并确认 QEMU Guest Agent 服务已启动。</p>
+                  </div>
+                </details>
+              </div>
+            ) : null}
+
+            {info.state === "connected" ? (
+              <>
+                <div>
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">可用能力</p>
+                  <div className="flex flex-wrap gap-1.5" data-testid="guest-agent-capabilities">{capabilityBadges(info)}</div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="overflow-hidden rounded-md border">
+                    <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2 text-sm font-medium"><Network className="h-4 w-4" />网络接口</div>
+                    {info.interfaces.length ? (
+                      <div className="divide-y">
+                        {info.interfaces.map((networkInterface) => (
+                          <div key={`${networkInterface.name}-${networkInterface.mac}`} className="px-3 py-2 text-xs">
+                            <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{networkInterface.name || "未命名接口"}</span>{networkInterface.mac ? <span className="font-mono text-muted-foreground">{networkInterface.mac}</span> : null}</div>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {networkInterface.addresses.length ? networkInterface.addresses.map((address) => (
+                                <span key={`${address.family}-${address.address}`} className="rounded bg-muted px-1.5 py-0.5 font-mono">{address.address}{address.prefix ? `/${address.prefix}` : ""}</span>
+                              )) : <span className="text-muted-foreground">无可用 IP 地址</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="px-3 py-4 text-xs text-muted-foreground">代理未返回网络接口。</p>}
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border">
+                    <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2 text-sm font-medium"><HardDrive className="h-4 w-4" />文件系统</div>
+                    {info.filesystems.length ? (
+                      <div className="divide-y">
+                        {info.filesystems.map((filesystem) => (
+                          <div key={`${filesystem.mountPoint}-${filesystem.device}`} className="px-3 py-2 text-xs">
+                            <div className="flex items-center justify-between gap-2"><span className="font-mono font-medium">{filesystem.mountPoint || "-"}</span><span className="text-muted-foreground">{filesystem.type || "-"}</span></div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${percent(filesystem.usedBytes ?? 0, filesystem.totalBytes ?? 0)}%` }} /></div>
+                            <p className="mt-1 text-muted-foreground">{formatBytes(filesystem.usedBytes ?? 0)} / {formatBytes(filesystem.totalBytes ?? 0)} · 可用 {formatBytes(filesystem.freeBytes ?? 0)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="px-3 py-4 text-xs text-muted-foreground">代理未返回文件系统信息。</p>}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 border-t pt-4" data-testid="guest-agent-actions">
+                  {(Object.keys(actionMeta) as GuestAgentAction[]).map((action) => {
+                    const meta = actionMeta[action];
+                    const Icon = meta.icon;
+                    const reason = guestAgentActionUnavailableReason(info, action);
+                    const disabled = !canMutate || Boolean(reason) || actionMutation.isPending;
+                    return (
+                      <Button
+                        key={action}
+                        type="button"
+                        variant={meta.destructive ? "destructive" : "outline"}
+                        size="sm"
+                        data-testid={`guest-agent-action-${action}`}
+                        disabled={disabled}
+                        title={reason || (!canMutate ? disabledReason : meta.label)}
+                        onClick={() => runAction(action)}
+                      >
+                        <Icon className={cn("h-4 w-4", actionMutation.isPending && actionMutation.variables?.action === action && "animate-spin")} />{meta.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {notice ? (
+          <p role="status" className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-xs", notice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")} data-testid="guest-agent-notice">
+            {notice.tone === "success" ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5" /> : <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />}{notice.text}
+          </p>
+        ) : null}
+
+        <p className="flex items-start gap-2 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />Guest Agent 不回传密码或任意命令；本页仅开放固定动作。</p>
+      </CardContent>
+
+      <AlertDialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
+        <AlertDialogContent data-testid="guest-agent-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction ? actionMeta[confirmAction].label : "确认操作"}？</AlertDialogTitle>
+            <AlertDialogDescription>该操作会通过客户机内的 QEMU Guest Agent 执行。请确认客户机内的服务与工作负载已做好准备。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionMutation.isPending}>取消</AlertDialogCancel>
+            <Button
+              data-testid="guest-agent-confirm-action"
+              disabled={!confirmAction || actionMutation.isPending}
+              onClick={() => { if (confirmAction) actionMutation.mutate({ action: confirmAction }); }}
+            >
+              {actionMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}确认执行
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+

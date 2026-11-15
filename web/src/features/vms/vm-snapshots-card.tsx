@@ -40,7 +40,7 @@ function formatSnapshotTime(seconds: number) {
 }
 
 function initialForm(): VMSnapshotCreateInput {
-  return { name: "", description: "" };
+  return { name: "", description: "", quiesce: false };
 }
 
 export function VMSnapshotsCard({ uuid, canMutate, disabledReason }: {
@@ -123,7 +123,7 @@ export function VMSnapshotsCard({ uuid, canMutate, disabledReason }: {
     }
     setFormError("");
     setNotice(null);
-    createMutation.mutate({ name, description: form.description?.trim() });
+    createMutation.mutate({ name, description: form.description?.trim(), quiesce: form.quiesce === true });
   }
 
   const snapshots = snapshotsQuery.data?.items ?? [];
@@ -163,6 +163,20 @@ export function VMSnapshotsCard({ uuid, canMutate, disabledReason }: {
                 <Input id="vm-snapshot-description" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder="记录创建原因或变更窗口" autoComplete="off" />
               </div>
             </div>
+            <label className="mt-3 flex items-start gap-3 rounded-md border bg-background p-3 text-sm">
+              <input
+                aria-label="创建静默快照"
+                data-testid="vm-snapshot-quiesce"
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={form.quiesce === true}
+                onChange={(event) => setForm((current) => ({ ...current, quiesce: event.target.checked }))}
+              />
+              <span>
+                <span className="block font-medium">静默快照（Quiesce）</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">要求 QEMU Guest Agent 已连接并支持 fsfreeze；不可用时会直接拒绝，不会静默降级。</span>
+              </span>
+            </label>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">快照由 libvirt 创建并以其为唯一事实来源。qcow2 磁盘通常支持内部快照。</p>
               <div className="flex items-center gap-2">

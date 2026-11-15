@@ -162,6 +162,8 @@ func mapError(err error) (int, string, string) {
 		return stdhttp.StatusConflict, "NETWORK_ACTIVE", "网络正在运行，请先停止网络再修改配置"
 	case errors.Is(err, domain.ErrNetworkUnsupported):
 		return stdhttp.StatusConflict, "NETWORK_UPDATE_UNSUPPORTED", "当前网络类型不支持修改配置"
+	case errors.Is(err, domain.ErrGuestAgent):
+		return stdhttp.StatusConflict, "GUEST_AGENT_UNAVAILABLE", "客户机代理不可用，或当前代理版本不支持该操作"
 	case errors.Is(err, domain.ErrSelfModification):
 		return stdhttp.StatusConflict, "SELF_MODIFICATION", "不能修改当前登录账号的角色或状态"
 	case errors.Is(err, domain.ErrCurrentPassword):

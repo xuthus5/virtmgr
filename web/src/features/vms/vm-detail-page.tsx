@@ -52,6 +52,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { VMConsoleCard } from "@/features/console/vm-console-card";
+import { VMGuestAgentCard } from "@/features/guest-agent/vm-guest-agent-card";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey } from "@/features/vms/use-vm-query";
@@ -460,6 +461,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         canConnect={canMutate}
         disabledReason={consoleReason}
       />
+
+      <VMGuestAgentCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="vCPU" value={vm.vcpus} hint={`上限 ${vm.maxVcpus || vm.vcpus} vCPU`} icon={Cpu} tone="primary" testId="vm-detail-vcpus" />

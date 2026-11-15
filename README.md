@@ -52,7 +52,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains by state, tag, and owner; persist filters locally and favorite frequently used VMs; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
 | VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
-| VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, Guest Agent information, snapshots, and domain XML |
+| VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, structured Guest Agent information and actions, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
@@ -295,6 +295,7 @@ Administrators can create users, change roles, disable accounts, reset other use
 - **Cloud-init content is not written to audit logs.** Auditing records only whether Cloud-init was enabled, the storage pool, and byte counts.
 - **XML edits are restricted.** Only administrators in writable mode can update the persistent definition; name and UUID are immutable, QEMU command-line namespaces are rejected, and libvirt performs validation before the definition is saved.
 - **Configuration rollback only restores XML.** Version history keeps compressed persistent definitions, not disks, snapshots, or live memory. Rollback is admin-only, checks the current SHA-256 to avoid overwriting concurrent changes, archives the current definition first, and requires a VM restart for running domains.
+- **Guest Agent is optional and capability-gated.** New VMs get the QGA channel by default; existing persistent domains can add it only while stopped. Agent shutdown, reboot, time sync, TRIM, and quiesced snapshots are enabled only when the guest advertises the corresponding capability. VirtMgr does not expose arbitrary command execution, file copy, or password reset through QGA.
 
 ## API
 
@@ -306,7 +307,7 @@ Representative endpoint groups include:
 |---|---|
 | Session | `POST /api/v1/session`, `GET /api/v1/session`, `DELETE /api/v1/session` |
 | Overview and host | `/api/v1/overview`, `/api/v1/host`, `/api/v1/host/devices`, `/api/v1/host/metrics` |
-| Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/devices`, `/actions/{action}` |
+| Virtual machines | `/api/v1/vms`, `/api/v1/vms/{uuid}`, `/metrics`, `/xml`, `/config-versions`, `/snapshots`, `/guest-agent`, `/devices`, `/actions/{action}` |
 | VM operations | `/resources`, `/disks/{target}`, `/clone`, `/backups`, `/console-token`, `/console/send-key`, `/console`, `/serial-console`, `/export` |
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |

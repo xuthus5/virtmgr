@@ -38,6 +38,7 @@ type FormState = {
   cloudInitUserData: string;
   cloudInitNetworkConfig: string;
   cloudInitVendorData: string;
+  guestAgent: boolean;
   autostart: boolean;
   start: boolean;
 };
@@ -59,6 +60,7 @@ const initialForm: FormState = {
   cloudInitUserData: "",
   cloudInitNetworkConfig: "",
   cloudInitVendorData: "",
+  guestAgent: true,
   autostart: false,
   start: false,
 };
@@ -196,6 +198,7 @@ export function VMCreatePage() {
         vendorData: form.cloudInitVendorData.trim() || undefined,
         pool: diskPool,
       } : undefined,
+      guestAgent: form.guestAgent,
       autostart: form.autostart,
       start: form.start,
     });
@@ -396,6 +399,20 @@ export function VMCreatePage() {
                   />
                 ) : null}
                 {form.cloudInit ? <p className="text-xs text-muted-foreground">seed ISO 将写入存储池 <span className="font-medium text-foreground">{diskPool || "-"}</span>；审计只记录启用状态和字节数，不保存用户数据内容。</p> : null}
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <input
+                    aria-label="启用 Guest Agent 通道"
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={form.guestAgent}
+                    onChange={(event) => update("guestAgent", event.target.checked)}
+                    disabled={!canCreate}
+                  />
+                  <span>
+                    <span className="block font-medium">启用 Guest Agent 通道</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">挂载 org.qemu.guest_agent.0；仍需在客户机内安装并启动 qemu-guest-agent。</span>
+                  </span>
+                </label>
               </div>
             </CardContent>
           </Card>
@@ -428,6 +445,7 @@ export function VMCreatePage() {
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">计算资源</span><span className="font-medium">{form.vcpus || "0"} vCPU · {form.memoryMiB || "0"} MiB</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">固件</span><span className="font-medium">{form.firmware === "uefi" ? "UEFI" : "BIOS"}{form.secureBoot ? " · Secure Boot" : ""}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Cloud-init</span><span className="font-medium">{form.cloudInit ? "已启用" : "未启用"}</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">Guest Agent</span><span className="font-medium">{form.guestAgent ? "通道已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">网络</span><Badge variant="outline">{form.network || "-"}</Badge></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">启动</span><span className="font-medium">{form.start ? "创建后启动" : "保持关机"}</span></div>
               </CardContent>

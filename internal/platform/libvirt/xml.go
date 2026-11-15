@@ -60,6 +60,17 @@ type domainXML struct {
 		} `xml:"firmware>feature"`
 	} `xml:"os"`
 	Devices struct {
+		Controllers []struct {
+			Type  string `xml:"type,attr"`
+			Index int    `xml:"index,attr"`
+		} `xml:"controller"`
+		Channels []struct {
+			Type   string `xml:"type,attr"`
+			Target struct {
+				Type string `xml:"type,attr"`
+				Name string `xml:"name,attr"`
+			} `xml:"target"`
+		} `xml:"channel"`
 		Disks []struct {
 			Type   string `xml:"type,attr"`
 			Device string `xml:"device,attr"`

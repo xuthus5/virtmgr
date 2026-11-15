@@ -1075,6 +1075,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, command SnapshotCreateComm
 	command.Spec.Name = strings.TrimSpace(command.Spec.Name)
 	command.Spec.Description = strings.TrimSpace(command.Spec.Description)
 	detail := snapshotDetail(command.UUID, command.Spec.Name, command.Spec.Description)
+	detail["quiesce"] = command.Spec.Quiesce
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.VMSnapshot{}, s.snapshotFailure(ctx, command.Request, "vm.snapshot.create", command.UUID+"/"+command.Spec.Name, detail, domain.ErrForbidden)
 	}
@@ -1299,6 +1300,8 @@ func vmHasTag(vm domain.VM, tag string) bool {
 }
 
 func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) {
+	guestAgent := spec.GuestAgentEnabled()
+	spec.GuestAgent = &guestAgent
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.DiskPath = strings.TrimSpace(spec.DiskPath)
 	spec.DiskFormat = strings.ToLower(strings.TrimSpace(spec.DiskFormat))
@@ -1405,6 +1408,7 @@ func specDetail(spec domain.VMCreateSpec) map[string]any {
 		"firmware":   spec.Firmware,
 		"secureBoot": spec.SecureBoot,
 		"cloudInit":  spec.CloudInit != nil,
+		"guestAgent": spec.GuestAgentEnabled(),
 		"autostart":  spec.Autostart,
 		"start":      spec.Start,
 	}

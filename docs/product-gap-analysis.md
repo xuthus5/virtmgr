@@ -63,7 +63,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-03 磁盘和网卡热插拔`：已支持数据磁盘和网卡热附加/移除、系统盘保护；缺网卡型号修改、磁盘跨池迁移和更完整的取消/回滚语义。价值高，成本中。
 - `GAP-04 高级硬件建模`：缺 vTPM、启动顺序、machine type、CPU model/topology、NUMA、hugepages、watchdog、RNG、vGPU/mdev 和 SR-IOV VF 的 GUI 管理。价值中高，成本中高。
 - `GAP-05 控制台能力`：当前只有 VNC/串口；缺 SPICE、音频、客户端 USB 重定向、多显示器和文件传输。价值取决于是否服务 Windows/VDI，成本中高。
-- `GAP-06 Guest Agent 深度集成`：当前主要读取 Agent 状态、IP 和主机名；缺 freeze/thaw、静默快照、Agent 关机、文件复制、客户机内执行、密码重置、时间同步和 trim。价值高，成本中。
+- `GAP-06 Guest Agent 深度集成`：已实现通道探测、连接/无响应状态、操作系统/网络/文件系统信息、能力矩阵、Agent 关机/重启、时间同步、TRIM、关机态补齐通道和手动静默快照；按产品边界不提供文件复制、任意命令执行和密码重置。价值高，成本中。
 - `GAP-07 快照成熟度`：缺内存状态快照、Guest Agent 静默、快照链可视化、合并/consolidation 和孤儿链清理；已支持固定间隔/每日时刻策略。价值中高，成本高。
 - `GAP-08 备份成熟度`：缺在线一致性备份、增量备份、原地恢复、内存状态、S3/SFTP/远端仓库、加密、压缩、去重、自动校验、GFS 保留和跨主机复制。价值高，成本高。
 - `GAP-09 Cloud-init 与 OS 定制`：当前支持 NoCloud user-data、network-config 和 vendor-data，并支持 Netplan v2 DHCP/静态 IPv4/IPv6；缺 config drive、执行结果回传、Windows Sysprep 和 OS profile。价值中高，成本中。
@@ -129,11 +129,12 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 | `SH-12` | 静态 DHCP 主机批量导入/导出 | GAP-11 | S | 中 | CSV 导出、CSV/JSON 批量导入、预校验、重复跳过和审计 | 已实现 |
 | `SH-13` | 保存常用筛选/视图和收藏资源 | GAP-27 | S | 中 | 浏览器本地保存 VM 筛选和收藏，无后端模型 | 已实现 |
 | `SH-14` | 提供官方容器镜像和 Compose 示例 | GAP-20 | S-M | 中 | 多阶段镜像、libvirt socket、非特权用户和 Compose | 已实现 |
+| `SH-15` | Guest Agent 深度集成：状态/OS/网络/文件系统、能力矩阵、Agent 动作、TRIM、关机态补通道和静默快照 | GAP-06 | M | 高 | 复用现有 QGA 查询与域 XML 生成，新增独立 guestagent 模块和 15 秒缓存 | 已实现 |
 
 ### 5.3 边界候选：成本略高但仍属单机精品范围
 
 - `GAP-03` 磁盘/网卡热插拔：价值高，成本 M。需要补齐 libvirt live/config XML、状态校验和回滚测试。
-- `GAP-06` Guest Agent freeze/thaw 和 Agent 关机：价值高，成本 M。需要处理 Agent 不可用降级和任务一致性。
+- `GAP-06` Guest Agent 深度集成：已作为 `SH-15` 完成首轮实现；后续仅在确有需求时评估文件复制、客户机内执行和密码重置等高风险能力。
 - `GAP-12` 标签、备注、负责人：价值中高，成本 S-M；若按设计写入域 XML metadata，需增加 XML 解析、写回和重建数据库后的恢复测试。
 - `GAP-15` API Token 和 OpenAPI：价值高，成本 M；单机自动化场景值得评估，但应避免先做一个无法撤销和无作用域的长期 token。
 - `GAP-21` 历史指标：价值中高，成本 M；可以先做进程内短期环形缓冲或 SQLite 轻量采样，不必直接引入 Prometheus/TimescaleDB。
@@ -150,7 +151,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 ## 6. 已完成批次与下一轮建议
 
-第一轮 `SH-01` 至 `SH-05` 和第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2。
+第一轮 `SH-01` 至 `SH-05`、第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 以及第三轮 `SH-15` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2；第三轮完成 Guest Agent 首轮深度集成。
 
 按当前“单机精品”定位，下一轮建议按以下顺序选择性投入：
 
@@ -183,4 +184,5 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-09 Cloud-init`：当用户提供 user-data、network-config 或 vendor-data 时，系统应将全部文件写入 NoCloud ISO；Netplan v2 应支持 DHCP 和静态 IPv4/IPv6 地址、网关和 DNS，非法地址不得静默生成配置。
 - `GAP-12 组织能力`：当 Operator 或 Admin 更新虚拟机标签、备注或负责人时，系统应持久化元数据并记录 `vm.metadata.update`；删除虚拟机时应清理对应元数据，列表查询应支持标签、负责人和关键字过滤。
 - `GAP-21 历史指标`：当服务运行时，系统应每分钟采样宿主机和运行中虚拟机指标并保留 7 天；查询时间范围过长或样本过多时应拒绝或限制请求，不得无界读取。
+- `SH-15`：当用户读取 Guest Agent 状态时，系统应返回 `not_configured`、`disconnected`、`connected`、`unresponsive` 或 `error` 结构化状态，并在 15 秒内复用探测结果、合并并发请求；Agent 不可用不得导致状态接口失败。新建虚拟机默认生成 `org.qemu.guest_agent.0` channel；已有持久域仅在关机或异常停止状态允许补齐通道。仅当 Agent 已连接且能力矩阵声明支持时，系统才允许 Agent 关机、重启、时间同步、TRIM 和静默快照；静默快照不可用时必须拒绝而不是降级为普通快照。
 - `GAP-22 基础告警`：当启用的 CPU/内存规则超过阈值并持续达到配置时长时，系统应进入 `pending`/`firing` 状态并按配置调用 Webhook；恢复后应记录恢复状态。Webhook 失败不得阻塞指标采样主循环。

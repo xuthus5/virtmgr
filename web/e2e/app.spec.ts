@@ -443,6 +443,11 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await expect(page.getByTestId("vm-hostname")).toHaveText("demo-db-01");
   await expect(page.getByTestId("vm-ip-addresses")).toHaveText("192.168.122.102");
   await expect(page.getByTestId("vm-agent-status")).toHaveText("已连接");
+  await expect(page.getByTestId("vm-guest-agent-card")).toBeVisible();
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+  await expect(page.getByTestId("guest-agent-hostname")).toHaveText("demo-db-01");
+  await expect(page.getByTestId("guest-agent-capabilities")).toContainText("静默快照");
+  await expect(page.getByTestId("guest-agent-action-shutdown")).toBeDisabled();
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
   await expect(page.getByText("/var/lib/libvirt/images/demo-db-01.qcow2", { exact: true })).toBeVisible();
@@ -564,6 +569,8 @@ test("只读模式禁用虚拟机生命周期操作", async ({ page }) => {
   await expect(page.getByTestId("vm-backup-open")).toBeDisabled();
   await expect(page.getByTestId("vm-backup-disabled")).toContainText("只读模式");
   await expect(page.getByTestId("vm-agent-status")).toHaveText("未连接");
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("未配置通道");
+  await expect(page.getByTestId("guest-agent-add-channel")).toBeDisabled();
   await expect(page.getByTestId("vm-ip-addresses")).toHaveText("-");
 });
 

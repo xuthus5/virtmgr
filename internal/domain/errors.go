@@ -22,6 +22,7 @@ var (
 	ErrConsoleBusy        = errors.New("console session busy")
 	ErrNetworkActive      = errors.New("network active")
 	ErrNetworkUnsupported = errors.New("network update unsupported")
+	ErrGuestAgent         = errors.New("guest agent unavailable or unsupported")
 	ErrCSRF               = errors.New("csrf validation failed")
 	ErrSelfModification   = errors.New("cannot modify current user")
 	ErrCurrentPassword    = errors.New("current password is incorrect")

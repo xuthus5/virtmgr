@@ -166,6 +166,9 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 	}
 	fmt.Fprintf(&builder, "<interface type='network'><source network='%s'/><model type='%s'/></interface>", escapeXML(spec.Network), nicModel)
 	builder.WriteString("<graphics type='vnc' listen='127.0.0.1' autoport='yes'/><video><model type='virtio'/></video>")
+	if spec.GuestAgentEnabled() {
+		builder.WriteString("<controller type='virtio-serial' index='0'/><channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>")
+	}
 	builder.WriteString("</devices></domain>")
 	return builder.String()
 }

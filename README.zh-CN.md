@@ -52,7 +52,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 总览 | 宿主机 CPU、内存、libvirt 版本、虚拟机数量、资源分配率、异常提醒和近期虚拟机状态 |
 | 虚拟机 | 搜索和筛选域；按状态、标签、负责人筛选，本地保存筛选并收藏常用虚拟机；查看状态、vCPU、内存、磁盘、网络、IP 和自动启动；支持单台与批量生命周期操作 |
 | 创建虚拟机 | BIOS/UEFI、Secure Boot、已有磁盘或手工路径、磁盘总线（virtio/SATA/SCSI）、网卡型号（virtio/e1000）、启动顺序、网络选择、ISO、自动启动，以及支持 user-data、network-config、vendor-data 的 Cloud-init seed ISO |
-| 虚拟机详情 | 标签/备注/负责人、硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、历史指标、分网卡吞吐、磁盘、网卡、Guest Agent 信息、快照和域 XML |
+| 虚拟机详情 | 标签/备注/负责人、硬件摘要、CPU/内存/网络/磁盘吞吐与 IOPS 实时趋势、历史指标、分网卡吞吐、磁盘、网卡、结构化 Guest Agent 信息与受控动作、快照和域 XML |
 | Web 控制台 | 页面内嵌或独立窗口打开 noVNC / xterm.js 控制台，支持图形与串口切换、Cockpit 风格组合键、缩放、断开重连、全屏和分离窗口；会话均通过一次性 token 与服务端 WebSocket 代理 |
 | 虚拟机操作 | 启动、正常关机、重启、强制重启、暂停、恢复、强制下电、删除、克隆、冷备份、自动启动、CPU/内存调整、磁盘扩容，以及数据磁盘和网卡热插拔 |
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
@@ -295,6 +295,7 @@ VirtMgr 使用本地账号。密码通过 Argon2id 哈希，会话在 SQLite 中
 - **Cloud-init 内容不写入审计。** 审计仅记录是否启用、存储池和字节数，不保存用户数据正文。
 - **XML 编辑受到严格限制。** 只有可写模式下的管理员才能更新持久配置；名称和 UUID 不可变，QEMU commandline 命名空间会被拒绝，保存前由 libvirt 完成语义校验。
 - **配置回滚只恢复 XML。** 版本历史保存压缩后的持久定义，不包含磁盘、快照或运行内存。回滚仅限管理员，会校验当前 SHA-256 以避免覆盖并发修改，先自动归档当前配置；运行中的虚拟机需重启后生效。
+- **Guest Agent 为可选组件并按能力授权。** 新建虚拟机默认挂载 QGA 通道，已有持久域只能在关机或异常停止时补齐。Agent 关机、重启、时间同步、TRIM 和静默快照仅在客户机声明对应能力时开放；VirtMgr 不通过 QGA 提供任意命令执行、文件复制或密码重置。
 
 ## API
 
@@ -306,7 +307,7 @@ API 位于 `/api/v1`，使用 JSON。认证基于 Cookie，写操作还需要 `X
 |---|---|
 | 会话 | `POST /api/v1/session`、`GET /api/v1/session`、`DELETE /api/v1/session` |
 | 总览与宿主机 | `/api/v1/overview`、`/api/v1/host`、`/api/v1/host/devices`、`/api/v1/host/metrics` |
-| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/devices`、`/actions/{action}` |
+| 虚拟机 | `/api/v1/vms`、`/api/v1/vms/{uuid}`、`/metrics`、`/xml`、`/config-versions`、`/snapshots`、`/guest-agent`、`/devices`、`/actions/{action}` |
 | 虚拟机操作 | `/resources`、`/disks/{target}`、`/clone`、`/backups`、`/console-token`、`/console/send-key`、`/console`、`/serial-console`、`/export` |
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |

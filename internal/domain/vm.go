@@ -182,8 +182,13 @@ type VMCreateSpec struct {
 	Firmware   VMFirmware     `json:"firmware"`
 	SecureBoot bool           `json:"secureBoot"`
 	CloudInit  *CloudInitSpec `json:"cloudInit,omitempty"`
+	GuestAgent *bool          `json:"guestAgent,omitempty"`
 	Autostart  bool           `json:"autostart"`
 	Start      bool           `json:"start"`
+}
+
+func (spec VMCreateSpec) GuestAgentEnabled() bool {
+	return spec.GuestAgent == nil || *spec.GuestAgent
 }
 
 type VMResourcesSpec struct {
@@ -278,6 +283,7 @@ type VMSnapshot struct {
 type VMSnapshotCreateSpec struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	Quiesce     bool   `json:"quiesce,omitempty"`
 }
 
 type VMSnapshotList struct {

@@ -174,6 +174,7 @@ export type VMCreateInput = {
   firmware: VMFirmware;
   secureBoot: boolean;
   cloudInit?: CloudInitInput;
+  guestAgent?: boolean;
   autostart: boolean;
   start: boolean;
 };
@@ -576,6 +577,82 @@ export type VMSnapshot = {
 export type VMSnapshotCreateInput = {
   name: string;
   description?: string;
+  quiesce?: boolean;
+};
+
+export type GuestAgentState =
+  | "unknown"
+  | "not_configured"
+  | "disconnected"
+  | "connected"
+  | "unresponsive"
+  | "error";
+
+export type GuestAgentOSInfo = {
+  id?: string;
+  name?: string;
+  prettyName?: string;
+  version?: string;
+  kernelRelease?: string;
+  arch?: string;
+  hostname?: string;
+};
+
+export type GuestAgentIPAddress = {
+  address: string;
+  family: "ipv4" | "ipv6";
+  prefix?: number;
+};
+
+export type GuestAgentNetworkInterface = {
+  name: string;
+  mac?: string;
+  addresses: GuestAgentIPAddress[];
+};
+
+export type GuestAgentFilesystem = {
+  device?: string;
+  mountPoint: string;
+  type?: string;
+  totalBytes?: number;
+  usedBytes?: number;
+  freeBytes?: number;
+};
+
+export type GuestAgentCapabilities = {
+  hostname: boolean;
+  network: boolean;
+  osInfo: boolean;
+  fsInfo: boolean;
+  shutdown: boolean;
+  reboot: boolean;
+  timeSync: boolean;
+  trim: boolean;
+  quiesce: boolean;
+};
+
+export type GuestAgentInfo = {
+  state: GuestAgentState;
+  connected: boolean;
+  channelConfigured: boolean;
+  version?: string;
+  hostname?: string;
+  lastSeenAt?: string;
+  lastError?: string;
+  stale: boolean;
+  os: GuestAgentOSInfo;
+  interfaces: GuestAgentNetworkInterface[];
+  filesystems: GuestAgentFilesystem[];
+  capabilities: GuestAgentCapabilities;
+  probedAt: string;
+};
+
+export type GuestAgentAction = "shutdown" | "reboot" | "sync-time" | "trim";
+
+export type GuestAgentActionInput = {
+  action: GuestAgentAction;
+  mount?: string;
+  minimumBytes?: number;
 };
 
 export type VMSnapshotList = {

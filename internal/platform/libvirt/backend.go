@@ -37,6 +37,9 @@ type Backend interface {
 	DeleteVMBackup(ctx context.Context, backup domain.Backup) error
 	DeleteVM(ctx context.Context, uuid string) error
 	PerformAction(ctx context.Context, uuid string, action domain.VMAction) error
+	GetGuestAgentInfo(ctx context.Context, uuid string, refresh bool) (domain.GuestAgentInfo, error)
+	PerformGuestAgentAction(ctx context.Context, uuid string, spec domain.GuestAgentActionSpec) error
+	EnsureGuestAgentChannel(ctx context.Context, uuid string) (domain.VM, error)
 	ListSnapshots(ctx context.Context, uuid string) ([]domain.VMSnapshot, error)
 	CreateSnapshot(ctx context.Context, uuid string, spec domain.VMSnapshotCreateSpec) (domain.VMSnapshot, error)
 	RevertSnapshot(ctx context.Context, uuid, name string) error
@@ -77,6 +80,9 @@ type Client struct {
 	eventCallbackID int
 	guestMu         sync.Mutex
 	guestConn       *libvirt.Connect
+	guestCacheMu    sync.Mutex
+	guestCache      map[string]guestAgentCacheEntry
+	guestInflight   map[string]*guestAgentProbeCall
 }
 
 type EventSink interface {
@@ -187,6 +193,10 @@ func (c *Client) Close() error {
 		}
 	}
 	c.guestMu.Unlock()
+	c.guestCacheMu.Lock()
+	c.guestCache = nil
+	c.guestInflight = nil
+	c.guestCacheMu.Unlock()
 	return err
 }
 

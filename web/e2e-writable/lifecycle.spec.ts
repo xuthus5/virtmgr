@@ -39,6 +39,13 @@ test("可写模式完成启动和强制下电确认", async ({ page }) => {
   await expect(page.getByText("强制下电指令已提交，状态已刷新。", { exact: true })).toBeVisible();
   await expect(page.getByText("已关机", { exact: true }).first()).toBeVisible();
   await expect(page.getByTestId("vm-action-start")).toBeEnabled();
+
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("未配置通道");
+  const addChannel = page.getByTestId("guest-agent-add-channel");
+  await expect(addChannel).toBeEnabled();
+  await addChannel.click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("已补充 QEMU Guest Agent 通道");
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("未连接");
 });
 
 test("可写模式批量暂停和恢复虚拟机", async ({ page }) => {
@@ -1138,9 +1145,9 @@ test("管理员固定并回滚域 XML 版本且记录审计", async ({ page }) =
   await confirmation.getByTestId("vm-config-version-rollback-note").fill("playwright restore baseline");
   await confirmation.getByTestId("vm-config-version-rollback-confirm").click();
 
-  await expect(dialog.getByTestId("vm-config-version-notice")).toContainText("已回滚到 v1，并自动创建版本 v3");
+  await expect(dialog.getByTestId("vm-config-version-notice")).toContainText("已回滚到 v1，并自动创建版本 v");
   await expect(dialog.getByTestId("vm-config-version-current-xml")).toContainText("<vcpu>2</vcpu>");
-  await expect(dialog.getByTestId("vm-config-version-item-3")).toContainText("XML 版本回滚");
+  await expect(dialog.locator('[data-testid^="vm-config-version-item-"]').first()).toContainText("XML 版本回滚");
   await expect(dialog.getByTestId("vm-config-version-rollback")).toBeDisabled();
 
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();

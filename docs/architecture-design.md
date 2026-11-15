@@ -55,7 +55,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- Guest Agent：运行中/阻塞状态的虚拟机详情按需调用 `guest-get-host-name` 和 `guest-network-get-interfaces`，返回主机名与去重后的 IPv4/IPv6 地址，并标记 `agentConnected`。单次查询 1 秒超时；列表查询使用独立 libvirt 连接、最多 4 个并发和 2 秒批次预算，查询失败降级为空信息，不阻塞列表主流程。
+- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作仅开放关机、重启、时间同步和 TRIM；手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
 - 开机自启动写能力：详情页通过 `PATCH /vms/{uuid}/autostart` 切换持久域的 autostart；临时域、Viewer 和全局只读模式拒绝修改，成功/失败均记录 `vm.autostart` 审计。
@@ -712,6 +712,9 @@ type PassthroughDevice = {
 | `POST` | `/vms/{uuid}/snapshots` | 创建快照 |
 | `POST` | `/vms/{uuid}/snapshots/{name}/revert` | 回滚快照 |
 | `DELETE` | `/vms/{uuid}/snapshots/{name}` | 删除快照 |
+| `GET` | `/vms/{uuid}/guest-agent?refresh=true` | Guest Agent 结构化状态；Agent 不可用也返回状态对象 |
+| `POST` | `/vms/{uuid}/guest-agent/actions` | 执行 `shutdown` / `reboot` / `sync-time` / `trim`，需 Operator/Admin、CSRF 和非只读模式 |
+| `POST` | `/vms/{uuid}/guest-agent/channel` | 为关机或异常停止的持久域补齐 QGA channel |
 | `GET` | `/vms/{uuid}/snapshot-policies` | 定时快照策略列表（已实现） |
 | `POST` | `/vms/{uuid}/snapshot-policies` | 创建定时快照策略（已实现，需 CSRF） |
 | `PATCH` | `/snapshot-policies/{id}` | 更新或启停策略（已实现，需 CSRF） |
@@ -1086,7 +1089,7 @@ Tab 内容：
 
 - 正常关机：`Shutdown`，可选 ACPI，带超时提示。
 - 强制下电：`Destroy`，必须二次确认并说明可能丢数据。
-- 重启：优先 guest reboot；无 Guest Agent 时提示。
+- 重启：可通过 Guest Agent 请求客户机重启；Agent 不可用时无响应错误会明确返回，不静默降级为强制操作。
 - 暂停/恢复：`Suspend/Resume` 与 `Pause/Unpause` 在 UI 文案中区分。
 - 删除：先删除域定义，再让用户选择保留或删除磁盘；删除磁盘必须单独确认。
 - 快照回滚：明确会丢弃回滚点之后的状态。

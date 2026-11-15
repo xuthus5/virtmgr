@@ -67,12 +67,48 @@ func (c *Client) CreateSnapshot(ctx context.Context, uuid string, spec domain.VM
 	} else if !errors.Is(err, libvirt.ERR_NO_DOMAIN_SNAPSHOT) {
 		return domain.VMSnapshot{}, fmt.Errorf("check snapshot %s on domain %s: %w", spec.Name, uuid, err)
 	}
-	snapshot, err := dom.CreateSnapshotXML(buildSnapshotXML(spec), 0)
+	flags := libvirt.DomainSnapshotCreateFlags(0)
+	if spec.Quiesce {
+		if err := ensureGuestAgentQuiesce(dom); err != nil {
+			return domain.VMSnapshot{}, err
+		}
+		flags |= libvirt.DOMAIN_SNAPSHOT_CREATE_QUIESCE
+	}
+	snapshot, err := dom.CreateSnapshotXML(buildSnapshotXML(spec), flags)
 	if err != nil {
 		return domain.VMSnapshot{}, mapSnapshotOperationError("create", uuid, spec.Name, err)
 	}
 	defer func() { _ = snapshot.Free() }()
 	return snapshotFromLibvirt(snapshot)
+}
+
+func ensureGuestAgentQuiesce(dom *libvirt.Domain) error {
+	state, _, err := dom.GetState()
+	if err != nil {
+		return fmt.Errorf("read domain state before quiesced snapshot: %w", err)
+	}
+	if state != libvirt.DOMAIN_RUNNING && state != libvirt.DOMAIN_BLOCKED {
+		return errors.Join(domain.ErrGuestAgent, errors.New("quiesced snapshots require a running domain"))
+	}
+	xmlText, err := guestAgentDomainXML(dom)
+	if err != nil {
+		return fmt.Errorf("read domain xml before quiesced snapshot: %w", err)
+	}
+	if !hasGuestAgentChannelXML(xmlText) {
+		return errors.Join(domain.ErrGuestAgent, errors.New("domain has no QEMU guest agent channel"))
+	}
+	rawInfo, err := guestAgentCommand(dom, "guest-info", nil, guestAgentProbeTimeoutSeconds)
+	if err != nil {
+		return errors.Join(domain.ErrGuestAgent, fmt.Errorf("probe guest agent for quiesced snapshot: %w", err))
+	}
+	var parsed guestInfoResponse
+	if err := decodeGuestAgentResponse(rawInfo, &parsed); err != nil {
+		return errors.Join(domain.ErrGuestAgent, fmt.Errorf("decode guest-info for quiesced snapshot: %w", err))
+	}
+	if !guestAgentCapabilities(parsed).Quiesce {
+		return errors.Join(domain.ErrGuestAgent, errors.New("guest agent does not advertise fsfreeze support"))
+	}
+	return nil
 }
 
 func (c *Client) RevertSnapshot(ctx context.Context, uuid, name string) error {

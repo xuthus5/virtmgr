@@ -1,4 +1,4 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentInfo, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeCreateInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskResizeInput, VMExport, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -163,6 +163,17 @@ export const api = {
     return request<VMSummaryList>(`/api/v1/vms${suffix ? `?${suffix}` : ""}`);
   },
   vm: (uuid: string) => request<VM>(`/api/v1/vms/${encodeURIComponent(uuid)}`),
+  guestAgent: (uuid: string, refresh = false) => request<GuestAgentInfo>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent${refresh ? "?refresh=true" : ""}`,
+  ),
+  performGuestAgentAction: (uuid: string, input: GuestAgentActionInput) => request<void>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/actions`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  ensureGuestAgentChannel: (uuid: string) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/channel`,
+    { method: "POST" },
+  ),
   vmMetadata: (uuid: string) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`),
   updateVMMetadata: (uuid: string, input: VMMetadataInput) => request<VMMetadata>(`/api/v1/vms/${encodeURIComponent(uuid)}/metadata`, {
     method: "PUT",

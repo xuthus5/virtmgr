@@ -22,6 +22,8 @@ import (
 	configversionshttp "virtmgr/internal/modules/configversions/http"
 	eventsapp "virtmgr/internal/modules/events/app"
 	eventshttp "virtmgr/internal/modules/events/http"
+	guestagentapp "virtmgr/internal/modules/guestagent/app"
+	guestagenthttp "virtmgr/internal/modules/guestagent/http"
 	hostapp "virtmgr/internal/modules/host/app"
 	hosthttp "virtmgr/internal/modules/host/http"
 	monitoringapp "virtmgr/internal/modules/monitoring/app"
@@ -165,6 +167,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
 	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store)))
+	guestAgentHandler := guestagenthttp.New(guestagentapp.New(backend, store, cfg.ReadOnly, guestagentapp.WithReadOnlyMode(mode)))
 	templatesHandler := templateshttp.New(templatesapp.New(store, store, cfg.ReadOnly, templatesapp.WithReadOnlyMode(mode)))
 	snapshotPolicyService := snapshotpoliciesapp.New(store, backend, store, cfg.ReadOnly,
 		snapshotpoliciesapp.WithReadOnlyMode(mode),
@@ -188,6 +191,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		storage:          storageHandler,
 		networks:         networksHandler,
 		vms:              vmsHandler,
+		guestAgent:       guestAgentHandler,
 		templates:        templatesHandler,
 		snapshotPolicies: snapshotPoliciesHandler,
 		auditHistory:     auditHistoryHandler,
@@ -367,6 +371,7 @@ type routerDependencies struct {
 	storage          *storagehttp.Handler
 	networks         *networkshttp.Handler
 	vms              *vmshttp.Handler
+	guestAgent       *guestagenthttp.Handler
 	templates        *templateshttp.Handler
 	snapshotPolicies *snapshotpolicieshttp.Handler
 	auditHistory     *audithistoryhttp.Handler
@@ -417,6 +422,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.storage.Mount(protected, deps.auth.RequireCSRF)
 			deps.networks.Mount(protected, deps.auth.RequireCSRF)
 			deps.vms.Mount(protected, deps.auth.RequireCSRF)
+			deps.guestAgent.Mount(protected, deps.auth.RequireCSRF)
 			deps.templates.Mount(protected, deps.auth.RequireCSRF)
 			deps.snapshotPolicies.Mount(protected, deps.auth.RequireCSRF)
 			deps.auditHistory.Mount(protected)

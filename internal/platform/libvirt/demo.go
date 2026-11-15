@@ -542,12 +542,17 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 		VCPUs: spec.VCPUs, MaxVCPUs: spec.VCPUs, MemoryBytes: spec.MemoryMiB * 1024 * 1024, MaxMemoryBytes: spec.MemoryMiB * 1024 * 1024,
 		OSType: "hvm", Arch: "x86_64", Machine: "pc-q35-10.2",
 		Firmware: firmware, SecureBoot: spec.SecureBoot, CloudInit: spec.CloudInit != nil,
-		Disks:          disks,
-		Interfaces:     []domain.NetworkInterface{{Type: "network", MAC: demoMAC(len(d.vms) + 1), Source: spec.Network, Model: "virtio"}},
-		Graphics:       []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5900 + len(d.vms) + 1}},
-		IPAddresses:    []string{},
+		Disks:       disks,
+		Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: demoMAC(len(d.vms) + 1), Source: spec.Network, Model: "virtio"}},
+		Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5900 + len(d.vms) + 1}},
+		IPAddresses: []string{}, AgentConnected: spec.Start && spec.GuestAgentEnabled(),
 		AllowedActions: domain.AllowedVMActions(state),
 	}
+	xmlText := demoVMDomainXML(vm)
+	if spec.GuestAgentEnabled() {
+		xmlText, _ = addGuestAgentChannelXML(xmlText)
+	}
+	d.xmlConfig[uuid] = xmlText
 	d.vms[uuid] = vm
 	d.publish("domain.defined", "info", "vm", uuid, vm.Name, "虚拟机已定义")
 	if spec.Start {
@@ -1042,6 +1047,15 @@ func (d *DemoBackend) CreateSnapshot(_ context.Context, uuid string, spec domain
 	vm, ok := d.vms[uuid]
 	if !ok {
 		return domain.VMSnapshot{}, domain.ErrNotFound
+	}
+	if spec.Quiesce {
+		xmlText := d.xmlConfig[uuid]
+		if xmlText == "" {
+			xmlText = demoVMDomainXML(vm)
+		}
+		if (vm.State != domain.VMStateRunning && vm.State != domain.VMStateBlocked) || !vm.AgentConnected || !hasGuestAgentChannelXML(xmlText) {
+			return domain.VMSnapshot{}, domain.ErrGuestAgent
+		}
 	}
 	for _, snapshot := range d.snapshots[uuid] {
 		if snapshot.Name == spec.Name {
@@ -1730,6 +1744,9 @@ func demoVMDomainXML(vm domain.VM) string {
 		if err == nil {
 			fmt.Fprintf(&builder, "    %s\n", hostdevXML)
 		}
+	}
+	if vm.AgentConnected {
+		builder.WriteString("    <controller type='virtio-serial' index='0'/>\n    <channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>\n")
 	}
 	builder.WriteString("  </devices>\n</domain>\n")
 	return builder.String()
