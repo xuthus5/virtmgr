@@ -18,25 +18,50 @@ describe("network edit model", () => {
       subnet: "10.20.30.1/24",
       dhcpStart: "10.20.30.10",
       dhcpEnd: "10.20.30.200",
+      bridge: "",
       autostart: false,
+    });
+  });
+
+  it("maps an external bridge network without IPv4 fields", () => {
+    expect(networkEditForm({
+      name: "br-prod",
+      active: false,
+      persistent: true,
+      autostart: true,
+      forwardMode: "bridge",
+      bridge: "br0",
+      addresses: [],
+    })).toEqual({
+      mode: "bridge",
+      subnet: "",
+      dhcpStart: "",
+      dhcpEnd: "",
+      bridge: "br0",
+      autostart: true,
     });
   });
 
   it("requires the network to be stopped and supported", () => {
     expect(networkEditDisabledReason("admin", false, inactiveNetwork)).toBe("");
     expect(networkEditDisabledReason("admin", false, { ...inactiveNetwork, active: true })).toContain("停止网络");
-    expect(networkEditDisabledReason("admin", false, { ...inactiveNetwork, forwardMode: "bridge" })).toContain("不支持");
-    expect(networkEditDisabledReason("admin", false, { ...inactiveNetwork, active: true, forwardMode: "bridge" })).toContain("不支持");
+    expect(networkEditDisabledReason("admin", false, { ...inactiveNetwork, forwardMode: "bridge", bridge: "br0", addresses: [] })).toBe("");
+    expect(networkEditDisabledReason("admin", false, { ...inactiveNetwork, forwardMode: "route" })).toContain("不支持");
     expect(networkEditDisabledReason("viewer", false, inactiveNetwork)).toContain("权限");
     expect(networkEditDisabledReason("admin", true, inactiveNetwork)).toContain("只读");
   });
 
   it("normalizes optional DHCP values", () => {
-    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", autostart: true })).toEqual({
+    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", bridge: "", autostart: true })).toEqual({
       mode: "isolated",
       subnet: "10.40.0.0/24",
       dhcpStart: undefined,
       dhcpEnd: undefined,
+      autostart: true,
+    });
+    expect(networkUpdateInput({ mode: "bridge", subnet: "", dhcpStart: "", dhcpEnd: "", bridge: " br1 ", autostart: true })).toEqual({
+      mode: "bridge",
+      bridge: "br1",
       autostart: true,
     });
   });
@@ -44,7 +69,8 @@ describe("network edit model", () => {
   it("explains unavailable actions in the row", () => {
     expect(networkActionHint("admin", false, inactiveNetwork)).toBe("");
     expect(networkActionHint("admin", false, { ...inactiveNetwork, active: true })).toContain("停止后");
-    expect(networkActionHint("admin", false, { ...inactiveNetwork, forwardMode: "bridge" })).toContain("不支持编辑");
+    expect(networkActionHint("admin", false, { ...inactiveNetwork, active: true, forwardMode: "bridge", bridge: "br0", addresses: [] })).toContain("宿主机网桥");
+    expect(networkActionHint("admin", false, { ...inactiveNetwork, forwardMode: "route" })).toContain("不支持编辑");
     expect(networkActionHint("viewer", false, inactiveNetwork)).toContain("没有网络管理权限");
     expect(networkActionHint("admin", true, inactiveNetwork)).toContain("只读模式");
   });

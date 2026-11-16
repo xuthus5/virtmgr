@@ -86,6 +86,52 @@ func TestNetworkXMLFromDefinition(t *testing.T) {
 	if strings.Contains(isolated, "<forward") {
 		t.Fatalf("isolated network has forward: %s", isolated)
 	}
+
+	bridge, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
+		Name: "prod-bridge", Mode: "bridge", Bridge: "br0",
+	})
+	if err != nil {
+		t.Fatalf("bridge networkXMLFromDefinition() error = %v", err)
+	}
+	for _, fragment := range []string{
+		"<name>prod-bridge</name>",
+		`<forward mode="bridge"></forward>`,
+		`<bridge name="br0"></bridge>`,
+	} {
+		if !strings.Contains(bridge, fragment) {
+			t.Fatalf("bridge XML missing %q: %s", fragment, bridge)
+		}
+	}
+	if strings.Contains(bridge, "<ip") || strings.Contains(bridge, "<dhcp") {
+		t.Fatalf("bridge XML must not manage IP or DHCP: %s", bridge)
+	}
+}
+
+func TestUpdateNetworkXMLSwitchesBridgeAndManagedModes(t *testing.T) {
+	const managed = `<network><name>lab-net</name><forward mode='nat'></forward><bridge name='virbr9'/><ip address='10.20.30.1' prefix='24'><dhcp><range start='10.20.30.2' end='10.20.30.254'/></dhcp></ip></network>`
+	bridgeXML, err := updateNetworkXML(managed, domain.VirtualNetworkDefinition{Name: "lab-net", Mode: "bridge", Bridge: "br1"})
+	if err != nil {
+		t.Fatalf("update to bridge error = %v", err)
+	}
+	for _, fragment := range []string{`<forward mode="bridge"></forward>`, `<bridge name="br1"></bridge>`} {
+		if !strings.Contains(bridgeXML, fragment) {
+			t.Fatalf("bridge update missing %q: %s", fragment, bridgeXML)
+		}
+	}
+	if strings.Contains(bridgeXML, "<ip") || strings.Contains(bridgeXML, "<dhcp") {
+		t.Fatalf("bridge update retained IP or DHCP: %s", bridgeXML)
+	}
+
+	const external = `<network><name>bridge-net</name><forward mode='bridge'></forward><bridge name='br1'/></network>`
+	managedXML, err := updateNetworkXML(external, domain.VirtualNetworkDefinition{
+		Name: "bridge-net", Mode: "nat", IPv4Address: "10.60.0.1", Prefix: 24,
+	})
+	if err != nil {
+		t.Fatalf("update to managed error = %v", err)
+	}
+	if strings.Contains(managedXML, "br1") || !strings.Contains(managedXML, `<forward mode="nat"></forward>`) || !strings.Contains(managedXML, `<ip address="10.60.0.1" prefix="24">`) {
+		t.Fatalf("managed update retained bridge: %s", managedXML)
+	}
 }
 
 func TestUpdateNetworkXMLPreservesDHCPHosts(t *testing.T) {

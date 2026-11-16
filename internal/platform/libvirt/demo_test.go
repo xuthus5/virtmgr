@@ -641,6 +641,34 @@ func TestDemoBackendNetworkLifecycle(t *testing.T) {
 	}
 }
 
+func TestDemoBackendBridgeNetwork(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	bridges, err := backend.ListHostBridges(ctx)
+	if err != nil || len(bridges) < 2 {
+		t.Fatalf("ListHostBridges() = %+v, %v", bridges, err)
+	}
+	network, err := backend.CreateNetwork(ctx, domain.VirtualNetworkDefinition{
+		Name: "demo-bridge-01", Mode: "bridge", Bridge: "br1", Start: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateNetwork() error = %v", err)
+	}
+	if network.ForwardMode != "bridge" || network.Bridge != "br1" || !network.Active || len(network.Addresses) != 0 {
+		t.Fatalf("created bridge network = %+v", network)
+	}
+	if _, err := backend.CreateNetwork(ctx, domain.VirtualNetworkDefinition{Name: "duplicate-bridge", Mode: "bridge", Bridge: "br1"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate bridge error = %v", err)
+	}
+	if err := backend.PerformNetworkAction(ctx, network.Name, domain.VirtualNetworkActionStop); err != nil {
+		t.Fatalf("stop bridge network error = %v", err)
+	}
+	updated, err := backend.UpdateNetwork(ctx, domain.VirtualNetworkDefinition{Name: network.Name, Mode: "bridge", Bridge: "br2", Autostart: true})
+	if err != nil || updated.Bridge != "br2" || !updated.Autostart || len(updated.Addresses) != 0 {
+		t.Fatalf("updated bridge network = %+v, %v", updated, err)
+	}
+}
+
 func TestDemoBackendDHCPLeases(t *testing.T) {
 	backend := NewDemo()
 	leases, err := backend.ListDHCPLeases(context.Background(), "default")

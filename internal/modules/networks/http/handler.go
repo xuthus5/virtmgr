@@ -32,6 +32,15 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
+func (h *Handler) ListHostBridges(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	result, err := h.service.ListHostBridges(r.Context())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Leases(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	result, err := h.service.ListLeases(r.Context(), chi.URLParam(r, "name"))
 	if err != nil {
@@ -228,6 +237,7 @@ func (h *Handler) Delete(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/networks", h.List)
+	r.Get("/networks/bridges", h.ListHostBridges)
 	r.Get("/networks/{name}/leases", h.Leases)
 	r.Get("/networks/{name}/hosts/export", h.ExportDHCPHosts)
 	r.Group(func(mutating chi.Router) {

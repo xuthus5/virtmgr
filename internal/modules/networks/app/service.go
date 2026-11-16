@@ -16,9 +16,11 @@ import (
 
 var networkNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$`)
 var dhcpHostNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$`)
+var hostBridgeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$`)
 
 type Repository interface {
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)
+	ListHostBridges(ctx context.Context) ([]domain.HostBridge, error)
 	ListDHCPLeases(ctx context.Context, networkName string) ([]domain.DHCPLease, error)
 	CreateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	UpdateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
@@ -113,6 +115,20 @@ func (s *Service) List(ctx context.Context) (domain.VirtualNetworkList, error) {
 	return domain.VirtualNetworkList{Items: networks, Total: len(networks)}, nil
 }
 
+func (s *Service) ListHostBridges(ctx context.Context) (domain.HostBridgeList, error) {
+	bridges, err := s.repository.ListHostBridges(ctx)
+	if err != nil {
+		return domain.HostBridgeList{}, err
+	}
+	if bridges == nil {
+		bridges = []domain.HostBridge{}
+	}
+	sort.Slice(bridges, func(i, j int) bool {
+		return strings.ToLower(bridges[i].Name) < strings.ToLower(bridges[j].Name)
+	})
+	return domain.HostBridgeList{Items: bridges, Total: len(bridges)}, nil
+}
+
 func (s *Service) ListLeases(ctx context.Context, networkName string) (domain.DHCPLeaseList, error) {
 	networkName = strings.TrimSpace(networkName)
 	if !networkNamePattern.MatchString(networkName) {
@@ -160,6 +176,7 @@ func (s *Service) Create(ctx context.Context, command CreateNetworkCommand) (dom
 		"mode": definition.Mode, "subnet": command.Spec.Subnet,
 		"ipv4Address": definition.IPv4Address, "prefix": definition.Prefix,
 		"dhcpStart": definition.DHCPStart, "dhcpEnd": definition.DHCPEnd,
+		"bridge":    definition.Bridge,
 		"autostart": definition.Autostart, "start": definition.Start,
 	}
 	if err := s.recordAudit(ctx, command.Request, "network.create", definition.Name, detail); err != nil {
@@ -179,7 +196,7 @@ func (s *Service) Update(ctx context.Context, command UpdateNetworkCommand) (dom
 	if !networkNamePattern.MatchString(command.Name) {
 		return domain.VirtualNetwork{}, domain.ErrInvalidInput
 	}
-	definition, err := normalizeNetworkSpec(command.Name, command.Spec.Mode, command.Spec.Subnet, command.Spec.DHCPStart, command.Spec.DHCPEnd, command.Spec.Autostart)
+	definition, err := normalizeNetworkSpec(command.Name, command.Spec.Mode, command.Spec.Subnet, command.Spec.DHCPStart, command.Spec.DHCPEnd, command.Spec.Bridge, command.Spec.Autostart)
 	if err != nil {
 		return domain.VirtualNetwork{}, err
 	}
@@ -191,6 +208,7 @@ func (s *Service) Update(ctx context.Context, command UpdateNetworkCommand) (dom
 		"mode": definition.Mode, "subnet": strings.TrimSpace(command.Spec.Subnet),
 		"ipv4Address": definition.IPv4Address, "prefix": definition.Prefix,
 		"dhcpStart": definition.DHCPStart, "dhcpEnd": definition.DHCPEnd,
+		"bridge":    definition.Bridge,
 		"autostart": definition.Autostart,
 	}
 	if err := s.recordAudit(ctx, command.Request, "network.update", definition.Name, detail); err != nil {
@@ -400,7 +418,7 @@ func normalizeCreateSpec(spec domain.VirtualNetworkCreateSpec) (domain.VirtualNe
 	if !networkNamePattern.MatchString(spec.Name) {
 		return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: invalid network name", domain.ErrInvalidInput)
 	}
-	definition, err := normalizeNetworkSpec(spec.Name, spec.Mode, spec.Subnet, spec.DHCPStart, spec.DHCPEnd, spec.Autostart)
+	definition, err := normalizeNetworkSpec(spec.Name, spec.Mode, spec.Subnet, spec.DHCPStart, spec.DHCPEnd, spec.Bridge, spec.Autostart)
 	if err != nil {
 		return domain.VirtualNetworkDefinition{}, err
 	}
@@ -408,10 +426,19 @@ func normalizeCreateSpec(spec domain.VirtualNetworkCreateSpec) (domain.VirtualNe
 	return definition, nil
 }
 
-func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText string, autostart bool) (domain.VirtualNetworkDefinition, error) {
+func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText, bridgeText string, autostart bool) (domain.VirtualNetworkDefinition, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "bridge" {
+		bridge := strings.TrimSpace(bridgeText)
+		if !hostBridgeNamePattern.MatchString(bridge) {
+			return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: host bridge name is invalid", domain.ErrInvalidInput)
+		}
+		return domain.VirtualNetworkDefinition{
+			Name: name, Mode: mode, Bridge: bridge, Autostart: autostart,
+		}, nil
+	}
 	if mode != "nat" && mode != "isolated" {
-		return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: network mode must be nat or isolated", domain.ErrInvalidInput)
+		return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: network mode must be nat, isolated or bridge", domain.ErrInvalidInput)
 	}
 	ip, subnet, err := net.ParseCIDR(strings.TrimSpace(subnetText))
 	if err != nil || ip.To4() == nil {

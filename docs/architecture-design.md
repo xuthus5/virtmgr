@@ -68,7 +68,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 用户与账号安全：管理员可创建本地账号、调整角色、禁用/启用用户、重置其他账号密码并查看/撤销登录会话；所有本地账号可验证当前密码后自助改密。改密保留当前会话并撤销其他会话，管理员重置会撤销目标账号全部会话；密码和会话写操作均记录审计，只读模式拒绝用户写操作。
 - API Token：设置页可为当前浏览器会话创建 Token，选择 read 或 write（write 隐含 read）和 0 至 3650 天有效期。明文只在创建响应出现一次，SQLite 仅保存哈希；列表不返回明文，撤销立即生效，过期或用户禁用后 Bearer 认证失败。Bearer 请求跳过浏览器 CSRF，但仍受 Token 作用域、角色、只读模式和审计约束；Token 不能调用 Token 管理接口。OpenAPI 3.1 契约通过公开的 `GET /api/v1/openapi.json` 提供，覆盖全部已挂载路由、主要请求/响应模型、错误响应和示例；契约测试校验路径参数、唯一操作 ID、所有内部引用和关键模块覆盖，防止接口漂移。
 - 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）、NFS `netfs` 和 LVM `logical` 创建，启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。NFS 池校验主机名、绝对导出路径和目标路径；LVM 池校验卷组与 `/dev/` 目标路径，只允许 raw 卷并拒绝文件上传。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。卷列表即使为空也返回数组而非 `null`，避免前端空池状态崩溃。
-- 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离网络、启停网络并删除未激活网络。模式、地址推导和删除约束由后端校验，写操作记录审计。
+- 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离/外部桥接网络、启停网络并删除未激活网络。外部桥接复用宿主机已有 Linux 网桥，地址和 DHCP 由上游网络提供。模式、网桥存在性、地址推导和删除约束由后端校验，写操作记录审计。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
 - 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、`vm.import`、冷备份相关任务和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆、导入或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
@@ -77,7 +77,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 虚拟机配置导出：`GET /api/v1/vms/{uuid}/export` 返回稳定版本化的 JSON 包，包含虚拟机详情、持久配置 XML、活动域 live XML、快照和磁盘/网络元数据；只读能力不受 Viewer 或全局只读模式限制，但记录 `vm.export` 审计，不包含磁盘镜像数据。
 - Playwright 使用只读和可写两套严格串行配置；可写场景只连接有状态 demo 后端，不对真实虚拟机执行写操作。
 
-P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` 模式和 IPv4 子网，子网至少为 `/29`，活跃网络必须先停止才能删除。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
+P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` / `bridge` 模式，管理型网络使用 IPv4 子网且至少为 `/29`，外部桥接网络接入宿主机已有网桥；活跃网络必须先停止才能删除。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
 
 ## 2. 总体架构
 
@@ -579,7 +579,7 @@ type StorageVolume = {
 
 ### 4.3 网络与快照
 
-当前网络写能力通过 libvirt Network API 实现。创建时由后端根据 IPv4 子网推导网关、前缀和默认 DHCP 范围，可选 DHCP 起止地址必须位于子网内且避开网关；支持 NAT 转发与隔离网络，以及 autostart、创建后启动和失败回滚。编辑时网络名称不可变，仅允许未激活的持久 NAT/隔离网络；后端在原始 libvirt XML 上定点替换 forward、IPv4 address/prefix 和 DHCP range，并保留 DHCP host、IPv6、MAC 等其他元素，再通过 `NetworkDefineXML` 原子更新持久定义。编辑活跃网络返回 `409 NETWORK_ACTIVE`，桥接/路由等不支持的类型返回 `409 NETWORK_UPDATE_UNSUPPORTED`。静态 DHCP 主机条目作为独立资源管理：对激活的持久网络使用 `virNetworkUpdate` 的 `ADD_LAST/DELETE + IP_DHCP_HOST + LIVE|CONFIG`，对未激活网络使用 `CONFIG`，因此无需停止网络即可实时增删；服务层校验 MAC、IPv4 子网归属、保留地址和重复 MAC/IP。启停动作按当前网络状态校验，活跃网络删除返回 `409 CONFLICT`。网络状态始终来自 libvirt，不写入业务数据库；审计记录 `network.create`、`network.update`、`network.dhcp.host.add`、`network.dhcp.host.delete`、`network.start`、`network.stop`、`network.delete`。
+当前网络写能力通过 libvirt Network API 实现。创建 NAT/隔离网络时由后端根据 IPv4 子网推导网关、前缀和默认 DHCP 范围，可选 DHCP 起止地址必须位于子网内且避开网关；创建外部桥接网络时要求宿主机网桥名称合法、libvirt 能识别该接口为 `bridge` 且未被其他网络占用，生成的 XML 仅包含 `<forward mode='bridge'/>` 和 `<bridge name='...'/>`，不创建 libvirt IP 或 DHCP。所有模式都支持 autostart、创建后启动和失败回滚。编辑时网络名称不可变，仅允许未激活的持久网络；后端在原始 libvirt XML 上定点替换 forward、bridge、IPv4 address/prefix 和 DHCP range，并保留 DHCP host、IPv6、MAC 等其他元素，再通过 `NetworkDefineXML` 原子更新持久定义。编辑活跃网络返回 `409 NETWORK_ACTIVE`；路由等不支持的类型返回 `409 NETWORK_UPDATE_UNSUPPORTED`。`GET /networks/bridges` 返回尚未被网络占用的活跃宿主机网桥，供前端选择；VirtMgr 不创建或修改宿主机网桥。静态 DHCP 主机条目作为独立资源管理：对激活的持久网络使用 `virNetworkUpdate` 的 `ADD_LAST/DELETE + IP_DHCP_HOST + LIVE|CONFIG`，对未激活网络使用 `CONFIG`，因此无需停止网络即可实时增删；外部桥接网络禁用 libvirt DHCP 静态主机接口。服务层校验 MAC、IPv4 子网归属、保留地址和重复 MAC/IP。启停动作按当前网络状态校验，活跃网络删除返回 `409 CONFLICT`。网络状态始终来自 libvirt，不写入业务数据库；审计记录 `network.create`、`network.update`、`network.dhcp.host.add`、`network.dhcp.host.delete`、`network.start`、`network.stop`、`network.delete`。
 
 ```ts
 type VirtualNetwork = {
@@ -780,9 +780,10 @@ type PassthroughDevice = {
 - `POST /api/v1/storage/pools/{pool}/volumes/upload?name={file}`（仅活跃池；需 CSRF 和 `Content-Length`；支持 `.iso`、`.qcow2`、`.raw`，以原始字节流写入，最大 256 GiB）
 - `DELETE /api/v1/storage/pools/{pool}/volumes/{volume}`（仅活跃池；需 CSRF；被虚拟机引用返回 `409 VOLUME_IN_USE`）
 - `GET /api/v1/networks`（虚拟网络列表）
+- `GET /api/v1/networks/bridges`（列出尚未被 libvirt 网络占用的活跃宿主机网桥）
 - `GET /api/v1/networks/{name}/leases`（活跃网络的 DHCP 租约；未激活网络返回空列表）
-- `POST /api/v1/networks`（需 CSRF；支持 `nat` / `isolated`，重名返回 `409 CONFLICT`）
-- `PATCH /api/v1/networks/{name}`（需 CSRF；仅未激活 NAT/隔离网络，修改模式、子网、DHCP、autostart）
+- `POST /api/v1/networks`（需 CSRF；支持 `nat` / `isolated` / `bridge`，重名或网桥重复占用返回 `409 CONFLICT`）
+- `PATCH /api/v1/networks/{name}`（需 CSRF；仅未激活网络，修改模式、子网、DHCP、网桥或 autostart）
 - `POST /api/v1/networks/{name}/hosts`（需 CSRF；活跃/未激活网络均可添加静态 DHCP 主机）
 - `DELETE /api/v1/networks/{name}/hosts/{mac}`（需 CSRF；活跃/未激活网络均可删除静态 DHCP 主机）
 - `POST /api/v1/networks/{name}/actions/start|stop`（需 CSRF；按当前状态校验）
@@ -800,8 +801,9 @@ type PassthroughDevice = {
 | `POST` | `/storage/pools/{name}/volumes/upload` | 流式上传 ISO/qcow2/raw 镜像（已实现同步流式写入） |
 | `DELETE` | `/storage/pools/{name}/volumes/{volume}` | 删除未挂载卷 |
 | `GET` | `/networks` | 虚拟网络与宿主机桥 |
+| `GET` | `/networks/bridges` | 可用于外部桥接的活跃宿主机网桥 |
 | `POST` | `/networks` | 创建网络 |
-| `PATCH` | `/networks/{name}` | 编辑未激活 NAT/隔离网络 |
+| `PATCH` | `/networks/{name}` | 编辑未激活 NAT/隔离/外部桥接网络 |
 | `POST` | `/networks/{name}/hosts` | 添加静态 DHCP 主机（活跃网络实时生效） |
 | `DELETE` | `/networks/{name}/hosts/{mac}` | 删除静态 DHCP 主机（活跃网络实时生效） |
 | `GET` | `/networks/{name}/leases` | DHCP lease（已实现；未激活网络返回空列表） |

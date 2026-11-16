@@ -1165,6 +1165,15 @@ export type VirtualNetworkList = {
   total: number;
 };
 
+export type HostBridge = {
+  name: string;
+};
+
+export type HostBridgeList = {
+  items: HostBridge[];
+  total: number;
+};
+
 export type DHCPLease = {
   interface?: string;
   expiresAt?: string;
@@ -1187,19 +1196,21 @@ export type VirtualNetworkAction = "start" | "stop";
 
 export type VirtualNetworkCreateInput = {
   name: string;
-  mode: "nat" | "isolated";
-  subnet: string;
+  mode: "nat" | "isolated" | "bridge";
+  subnet?: string;
   dhcpStart?: string;
   dhcpEnd?: string;
+  bridge?: string;
   autostart: boolean;
   start: boolean;
 };
 
 export type VirtualNetworkUpdateInput = {
-  mode: "nat" | "isolated";
-  subnet: string;
+  mode: "nat" | "isolated" | "bridge";
+  subnet?: string;
   dhcpStart?: string;
   dhcpEnd?: string;
+  bridge?: string;
   autostart: boolean;
 };
 

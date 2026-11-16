@@ -44,14 +44,23 @@ type networkDHCPHostXML struct {
 }
 
 type networkDefinitionXML struct {
-	XMLName xml.Name               `xml:"network"`
-	Name    string                 `xml:"name"`
-	Forward *networkForwardXML     `xml:"forward,omitempty"`
-	IP      networkIPDefinitionXML `xml:"ip"`
+	XMLName xml.Name                `xml:"network"`
+	Name    string                  `xml:"name"`
+	Forward *networkForwardXML      `xml:"forward,omitempty"`
+	Bridge  *networkBridgeXML       `xml:"bridge,omitempty"`
+	IP      *networkIPDefinitionXML `xml:"ip,omitempty"`
 }
 
 type networkForwardXML struct {
 	Mode string `xml:"mode,attr"`
+}
+
+type networkBridgeXML struct {
+	Name string `xml:"name,attr"`
+}
+
+type interfaceXML struct {
+	Type string `xml:"type,attr"`
 }
 
 type networkIPDefinitionXML struct {
@@ -88,6 +97,51 @@ func (c *Client) ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, err
 			return nil, err
 		}
 		result = append(result, item)
+	}
+	return result, nil
+}
+
+func (c *Client) ListHostBridges(ctx context.Context) ([]domain.HostBridge, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ensureConnectionLocked(ctx); err != nil {
+		return nil, err
+	}
+	interfaces, err := c.conn.ListAllInterfaces(libvirt.CONNECT_LIST_INTERFACES_ACTIVE)
+	if err != nil {
+		return nil, fmt.Errorf("list host interfaces: %w", err)
+	}
+	used := map[string]bool{}
+	networks, err := c.conn.ListAllNetworks(libvirt.CONNECT_LIST_NETWORKS_ACTIVE | libvirt.CONNECT_LIST_NETWORKS_INACTIVE)
+	if err != nil {
+		return nil, fmt.Errorf("list networks while reading host bridges: %w", err)
+	}
+	for i := range networks {
+		network := &networks[i]
+		xmlText, xmlErr := network.GetXMLDesc(0)
+		_ = network.Free()
+		if xmlErr != nil {
+			continue
+		}
+		var parsed networkXML
+		if xml.Unmarshal([]byte(xmlText), &parsed) == nil && parsed.Bridge.Name != "" {
+			used[parsed.Bridge.Name] = true
+		}
+	}
+	result := make([]domain.HostBridge, 0)
+	for i := range interfaces {
+		item := &interfaces[i]
+		name, nameErr := item.GetName()
+		xmlText, xmlErr := item.GetXMLDesc(0)
+		_ = item.Free()
+		if nameErr != nil || xmlErr != nil {
+			continue
+		}
+		var parsed interfaceXML
+		if xml.Unmarshal([]byte(xmlText), &parsed) != nil || parsed.Type != "bridge" || used[name] {
+			continue
+		}
+		result = append(result, domain.HostBridge{Name: name})
 	}
 	return result, nil
 }
@@ -156,6 +210,11 @@ func (c *Client) CreateNetwork(ctx context.Context, definition domain.VirtualNet
 	} else if !errors.Is(err, libvirt.ERR_NO_NETWORK) {
 		return domain.VirtualNetwork{}, fmt.Errorf("lookup network before create: %w", err)
 	}
+	if definition.Mode == "bridge" {
+		if err := c.validateHostBridgeLocked(definition.Bridge, ""); err != nil {
+			return domain.VirtualNetwork{}, err
+		}
+	}
 	xmlText, err := networkXMLFromDefinition(definition)
 	if err != nil {
 		return domain.VirtualNetwork{}, err
@@ -189,6 +248,52 @@ func (c *Client) CreateNetwork(ctx context.Context, definition domain.VirtualNet
 		return domain.VirtualNetwork{}, err
 	}
 	return result, nil
+}
+
+func (c *Client) validateHostBridgeLocked(bridge, currentNetwork string) error {
+	if bridge == "" {
+		return fmt.Errorf("%w: host bridge name is required", domain.ErrInvalidInput)
+	}
+	hostInterface, err := c.conn.LookupInterfaceByName(bridge)
+	if errors.Is(err, libvirt.ERR_NO_INTERFACE) {
+		return fmt.Errorf("%w: host bridge %s does not exist", domain.ErrInvalidInput, bridge)
+	}
+	if err != nil {
+		return fmt.Errorf("lookup host bridge %s: %w", bridge, err)
+	}
+	defer func() { _ = hostInterface.Free() }()
+	xmlText, err := hostInterface.GetXMLDesc(0)
+	if err != nil {
+		return fmt.Errorf("read host bridge %s: %w", bridge, err)
+	}
+	var parsed interfaceXML
+	if err := xml.Unmarshal([]byte(xmlText), &parsed); err != nil {
+		return fmt.Errorf("decode host bridge %s: %w", bridge, err)
+	}
+	if parsed.Type != "bridge" {
+		return fmt.Errorf("%w: host interface %s is not a bridge", domain.ErrInvalidInput, bridge)
+	}
+	networks, err := c.conn.ListAllNetworks(libvirt.CONNECT_LIST_NETWORKS_ACTIVE | libvirt.CONNECT_LIST_NETWORKS_INACTIVE)
+	if err != nil {
+		return fmt.Errorf("list networks while validating bridge %s: %w", bridge, err)
+	}
+	for i := range networks {
+		network := &networks[i]
+		name, nameErr := network.GetName()
+		xmlText, xmlErr := network.GetXMLDesc(0)
+		_ = network.Free()
+		if nameErr != nil || xmlErr != nil || name == currentNetwork {
+			continue
+		}
+		var existing networkXML
+		if xml.Unmarshal([]byte(xmlText), &existing) != nil {
+			continue
+		}
+		if existing.Bridge.Name == bridge {
+			return fmt.Errorf("%w: host bridge %s is already used by network %s", domain.ErrConflict, bridge, name)
+		}
+	}
+	return nil
 }
 
 func (c *Client) PerformNetworkAction(ctx context.Context, name string, action domain.VirtualNetworkAction) error {
@@ -258,17 +363,23 @@ func (c *Client) DeleteNetwork(ctx context.Context, name string) error {
 }
 
 func networkXMLFromDefinition(definition domain.VirtualNetworkDefinition) (string, error) {
-	item := networkDefinitionXML{
-		Name: definition.Name,
-		IP: networkIPDefinitionXML{
-			Address: definition.IPv4Address,
-			Prefix:  definition.Prefix,
-		},
-	}
-	if definition.Mode == "nat" {
+	item := networkDefinitionXML{Name: definition.Name}
+	switch definition.Mode {
+	case "nat":
 		item.Forward = &networkForwardXML{Mode: "nat"}
+		item.IP = &networkIPDefinitionXML{Address: definition.IPv4Address, Prefix: definition.Prefix}
+	case "isolated":
+		item.IP = &networkIPDefinitionXML{Address: definition.IPv4Address, Prefix: definition.Prefix}
+	case "bridge":
+		if definition.Bridge == "" {
+			return "", fmt.Errorf("%w: host bridge name is required", domain.ErrInvalidInput)
+		}
+		item.Forward = &networkForwardXML{Mode: "bridge"}
+		item.Bridge = &networkBridgeXML{Name: definition.Bridge}
+	default:
+		return "", fmt.Errorf("%w: unsupported network mode", domain.ErrInvalidInput)
 	}
-	if definition.DHCPStart != "" && definition.DHCPEnd != "" {
+	if item.IP != nil && definition.DHCPStart != "" && definition.DHCPEnd != "" {
 		item.IP.DHCP = &networkDHCPDefinitionXML{Range: networkRangeXML{Start: definition.DHCPStart, End: definition.DHCPEnd}}
 	}
 	body, err := xml.Marshal(item)

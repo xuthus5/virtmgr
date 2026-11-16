@@ -1464,6 +1464,22 @@ func (d *DemoBackend) ListNetworks(context.Context) ([]domain.VirtualNetwork, er
 	return result, nil
 }
 
+func (d *DemoBackend) ListHostBridges(context.Context) ([]domain.HostBridge, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	used := map[string]bool{}
+	for _, network := range d.networks {
+		used[network.Bridge] = true
+	}
+	result := make([]domain.HostBridge, 0, 3)
+	for _, name := range []string{"br0", "br1", "br2"} {
+		if !used[name] {
+			result = append(result, domain.HostBridge{Name: name})
+		}
+	}
+	return result, nil
+}
+
 func (d *DemoBackend) ListDHCPLeases(_ context.Context, networkName string) ([]domain.DHCPLease, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -1509,6 +1525,13 @@ func (d *DemoBackend) CreateNetwork(_ context.Context, definition domain.Virtual
 	if _, exists := d.networks[definition.Name]; exists {
 		return domain.VirtualNetwork{}, domain.ErrConflict
 	}
+	if definition.Mode == "bridge" {
+		for _, existing := range d.networks {
+			if existing.Bridge == definition.Bridge {
+				return domain.VirtualNetwork{}, domain.ErrConflict
+			}
+		}
+	}
 	uuid, err := newDemoUUID()
 	if err != nil {
 		return domain.VirtualNetwork{}, err
@@ -1520,6 +1543,10 @@ func (d *DemoBackend) CreateNetwork(_ context.Context, definition domain.Virtual
 			Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix, DHCPEnabled: definition.DHCPStart != "",
 			DHCPStart: definition.DHCPStart, DHCPEnd: definition.DHCPEnd,
 		}},
+	}
+	if definition.Mode == "bridge" {
+		network.Bridge = definition.Bridge
+		network.Addresses = []domain.NetworkAddress{}
 	}
 	d.networks[network.Name] = network
 	d.leases[network.Name] = []domain.DHCPLease{}
@@ -1537,11 +1564,26 @@ func (d *DemoBackend) UpdateNetwork(_ context.Context, definition domain.Virtual
 	if network.Active {
 		return domain.VirtualNetwork{}, domain.ErrNetworkActive
 	}
-	if !network.Persistent || (network.ForwardMode != "" && network.ForwardMode != "nat" && network.ForwardMode != "isolated") {
+	if !network.Persistent || (network.ForwardMode != "" && network.ForwardMode != "nat" && network.ForwardMode != "isolated" && network.ForwardMode != "bridge") {
 		return domain.VirtualNetwork{}, domain.ErrNetworkUnsupported
+	}
+	if definition.Mode == "bridge" {
+		for name, existing := range d.networks {
+			if name != definition.Name && existing.Bridge == definition.Bridge {
+				return domain.VirtualNetwork{}, domain.ErrConflict
+			}
+		}
 	}
 	network.Autostart = definition.Autostart
 	network.ForwardMode = definition.Mode
+	if definition.Mode == "bridge" {
+		network.Bridge = definition.Bridge
+		network.Addresses = []domain.NetworkAddress{}
+		d.networks[definition.Name] = network
+		d.publish("network.updated", "info", "network", network.Name, network.Name, "虚拟网络 "+network.Name+" 配置已更新")
+		return cloneNetwork(network), nil
+	}
+	network.Bridge = d.nextDemoBridgeLocked()
 	addresses := append([]domain.NetworkAddress(nil), network.Addresses...)
 	updatedAddress := domain.NetworkAddress{
 		Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix, DHCPEnabled: definition.DHCPStart != "",

@@ -16,6 +16,7 @@ import (
 
 type handlerRepository struct {
 	networks    []domain.VirtualNetwork
+	bridges     []domain.HostBridge
 	err         error
 	created     domain.VirtualNetworkDefinition
 	updated     domain.VirtualNetworkDefinition
@@ -30,6 +31,10 @@ type handlerRepository struct {
 
 func (f *handlerRepository) ListNetworks(context.Context) ([]domain.VirtualNetwork, error) {
 	return f.networks, f.err
+}
+
+func (f *handlerRepository) ListHostBridges(context.Context) ([]domain.HostBridge, error) {
+	return f.bridges, f.err
 }
 
 func (f *handlerRepository) ListDHCPLeases(_ context.Context, networkName string) ([]domain.DHCPLease, error) {
@@ -103,6 +108,18 @@ func TestNetworkRoutes(t *testing.T) {
 	}
 }
 
+func TestNetworkHostBridgeRoute(t *testing.T) {
+	router := newTestRouter(&handlerRepository{bridges: []domain.HostBridge{{Name: "br1"}, {Name: "br0"}}})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/networks/bridges", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"name":"br0"`) || !strings.Contains(recorder.Body.String(), `"total":2`) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
 func TestNetworkLeaseRoute(t *testing.T) {
 	repository := &handlerRepository{leases: []domain.DHCPLease{{
 		Family: "ipv4", MAC: "52:54:00:12:34:56", IPAddress: "192.168.122.101", Prefix: 24, Hostname: "demo-web-01",
@@ -150,6 +167,27 @@ func TestCreateNetworkRoute(t *testing.T) {
 	}
 	if repository.created.Name != "lab-net" || repository.created.IPv4Address != "10.30.0.1" || !repository.created.Autostart {
 		t.Fatalf("created definition = %+v", repository.created)
+	}
+}
+
+func TestCreateBridgeNetworkRoute(t *testing.T) {
+	repository := &handlerRepository{}
+	router := newTestRouter(repository)
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks", strings.NewReader(`{
+		"name":"prod-bridge",
+		"mode":"bridge",
+		"bridge":"br0",
+		"autostart":true,
+		"start":false
+	}`)), domain.RoleOperator)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if repository.created.Mode != "bridge" || repository.created.Bridge != "br0" || repository.created.IPv4Address != "" {
+		t.Fatalf("created bridge definition = %+v", repository.created)
 	}
 }
 

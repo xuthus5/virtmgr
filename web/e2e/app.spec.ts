@@ -204,13 +204,19 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "虚拟网络", exact: true })).toBeVisible();
   await expect(page.getByTestId("network-total")).toHaveText("3");
   await expect(page.getByTestId("network-active")).toHaveText("2");
-  await expect(page.getByTestId("network-bridges")).toHaveText("3");
+  await expect(page.getByTestId("network-bridges")).toHaveText("1");
   await expect(page.getByTestId("network-nat")).toHaveText("1");
 
   const defaultRow = page.getByTestId("network-row-default");
   await expect(defaultRow).toContainText("virbr0");
   await expect(defaultRow).toContainText("192.168.122.1/24");
   await expect(defaultRow).toContainText("DHCP 192.168.122.2 - 192.168.122.254");
+  const bridgeRow = page.getByTestId("network-row-br-prod");
+  await expect(bridgeRow).toContainText("bridge");
+  await expect(bridgeRow).toContainText("br0");
+  await expect(bridgeRow).toContainText("由上游网桥分配");
+  await expect(page.getByTestId("network-leases-br-prod")).toBeDisabled();
+  await expect(page.getByTestId("network-hosts-br-prod")).toBeDisabled();
   await expect(page.getByTestId("network-row-lab-isolated")).toContainText("未激活");
   await expect(page.getByTestId("network-create-toggle")).toBeDisabled();
   await expect(page.getByTestId("network-start-lab-isolated")).toHaveCount(0);

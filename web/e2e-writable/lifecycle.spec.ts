@@ -814,14 +814,82 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
   await expect(page.getByTestId("audit-action-filter")).toContainText("创建虚拟网络");
-  await page.getByTestId("audit-action-filter").selectOption("network.create");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
-  await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("e2e-net-01");
-  await page.getByTestId("audit-action-filter").selectOption("network.delete");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
-  await page.getByTestId("audit-action-filter").selectOption("network.update");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
-  await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("e2e-net-01");
+  for (const [action, label] of [
+    ["network.create", "创建虚拟网络"],
+    ["network.update", "编辑虚拟网络"],
+    ["network.delete", "删除虚拟网络"],
+  ] as const) {
+    await page.getByTestId("audit-action-filter").selectOption(action);
+    const auditRow = page
+      .locator('[data-testid^="audit-row-"]')
+      .filter({ hasText: "e2e-net-01" })
+      .first();
+    await expect(auditRow).toBeVisible();
+    await expect(auditRow).toContainText(label);
+    await expect(auditRow).toContainText("成功");
+  }
+});
+
+test("可写模式创建外部桥接网络并校验网桥切换", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "网络", exact: true }).click();
+  await expect(page.getByTestId("network-total")).toHaveText("3");
+  await expect(page.getByTestId("network-bridges")).toHaveText("1");
+
+  await page.getByTestId("network-create-toggle").click();
+  await page.getByLabel("网络名称", { exact: true }).fill("e2e-bridge-01");
+  await page.getByLabel("网络模式", { exact: true }).selectOption("bridge");
+  await expect(page.getByLabel("IPv4 子网", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("DHCP 起始地址（可选）", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("宿主机网桥", { exact: true })).toBeVisible();
+  await page.getByLabel("宿主机网桥", { exact: true }).fill("br1");
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const mobileLayout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(mobileLayout.documentWidth, `${width}px 桥接网络表单不应横向溢出`).toBeLessThanOrEqual(mobileLayout.viewportWidth);
+    expect(mobileLayout.bodyWidth, `${width}px 桥接网络表单 body 不应横向溢出`).toBeLessThanOrEqual(mobileLayout.viewportWidth);
+    await expect(page.getByTestId("network-bridge")).toBeVisible();
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  await page.getByTestId("network-create-submit").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-bridge-01 已创建。");
+  await expect(page.getByTestId("network-total")).toHaveText("4");
+  await expect(page.getByTestId("network-bridges")).toHaveText("2");
+  const row = page.getByTestId("network-row-e2e-bridge-01");
+  await expect(row).toContainText("bridge");
+  await expect(row).toContainText("br1");
+  await expect(row).toContainText("由上游网桥分配");
+  await expect(page.getByTestId("network-leases-e2e-bridge-01")).toBeDisabled();
+  await expect(page.getByTestId("network-hosts-e2e-bridge-01")).toBeDisabled();
+
+  await page.getByTestId("network-edit-e2e-bridge-01").click();
+  await expect(page.getByTestId("network-edit-form")).toBeVisible();
+  await expect(page.getByLabel("IPv4 子网", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("宿主机网桥", { exact: true })).toHaveValue("br1");
+  await page.getByLabel("宿主机网桥", { exact: true }).fill("br2");
+  await page.getByTestId("network-edit-submit").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-bridge-01 配置已更新。");
+  await expect(row).toContainText("br2");
+
+  await page.getByTestId("network-start-e2e-bridge-01").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-bridge-01 已启动。");
+  await expect(row).toContainText("活跃");
+  await page.getByTestId("network-stop-e2e-bridge-01").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-bridge-01 已停止。");
+
+  await page.getByTestId("network-delete-e2e-bridge-01").click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByLabel("输入网络名称确认").fill("e2e-bridge-01");
+  await dialog.getByTestId("confirm-delete-network").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-bridge-01 已删除。");
+  await expect(page.getByTestId("network-total")).toHaveText("3");
+  await expect(page.getByTestId("network-bridges")).toHaveText("1");
 });
 
 test("可写模式切换虚拟机开机自启动", async ({ page }) => {

@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { networkActionHint, networkEditDisabledReason, networkEditForm, networkUpdateInput, type NetworkEditFormState } from "@/features/networks/network-edit-model";
-import { networksQueryKey, useNetworksQuery } from "@/features/networks/use-networks-query";
+import { networksQueryKey, useHostBridgesQuery, useNetworksQuery } from "@/features/networks/use-networks-query";
 import { networkLeasesQueryKey, useNetworkLeasesQuery } from "@/features/networks/use-network-leases-query";
 
 type CreateFormState = {
@@ -24,6 +24,7 @@ type CreateFormState = {
   subnet: string;
   dhcpStart: string;
   dhcpEnd: string;
+  bridge: string;
   autostart: boolean;
   start: boolean;
 };
@@ -40,6 +41,7 @@ const initialCreateForm: CreateFormState = {
   subnet: "10.0.0.0/24",
   dhcpStart: "",
   dhcpEnd: "",
+  bridge: "",
   autostart: false,
   start: false,
 };
@@ -80,11 +82,12 @@ export function NetworksPage() {
   const session = useSessionQuery();
   const queryClient = useQueryClient();
   const query = useNetworksQuery();
+  const hostBridgesQuery = useHostBridgesQuery();
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateForm);
   const [createError, setCreateError] = useState("");
   const [editTarget, setEditTarget] = useState<VirtualNetwork | null>(null);
-  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", autostart: false });
+  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", bridge: "", autostart: false });
   const [editError, setEditError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [actionErrorText, setActionErrorText] = useState("");
@@ -99,6 +102,7 @@ export function NetworksPage() {
   const [hostDeleteTarget, setHostDeleteTarget] = useState<{ network: VirtualNetwork; host: NetworkDHCPHost } | null>(null);
   const hostFileInput = useRef<HTMLInputElement>(null);
   const networks = query.data?.items ?? [];
+  const hostBridges = hostBridgesQuery.data?.items ?? [];
   const leasesQuery = useNetworkLeasesQuery(leasesNetwork);
   const leases = leasesQuery.data?.items ?? [];
   const leasesNetworkRecord = networks.find((network) => network.name === leasesNetwork);
@@ -106,7 +110,7 @@ export function NetworksPage() {
   const hosts = staticHosts(hostsNetworkRecord);
   const hostsHaveDHCP = Boolean(hostsNetworkRecord?.addresses.some((address) => (address.family === "" || address.family === "ipv4") && (address.dhcpEnabled || address.dhcpStart)));
   const active = networks.filter((network) => network.active).length;
-  const bridges = networks.filter((network) => Boolean(network.bridge)).length;
+  const bridges = networks.filter((network) => network.forwardMode === "bridge").length;
   const nat = networks.filter((network) => network.forwardMode === "nat").length;
   const readOnly = Boolean(session.data?.readOnly);
   const viewer = session.data?.user.role === "viewer";
@@ -261,9 +265,13 @@ export function NetworksPage() {
     createMutation.mutate({
       name: createForm.name.trim(),
       mode: createForm.mode,
-      subnet: createForm.subnet.trim(),
-      dhcpStart: createForm.dhcpStart.trim() || undefined,
-      dhcpEnd: createForm.dhcpEnd.trim() || undefined,
+      ...(createForm.mode === "bridge"
+        ? { bridge: createForm.bridge.trim() }
+        : {
+            subnet: createForm.subnet.trim(),
+            dhcpStart: createForm.dhcpStart.trim() || undefined,
+            dhcpEnd: createForm.dhcpEnd.trim() || undefined,
+          }),
       autostart: createForm.autostart,
       start: createForm.start,
     });
@@ -345,6 +353,10 @@ export function NetworksPage() {
         )}
       />
 
+      <datalist id="network-bridge-options">
+        {hostBridges.map((bridge) => <option key={bridge.name} value={bridge.name} />)}
+      </datalist>
+
       {successMessage ? (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm text-success" role="status" data-testid="network-action-success">
           <CheckCircle2 className="h-4 w-4" />{successMessage}
@@ -360,7 +372,7 @@ export function NetworksPage() {
         <Card className="mb-4">
           <CardHeader>
             <CardTitle>创建虚拟网络</CardTitle>
-            <CardDescription>创建持久化网络定义。子网至少为 /29，网关固定为网络地址加一。</CardDescription>
+            <CardDescription>{createForm.mode === "bridge" ? "接入宿主机已有网桥，地址和 DHCP 由上游网络提供。" : "创建持久化网络定义。子网至少为 /29，网关固定为网络地址加一。"}</CardDescription>
           </CardHeader>
           <CardContent>
             <form id="network-create-form" data-testid="network-create-form" onSubmit={submitCreate} className="space-y-4">
@@ -374,12 +386,21 @@ export function NetworksPage() {
                   <select id="network-mode" value={createForm.mode} onChange={(event) => updateCreateForm("mode", event.target.value as CreateFormState["mode"])} disabled={!canManage} className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:opacity-50">
                     <option value="nat">NAT 转发</option>
                     <option value="isolated">隔离网络</option>
+                    <option value="bridge">外部桥接</option>
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-subnet">IPv4 子网</Label>
-                  <Input id="network-subnet" value={createForm.subnet} onChange={(event) => updateCreateForm("subnet", event.target.value)} placeholder="10.20.30.0/24" required disabled={!canManage} />
-                </div>
+                {createForm.mode === "bridge" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="network-bridge">宿主机网桥</Label>
+                    <Input id="network-bridge" data-testid="network-bridge" list="network-bridge-options" value={createForm.bridge} onChange={(event) => updateCreateForm("bridge", event.target.value)} placeholder="br0" required disabled={!canManage} autoComplete="off" />
+                    <p className="text-[11px] text-muted-foreground">仅列出 libvirt 已识别的活跃网桥；也可输入列表中未显示的名称。</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="network-subnet">IPv4 子网</Label>
+                    <Input id="network-subnet" value={createForm.subnet} onChange={(event) => updateCreateForm("subnet", event.target.value)} placeholder="10.20.30.0/24" required disabled={!canManage} />
+                  </div>
+                )}
                 <div className="flex flex-col justify-end gap-2 pb-1 text-sm">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" className="h-4 w-4" checked={createForm.autostart} onChange={(event) => updateCreateForm("autostart", event.target.checked)} disabled={!canManage} />
@@ -390,14 +411,18 @@ export function NetworksPage() {
                     创建后立即启动
                   </label>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-dhcp-start">DHCP 起始地址（可选）</Label>
-                  <Input id="network-dhcp-start" value={createForm.dhcpStart} onChange={(event) => updateCreateForm("dhcpStart", event.target.value)} placeholder="10.20.30.10" disabled={!canManage} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-dhcp-end">DHCP 结束地址（可选）</Label>
-                  <Input id="network-dhcp-end" value={createForm.dhcpEnd} onChange={(event) => updateCreateForm("dhcpEnd", event.target.value)} placeholder="10.20.30.200" disabled={!canManage} />
-                </div>
+                {createForm.mode !== "bridge" ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="network-dhcp-start">DHCP 起始地址（可选）</Label>
+                      <Input id="network-dhcp-start" value={createForm.dhcpStart} onChange={(event) => updateCreateForm("dhcpStart", event.target.value)} placeholder="10.20.30.10" disabled={!canManage} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="network-dhcp-end">DHCP 结束地址（可选）</Label>
+                      <Input id="network-dhcp-end" value={createForm.dhcpEnd} onChange={(event) => updateCreateForm("dhcpEnd", event.target.value)} placeholder="10.20.30.200" disabled={!canManage} />
+                    </div>
+                  </>
+                ) : null}
               </div>
               {createError ? (
                 <p className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert" data-testid="network-create-error">
@@ -405,7 +430,7 @@ export function NetworksPage() {
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">DHCP 起止地址留空时自动使用子网内可用范围；只填写一项将被拒绝。</p>
+                <p className="text-xs text-muted-foreground">{createForm.mode === "bridge" ? "VirtMgr 只创建 libvirt 网络定义，不创建或修改宿主机网桥。" : "DHCP 起止地址留空时自动使用子网内可用范围；只填写一项将被拒绝。"}</p>
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="ghost" size="sm" onClick={() => { setCreateOpen(false); setCreateError(""); }}>取消</Button>
                   <Button type="submit" size="sm" data-testid="network-create-submit" disabled={!canManage || createMutation.isPending}>
@@ -437,26 +462,38 @@ export function NetworksPage() {
                   <select id="network-edit-mode" value={editForm.mode} onChange={(event) => updateEditForm("mode", event.target.value as NetworkEditFormState["mode"])} disabled={updateMutation.isPending} className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:opacity-50">
                     <option value="nat">NAT 转发</option>
                     <option value="isolated">隔离网络</option>
+                    <option value="bridge">外部桥接</option>
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-edit-subnet">IPv4 子网</Label>
-                  <Input id="network-edit-subnet" value={editForm.subnet} onChange={(event) => updateEditForm("subnet", event.target.value)} placeholder="10.20.30.0/24" required disabled={updateMutation.isPending} />
-                </div>
+                {editForm.mode === "bridge" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="network-edit-bridge">宿主机网桥</Label>
+                    <Input id="network-edit-bridge" data-testid="network-edit-bridge" list="network-bridge-options" value={editForm.bridge} onChange={(event) => updateEditForm("bridge", event.target.value)} placeholder="br0" required disabled={updateMutation.isPending} autoComplete="off" />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="network-edit-subnet">IPv4 子网</Label>
+                    <Input id="network-edit-subnet" value={editForm.subnet} onChange={(event) => updateEditForm("subnet", event.target.value)} placeholder="10.20.30.0/24" required disabled={updateMutation.isPending} />
+                  </div>
+                )}
                 <div className="flex flex-col justify-end gap-2 pb-1 text-sm">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" className="h-4 w-4" checked={editForm.autostart} onChange={(event) => updateEditForm("autostart", event.target.checked)} disabled={updateMutation.isPending} />
                     开机自动启动
                   </label>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-edit-dhcp-start">DHCP 起始地址（可选）</Label>
-                  <Input id="network-edit-dhcp-start" value={editForm.dhcpStart} onChange={(event) => updateEditForm("dhcpStart", event.target.value)} placeholder="10.20.30.10" disabled={updateMutation.isPending} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="network-edit-dhcp-end">DHCP 结束地址（可选）</Label>
-                  <Input id="network-edit-dhcp-end" value={editForm.dhcpEnd} onChange={(event) => updateEditForm("dhcpEnd", event.target.value)} placeholder="10.20.30.200" disabled={updateMutation.isPending} />
-                </div>
+                {editForm.mode !== "bridge" ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="network-edit-dhcp-start">DHCP 起始地址（可选）</Label>
+                      <Input id="network-edit-dhcp-start" value={editForm.dhcpStart} onChange={(event) => updateEditForm("dhcpStart", event.target.value)} placeholder="10.20.30.10" disabled={updateMutation.isPending} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="network-edit-dhcp-end">DHCP 结束地址（可选）</Label>
+                      <Input id="network-edit-dhcp-end" value={editForm.dhcpEnd} onChange={(event) => updateEditForm("dhcpEnd", event.target.value)} placeholder="10.20.30.200" disabled={updateMutation.isPending} />
+                    </div>
+                  </>
+                ) : null}
               </div>
               {editError ? (
                 <p className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert" data-testid="network-edit-error">
@@ -464,7 +501,7 @@ export function NetworksPage() {
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">修改网关或子网会重建网络配置；保存前请确认没有虚拟机依赖当前地址。</p>
+                <p className="text-xs text-muted-foreground">{editForm.mode === "bridge" ? "保存只更新 libvirt 网络定义，不创建或修改宿主机网桥。" : "修改网关或子网会重建网络配置；保存前请确认没有虚拟机依赖当前地址。"}</p>
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="ghost" size="sm" disabled={updateMutation.isPending} onClick={() => { setEditTarget(null); setEditError(""); }}>取消</Button>
                   <Button type="submit" size="sm" data-testid="network-edit-submit" disabled={updateMutation.isPending}>
@@ -486,7 +523,7 @@ export function NetworksPage() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="虚拟网络" value={query.data.total} hint="已定义的全部网络" icon={Network} tone="primary" testId="network-total" />
             <MetricCard label="活跃网络" value={active} hint={`${networks.length - active} 个未激活`} icon={GitBranch} tone={active ? "success" : "neutral"} testId="network-active" />
-            <MetricCard label="桥接网络" value={bridges} hint="已配置 bridge 名称" icon={Router} tone="neutral" testId="network-bridges" />
+            <MetricCard label="外部桥接" value={bridges} hint="接入宿主机已有网桥" icon={Router} tone="neutral" testId="network-bridges" />
             <MetricCard label="NAT 网络" value={nat} hint="宿主转发模式为 NAT" icon={Activity} tone={nat ? "warning" : "neutral"} testId="network-nat" />
           </div>
 
@@ -524,7 +561,7 @@ export function NetworksPage() {
                                 <p className="text-[10px] text-muted-foreground">静态主机 {address.hosts.length} 条</p>
                               ) : null}
                             </div>
-                          )) : <span className="text-xs text-muted-foreground">未配置地址</span>}
+                          )) : <span className="text-xs text-muted-foreground">{network.forwardMode === "bridge" ? "由上游网桥分配" : "未配置地址"}</span>}
                         </TableCell>
                         <TableCell>{network.autostart ? "是" : "否"}</TableCell>
                         <TableCell className="align-top">
@@ -599,7 +636,8 @@ export function NetworksPage() {
                                 size="sm"
                                 data-testid={`network-leases-${network.name}`}
                                 aria-label={`查看网络 ${network.name} 的 DHCP 租约`}
-                                title="查看 DHCP 租约"
+                                title={network.forwardMode === "bridge" ? "外部桥接网络的 DHCP 由宿主机上游网络管理" : "查看 DHCP 租约"}
+                                disabled={network.forwardMode === "bridge"}
                                 onClick={() => setLeasesNetwork((current) => current === network.name ? null : network.name)}
                               >
                                 <ScrollText className="h-3.5 w-3.5" />租约
@@ -610,7 +648,8 @@ export function NetworksPage() {
                                 size="sm"
                                 data-testid={`network-hosts-${network.name}`}
                                 aria-label={`管理网络 ${network.name} 的静态主机`}
-                                title={staticHostCount(network) ? `管理静态主机（${staticHostCount(network)} 条）` : "管理静态主机条目"}
+                                title={network.forwardMode === "bridge" ? "外部桥接网络不提供 libvirt DHCP 静态主机配置" : staticHostCount(network) ? `管理静态主机（${staticHostCount(network)} 条）` : "管理静态主机条目"}
+                                disabled={network.forwardMode === "bridge"}
                                 onClick={() => toggleHosts(network)}
                               >
                                 <ListPlus className="h-3.5 w-3.5" />静态主机

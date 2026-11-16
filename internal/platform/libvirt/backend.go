@@ -69,6 +69,7 @@ type Backend interface {
 	StorageVolumeChecksum(ctx context.Context, poolName, volumeName string) (string, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)
+	ListHostBridges(ctx context.Context) ([]domain.HostBridge, error)
 	ListDHCPLeases(ctx context.Context, networkName string) ([]domain.DHCPLease, error)
 	CreateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	UpdateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)

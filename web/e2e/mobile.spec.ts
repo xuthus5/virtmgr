@@ -52,7 +52,7 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
 test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await login(page);
-  for (const path of ["/images", "/settings", "/tasks", "/storage", "/vms/new"]) {
+  for (const path of ["/images", "/settings", "/tasks", "/storage", "/networks", "/vms/new"]) {
     await page.goto(path);
     await expect(page.getByRole("main")).toBeVisible();
     for (const width of [320, 390]) {
@@ -69,6 +69,9 @@ test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", a
   await page.goto("/images");
   await expect(page.getByRole("heading", { name: "镜像库", exact: true })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "ubuntu-24.04-cloud-base" })).toBeVisible();
+  await page.goto("/networks");
+  await expect(page.getByTestId("network-row-br-prod")).toContainText("br0");
+  await expect(page.getByTestId("network-leases-br-prod")).toBeDisabled();
 });
 
 test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page }) => {

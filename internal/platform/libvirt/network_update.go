@@ -51,8 +51,13 @@ func (c *Client) UpdateNetwork(ctx context.Context, definition domain.VirtualNet
 	if err := xml.Unmarshal([]byte(originalXML), &current); err != nil {
 		return domain.VirtualNetwork{}, fmt.Errorf("decode network definition before update: %w", err)
 	}
-	if current.Forward.Mode != "" && current.Forward.Mode != "nat" && current.Forward.Mode != "isolated" {
+	if current.Forward.Mode != "" && current.Forward.Mode != "nat" && current.Forward.Mode != "isolated" && current.Forward.Mode != "bridge" {
 		return domain.VirtualNetwork{}, domain.ErrNetworkUnsupported
+	}
+	if definition.Mode == "bridge" {
+		if err := c.validateHostBridgeLocked(definition.Bridge, definition.Name); err != nil {
+			return domain.VirtualNetwork{}, err
+		}
 	}
 	updatedXML, err := updateNetworkXML(originalXML, definition)
 	if err != nil {
@@ -84,6 +89,10 @@ type networkXMLNode struct {
 }
 
 func updateNetworkXML(xmlText string, definition domain.VirtualNetworkDefinition) (string, error) {
+	var current networkXML
+	if err := xml.Unmarshal([]byte(xmlText), &current); err != nil {
+		return "", fmt.Errorf("decode current network definition: %w", err)
+	}
 	root, err := parseNetworkXMLTree(xmlText)
 	if err != nil {
 		return "", err
@@ -95,8 +104,16 @@ func updateNetworkXML(xmlText string, definition domain.VirtualNetworkDefinition
 	if err := setNetworkForward(network, definition.Mode); err != nil {
 		return "", err
 	}
-	if err := setNetworkIPv4(network, definition); err != nil {
-		return "", err
+	if definition.Mode == "bridge" {
+		setNetworkBridge(network, definition.Bridge)
+		removeXMLChildren(network, "ip")
+	} else {
+		if current.Forward.Mode == "bridge" {
+			removeXMLChild(network, "bridge")
+		}
+		if err := setNetworkIPv4(network, definition); err != nil {
+			return "", err
+		}
 	}
 	var buffer bytes.Buffer
 	encoder := xml.NewEncoder(&buffer)
@@ -180,15 +197,24 @@ func setNetworkForward(network *networkXMLNode, mode string) error {
 		removeXMLChild(network, "forward")
 		return nil
 	}
-	if mode != "nat" {
+	if mode != "nat" && mode != "bridge" {
 		return domain.ErrInvalidInput
 	}
 	if forward == nil {
 		forward = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "forward"}}}
 		insertXMLChildBefore(network, forward, "bridge", "mac", "domain", "dns", "ip")
 	}
-	setXMLAttribute(forward, "mode", "nat")
+	setXMLAttribute(forward, "mode", mode)
 	return nil
+}
+
+func setNetworkBridge(network *networkXMLNode, name string) {
+	bridge := firstXMLChild(network, "bridge")
+	if bridge == nil {
+		bridge = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "bridge"}}}
+		insertXMLChildBefore(network, bridge, "mac", "domain", "dns", "ip")
+	}
+	setXMLAttribute(bridge, "name", name)
 }
 
 func setNetworkIPv4(network *networkXMLNode, definition domain.VirtualNetworkDefinition) error {
@@ -240,6 +266,17 @@ func firstXMLChild(parent *networkXMLNode, name string) *networkXMLNode {
 }
 
 func removeXMLChild(parent *networkXMLNode, name string) {
+	children := parent.Children[:0]
+	for _, child := range parent.Children {
+		if start, ok := child.Token.(xml.StartElement); ok && start.Name.Local == name {
+			continue
+		}
+		children = append(children, child)
+	}
+	parent.Children = children
+}
+
+func removeXMLChildren(parent *networkXMLNode, name string) {
 	children := parent.Children[:0]
 	for _, child := range parent.Children {
 		if start, ok := child.Token.(xml.StartElement); ok && start.Name.Local == name {

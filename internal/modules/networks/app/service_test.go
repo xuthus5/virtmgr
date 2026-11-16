@@ -11,6 +11,7 @@ import (
 
 type fakeRepository struct {
 	networks    []domain.VirtualNetwork
+	bridges     []domain.HostBridge
 	created     domain.VirtualNetworkDefinition
 	updated     domain.VirtualNetworkDefinition
 	addedHost   domain.NetworkDHCPHost
@@ -27,6 +28,10 @@ type fakeRepository struct {
 
 func (f *fakeRepository) ListNetworks(context.Context) ([]domain.VirtualNetwork, error) {
 	return f.networks, f.err
+}
+
+func (f *fakeRepository) ListHostBridges(context.Context) ([]domain.HostBridge, error) {
+	return append([]domain.HostBridge(nil), f.bridges...), f.err
 }
 
 func (f *fakeRepository) ListDHCPLeases(_ context.Context, networkName string) ([]domain.DHCPLease, error) {
@@ -130,6 +135,21 @@ func TestListSortsNetworks(t *testing.T) {
 	}
 	if result.Total != 3 || result.Items[0].Name != "archive" || result.Items[1].Name != "Default" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestListHostBridgesSortsAndReturnsEmptySlice(t *testing.T) {
+	service := New(&fakeRepository{bridges: []domain.HostBridge{{Name: "br1"}, {Name: "br0"}}}, nil, false)
+	result, err := service.ListHostBridges(context.Background())
+	if err != nil {
+		t.Fatalf("ListHostBridges() error = %v", err)
+	}
+	if result.Total != 2 || result.Items[0].Name != "br0" || result.Items[1].Name != "br1" {
+		t.Fatalf("bridges = %+v", result)
+	}
+	empty, err := New(&fakeRepository{}, nil, false).ListHostBridges(context.Background())
+	if err != nil || empty.Items == nil || empty.Total != 0 {
+		t.Fatalf("empty bridges = %+v, %v", empty, err)
 	}
 }
 
@@ -255,13 +275,40 @@ func TestCreateNetworkCustomDHCP(t *testing.T) {
 	}
 }
 
+func TestCreateBridgeNetworkNormalizesAndAudits(t *testing.T) {
+	repository := &fakeRepository{}
+	audit := &auditRecorder{}
+	network, err := New(repository, audit, false).Create(context.Background(), CreateNetworkCommand{
+		Spec: domain.VirtualNetworkCreateSpec{
+			Name: " prod-bridge ", Mode: " Bridge ", Bridge: " br0 ", Autostart: true,
+		},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if network.ForwardMode != "bridge" {
+		t.Fatalf("network = %+v", network)
+	}
+	want := domain.VirtualNetworkDefinition{Name: "prod-bridge", Mode: "bridge", Bridge: "br0", Autostart: true}
+	if repository.created != want {
+		t.Fatalf("definition = %+v, want %+v", repository.created, want)
+	}
+	if len(audit.events) != 1 || audit.events[0].Detail["mode"] != "bridge" || audit.events[0].Detail["bridge"] != "br0" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
 func TestCreateNetworkValidation(t *testing.T) {
 	tests := []struct {
 		name string
 		spec domain.VirtualNetworkCreateSpec
 	}{
 		{name: "invalid name", spec: domain.VirtualNetworkCreateSpec{Name: "a", Mode: "nat", Subnet: "10.0.0.0/24"}},
-		{name: "invalid mode", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "bridge", Subnet: "10.0.0.0/24"}},
+		{name: "invalid mode", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "route", Subnet: "10.0.0.0/24"}},
+		{name: "missing bridge", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "bridge"}},
+		{name: "invalid bridge", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "bridge", Bridge: "br/0"}},
+		{name: "bridge too long", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "bridge", Bridge: "bridge-interface-01"}},
 		{name: "invalid subnet", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "not-a-subnet"}},
 		{name: "ipv6 subnet", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "fd00::/64"}},
 		{name: "subnet too small", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/30"}},

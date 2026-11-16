@@ -1,6 +1,6 @@
 # VirtMgr 产品差距分析与单机精品路线筛选
 
-> 状态：`SH-01` 至 `SH-09`、`SH-11` 至 `SH-16`、`NB-01`、`NB-02`、`NB-04`、`NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07` 和 `NR-08` 已实现。本轮补齐运行时 ISO 挂载/替换、NFS 与 LVM 存储池、Guest Agent systemd 服务只读诊断、客户机文件系统使用率告警、完整 OpenAPI 契约和全局搜索资源覆盖。`NR-04` 升级前预检安全包、`SH-10` 备份校验、夏令时处理和通知中心扩展按当前产品决定不实施。
+> 状态：`SH-01` 至 `SH-09`、`SH-11` 至 `SH-16`、`NB-01`、`NB-02`、`NB-04`、`NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07`、`NR-08` 和 `NR-09` 已实现。最近一轮补齐运行时 ISO 挂载/替换、NFS 与 LVM 存储池、Guest Agent systemd 服务只读诊断、客户机文件系统使用率告警、完整 OpenAPI 契约、全局搜索资源覆盖和宿主机现有网桥接入。`NR-04` 升级前预检安全包、`SH-10` 备份校验、夏令时处理和通知中心扩展按当前产品决定不实施。
 > 日期：2026-11-15。
 > 目标：以“单机精品 KVM/libvirt 管理平台”为当前产品定位，对比主流管理工具，区分值得优化的单机能力与暂不建议投入的平台级能力。
 
@@ -51,7 +51,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - 备份是关机状态下的冷全量备份，只支持 `file` 后端磁盘，恢复为新虚拟机；支持固定间隔或每日时刻调度、失败重试和任务 SSE 状态快照，不做备份内容自动校验。
 - 任务中心支持 `vm.clone`、冷备份相关任务、存储卷上传等安全检查点取消；同一资源上的可取消任务串行执行。取消不会强杀进程，可能在下一个检查点前保留中间文件，UI 会明确提示。
 - 存储池可在应用内创建目录池、NFS `netfs` 池和 LVM `logical` 池；其他 libvirt 存储池可以读取。LVM 池只允许创建 raw 块卷且不接受文件上传。
-- 网络创建支持 NAT/isolated、IPv4 和 DHCP；静态 DHCP 主机支持单条和 CSV 批量导入/导出，不提供桥接、VLAN、IPv6、SR-IOV、OVS 和安全组管理。
+- 网络创建支持 NAT/isolated、外部桥接、IPv4 和 DHCP；外部桥接复用宿主机已有 Linux 网桥并由上游网络提供地址/DHCP，静态 DHCP 主机支持单条和 CSV 批量导入/导出。不提供网桥创建、VLAN、IPv6、SR-IOV、OVS 和安全组管理。
 - 指标来自当前采样和上一次采样差值，并提供每分钟采样、保留 7 天的历史趋势、Prometheus `/metrics` 和 CPU/内存/客户机文件系统阈值告警 Webhook。
 - 虚拟机支持标签、备注和负责人元数据，以及列表筛选、浏览器本地收藏和常用筛选持久化。
 - Guest Agent 支持固定动作、文件/密码/SSH 公钥/进程/登录用户管理、systemd 服务只读诊断、期望状态和连通性历史；不提供通用任意命令执行。
@@ -73,7 +73,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-08 备份成熟度`：缺在线一致性备份、增量备份、原地恢复、内存状态、S3/SFTP/远端仓库、加密、压缩、去重、自动校验、GFS 保留和跨主机复制。价值高，成本高。
 - `GAP-09 Cloud-init 与 OS 定制`：当前支持 NoCloud user-data、network-config 和 vendor-data，并支持 Netplan v2 DHCP/静态 IPv4/IPv6；缺 config drive、执行结果回传、Windows Sysprep 和 OS profile。价值中高，成本中。
 - `GAP-10 存储类型与管理深度`：应用内创建已支持目录池、NFS `netfs` 和 LVM `logical`；缺 ZFS、iSCSI、Ceph RBD、Gluster 专用流程，以及卷克隆、卷迁移、格式转换、下载、QoS、TRIM 和 SMART。价值高，成本高。
-- `GAP-11 网络广度`：当前主要管理 NAT/isolated、IPv4 和 DHCP；缺桥接、bond、VLAN、IPv6/RA、macvtap、SR-IOV、OVS、VXLAN/SDN、端口转发、安全组、防火墙和 QoS。价值高，成本高。
+- `GAP-11 网络广度`：当前管理 NAT/isolated、宿主机已有网桥接入、IPv4 和 DHCP；缺应用内网桥/bond 创建、VLAN、IPv6/RA、macvtap、SR-IOV、OVS、VXLAN/SDN、端口转发、安全组、防火墙和 QoS。价值高，成本高。
 - `GAP-12 虚拟机组织能力`：已支持标签、备注和负责人；缺文件夹、资源分组和自定义字段。价值中，成本低到中。
 
 ### 4.2 团队化、安全与 API
@@ -147,6 +147,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 | `NR-06` | 完整 OpenAPI 3.1 契约与契约测试 | GAP-15 | M | 中高 | 从真实挂载路由反向补全请求、响应、错误和示例，并用测试防止漂移 | 已实现 |
 | `NR-07` | 全局搜索覆盖存储卷、镜像、模板和任务 | GAP-27 | S | 中高 | 复用现有查询缓存和搜索模型，无新增后端索引 | 已实现 |
 | `NR-08` | 应用内创建 LVM `logical` 存储池并约束 raw 卷 | GAP-10 | S-M | 中高 | libvirt 原生逻辑卷池；仅允许 raw 块卷且禁用文件上传 | 已实现 |
+| `NR-09` | 创建外部桥接网络并接入宿主机已有网桥 | GAP-11 | S-M | 高 | 复用 libvirt `forward mode=bridge`；列出可用网桥，校验存在性、类型和重复占用 | 已实现 |
 
 ### 5.3 边界候选：成本略高但仍属单机精品范围
 
@@ -168,7 +169,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 ## 6. 已完成批次与下一轮建议
 
-第一轮 `SH-01` 至 `SH-05`、第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 以及第三轮 `SH-15` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2；第三轮完成 Guest Agent 首轮深度集成，第四轮补齐受控文件、密码、SSH、进程、登录用户、健康历史和静默快照追溯。上一轮完成 `NB-01` API Token/OpenAPI、`NB-02` 镜像库第一阶段和 `NB-04` 任务引擎增强；本轮完成 `NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07` 和 `NR-08`。
+第一轮 `SH-01` 至 `SH-05`、第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 以及第三轮 `SH-15` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2；第三轮完成 Guest Agent 首轮深度集成，第四轮补齐受控文件、密码、SSH、进程、登录用户、健康历史和静默快照追溯。后续完成 `NB-01` API Token/OpenAPI、`NB-02` 镜像库第一阶段、`NB-04` 任务引擎增强，以及 `NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07`、`NR-08` 和 `NR-09`。
 
 按当前“单机精品”定位，下一轮建议按以下顺序选择性投入：
 
@@ -214,4 +215,5 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `NR-06`：当用户读取 `GET /api/v1/openapi.json` 时，系统应返回有效 OpenAPI 3.1 文档，覆盖全部已挂载路由，并为每个操作提供唯一 `operationId`、标签、摘要和响应；路径参数必须声明，内部 `$ref` 必须可解析，契约测试应覆盖新增路由与主要请求/响应模型以防漂移。
 - `NR-07`：当用户在全局搜索中输入资源关键字时，系统应在现有虚拟机、网络和存储池之外继续匹配活跃存储池中的卷、镜像、模板和任务，并在选择结果后跳转到对应页面；单个数据源失败不得阻止其他来源展示。
 - `NR-08`：当 Operator 或 Admin 创建 LVM `logical` 存储池时，系统应要求有效卷组和 `/dev/` 绝对目标路径；该池中的新卷只能为 raw，文件上传必须拒绝，池启停、刷新和删除继续以 libvirt 为权威来源。
+- `NR-09`：当 Operator 或 Admin 创建或编辑外部桥接网络时，系统应要求选择有效的宿主机 Linux 网桥，校验该接口存在、类型为 bridge 且未被其他 libvirt 网络占用；bridge 模式不得创建 libvirt IP 或 DHCP，网络生命周期仍以 libvirt 为权威来源。系统只接入已有网桥，不负责创建或修改宿主机网桥、VLAN、bond、OVS 或 SR-IOV。
 - `NR-04` 当前不实施：系统不提供升级前安装包或预检安全包，也不应在本轮代码和文档中声称具备该能力。

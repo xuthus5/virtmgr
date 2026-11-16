@@ -50,6 +50,15 @@ type VirtualNetworkList struct {
 	Total int              `json:"total"`
 }
 
+type HostBridge struct {
+	Name string `json:"name"`
+}
+
+type HostBridgeList struct {
+	Items []HostBridge `json:"items"`
+	Total int          `json:"total"`
+}
+
 type DHCPLease struct {
 	Interface string     `json:"interface,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
@@ -90,6 +99,7 @@ type VirtualNetworkCreateSpec struct {
 	Subnet    string `json:"subnet"`
 	DHCPStart string `json:"dhcpStart,omitempty"`
 	DHCPEnd   string `json:"dhcpEnd,omitempty"`
+	Bridge    string `json:"bridge,omitempty"`
 	Autostart bool   `json:"autostart"`
 	Start     bool   `json:"start"`
 }
@@ -99,6 +109,7 @@ type VirtualNetworkUpdateSpec struct {
 	Subnet    string `json:"subnet"`
 	DHCPStart string `json:"dhcpStart,omitempty"`
 	DHCPEnd   string `json:"dhcpEnd,omitempty"`
+	Bridge    string `json:"bridge,omitempty"`
 	Autostart bool   `json:"autostart"`
 }
 
@@ -109,6 +120,7 @@ type VirtualNetworkDefinition struct {
 	Prefix      int
 	DHCPStart   string
 	DHCPEnd     string
+	Bridge      string
 	Autostart   bool
 	Start       bool
 }

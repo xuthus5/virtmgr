@@ -95,6 +95,36 @@ func TestOpenAPIContractCoversTaskCancellationAndImages(t *testing.T) {
 	}
 }
 
+func TestOpenAPIContractDescribesBridgeNetworks(t *testing.T) {
+	var document struct {
+		Components struct {
+			Schemas map[string]struct {
+				Required   []string `json:"required"`
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(openAPIContract, &document); err != nil {
+		t.Fatalf("parse OpenAPI contract: %v", err)
+	}
+	create := document.Components.Schemas["NetworkCreateRequest"]
+	if _, ok := create.Properties["bridge"]; !ok {
+		t.Fatal("NetworkCreateRequest schema is missing bridge")
+	}
+	if got := create.Properties["mode"].Enum; len(got) != 3 || got[2] != "bridge" {
+		t.Fatalf("NetworkCreateRequest mode enum = %v", got)
+	}
+	virtual := document.Components.Schemas["VirtualNetwork"]
+	if _, ok := virtual.Properties["forwardMode"]; !ok {
+		t.Fatal("VirtualNetwork schema is missing forwardMode")
+	}
+	if _, ok := document.Components.Schemas["HostBridgeList"]; !ok {
+		t.Fatal("HostBridgeList schema is missing")
+	}
+}
+
 func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 	var document map[string]any
 	if err := json.Unmarshal(openAPIContract, &document); err != nil {
@@ -124,7 +154,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms/{uuid}/guest-agent/health",
 		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
-		"/networks", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
+		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
 		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
 		"/networks/{name}/actions/{action}",
 		"/images", "/images/{id}", "/images/{id}/refresh", "/templates", "/templates/{id}",
