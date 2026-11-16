@@ -18,7 +18,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 当前主要短板：
 
-- 镜像库已支持已有卷登记、QCOW2/RAW 上传和全量克隆，但链接克隆、镜像格式转换和跨池搬移仍未实现；在线备份、内存快照和更完整的硬件建模仍需补强。
+- 镜像库已支持已有卷登记、QCOW2/RAW 上传、全量克隆和同存储池 qcow2 链接克隆，但格式转换和跨池搬移仍未实现；在线备份、内存快照和更完整的硬件建模仍需补强。
 - 身份联合、细粒度 RBAC、CLI、SDK 和 IaC Provider 偏弱；告警通知仅保留现有规则级 Webhook。
 - 与平台级产品相比，缺多主机、集群、迁移、HA、共享存储、SDN 和多租户；这些属于产品定位差异，不应零散补齐。
 
@@ -41,7 +41,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 - 一个 VirtMgr 实例连接一个 libvirt 端点，不支持多主机清单和迁移。
 - 虚拟机模板仍是创建参数预设，但可绑定镜像库条目；模板本身不复制或拥有镜像。
-- 镜像库支持上传 qcow2/raw 文件，或登记已有存储卷及其操作系统元数据、容量和按需刷新的 SHA-256；移除条目不会删除底层卷。创建虚拟机支持从镜像全量克隆系统盘，链接克隆和跨池自动搬移仍在后续范围。
+- 镜像库支持上传 qcow2/raw 文件，或登记已有存储卷及其操作系统元数据、容量和按需刷新的 SHA-256；移除条目不会删除底层卷。创建虚拟机支持全量克隆，以及同存储池 qcow2 镜像的链接克隆；链接克隆基础卷被引用时禁止删除，跨池链接克隆和跨池自动搬移仍在后续范围。
 - 创建虚拟机支持 BIOS/UEFI、Secure Boot、vCPU、内存、已有磁盘/镜像克隆、磁盘总线、网卡型号、启动顺序、活跃网络、ISO、Cloud-init 和 autostart。
 - 已有持久虚拟机可在关机或异常停止状态从活跃存储池挂载或替换安装 ISO；操作只改写 CD-ROM 设备，保留 cloud-init 介质和全部存储卷，并切换为光盘优先启动。弹出 ISO 后恢复磁盘优先启动。
 - 支持 VNC 和串口控制台，不支持 SPICE。
@@ -63,7 +63,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 ### 4.1 单机核心能力
 
-- `GAP-01 镜像库与真模板`：已实现镜像登记、QCOW2/RAW 上传、容量/校验值刷新、模板绑定镜像和创建时全量克隆；仍缺链接克隆、格式转换、跨池搬移和更完整的 Cloud image 治理。价值高，成本高。
+- `GAP-01 镜像库与真模板`：已实现镜像登记、QCOW2/RAW 上传、容量/校验值刷新、模板绑定镜像、创建时全量克隆和同存储池 qcow2 链接克隆；仍缺格式转换、跨池搬移和更完整的 Cloud image 治理。价值高，成本高。
 - `GAP-02 虚拟机导入与格式迁移`：已支持从活跃存储池选择或上传 QCOW2/RAW 系统盘，以及 ISO 安装介质；ISO 导入会创建空白 QCOW2 系统盘并以光盘优先启动。来源卷保留；缺 OVA/OVF、VMDK、VHDX、异构格式转换和磁盘/OVA 导出。按单机精品定位，异构图导入与格式转换不在当前范围。价值中，成本高。
 - `GAP-03 磁盘和网卡热插拔`：已支持数据磁盘和网卡热附加/移除、系统盘保护；缺网卡型号修改、磁盘跨池迁移和更完整的取消/回滚语义。价值高，成本中。
 - `GAP-04 高级硬件建模`：缺 vTPM、启动顺序、machine type、CPU model/topology、NUMA、hugepages、watchdog、RNG、vGPU/mdev 和 SR-IOV VF 的 GUI 管理。价值中高，成本中高。
@@ -71,7 +71,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-06 Guest Agent 深度集成`：已实现通道探测、连接/无响应状态、诊断建议、时区/路由、操作系统/网络/文件系统信息、能力矩阵、Agent 关机/重启、时间同步、按文件系统 TRIM、关机态补齐通道、手动静默快照、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断和期望状态健康历史；仍不提供通用任意命令执行。价值高，成本中高。
 - `GAP-07 快照成熟度`：缺内存状态快照、快照链可视化、合并/consolidation 和孤儿链清理；已支持静默标记追溯和固定间隔/每日时刻策略。价值中高，成本高。
 - `GAP-08 备份成熟度`：缺在线一致性备份、增量备份、原地恢复、内存状态、S3/SFTP/远端仓库、加密、压缩、去重、自动校验、GFS 保留和跨主机复制。价值高，成本高。
-- `GAP-09 Cloud-init 与 OS 定制`：当前支持 NoCloud user-data、network-config 和 vendor-data，并支持 Netplan v2 DHCP/静态 IPv4/IPv6；缺 config drive、执行结果回传、Windows Sysprep 和 OS profile。价值中高，成本中。
+- `GAP-09 Cloud-init 与 OS 定制`：当前支持 NoCloud user-data、network-config 和 vendor-data，支持 Netplan v2 DHCP/静态 IPv4/IPv6，并可通过 Guest Agent 读取 Linux 客户机 Cloud-init 状态、错误和固定日志尾部；缺 config drive、Windows Sysprep 和 OS profile。价值中高，成本中。
 - `GAP-10 存储类型与管理深度`：应用内创建已支持目录池、NFS `netfs` 和 LVM `logical`；缺 ZFS、iSCSI、Ceph RBD、Gluster 专用流程，以及卷克隆、卷迁移、格式转换、下载、QoS、TRIM 和 SMART。价值高，成本高。
 - `GAP-11 网络广度`：当前管理 NAT/isolated、宿主机已有网桥接入、IPv4 和 DHCP；缺应用内网桥/bond 创建、VLAN、IPv6/RA、macvtap、SR-IOV、OVS、VXLAN/SDN、端口转发、安全组、防火墙和 QoS。价值高，成本高。
 - `GAP-12 虚拟机组织能力`：已支持标签、备注和负责人；缺文件夹、资源分组和自定义字段。价值中，成本低到中。
@@ -157,7 +157,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-15` API Token 和 OpenAPI：已通过 `NB-01`/`NR-06` 完成带作用域、可撤销的 Token 和覆盖全部挂载路由的 OpenAPI 契约；后续只在有明确需求时补 CLI、SDK 或 IaC Provider。
 - `GAP-21` 历史指标：价值中高，成本 M；可以先做进程内短期环形缓冲或 SQLite 轻量采样，不必直接引入 Prometheus/TimescaleDB。
 - `GAP-22` 基础告警：已完成 CPU/内存阈值和规则级 Webhook；仅维持现有能力，不扩展邮件、外部值班平台或通知中心。
-- `GAP-01` 镜像库与真模板：已完成登记、镜像上传、校验值、模板绑定和全量克隆；链接克隆、格式转换和跨池搬移仍需单独评估。
+- `GAP-01` 镜像库与真模板：已完成登记、镜像上传、校验值、模板绑定、全量克隆和同存储池 qcow2 链接克隆；格式转换和跨池搬移仍需单独评估。
 - `GAP-08` 在线/增量备份和远端仓库：价值高，成本 L；需要单独的备份架构设计，不建议作为零散小功能实现。
 
 ### 5.4 单机定位下不建议优先投入
@@ -173,8 +173,8 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 按当前“单机精品”定位，下一轮建议按以下顺序选择性投入：
 
-1. `GAP-01`：镜像链接克隆、格式转换和跨池搬移，继续降低批量部署成本。
-2. `GAP-06`：继续强化 Guest Agent 诊断和客户机内软件包可见性，但保持固定动作边界。
+1. `GAP-01`：镜像格式转换和跨池搬移，继续降低批量部署成本；同池 qcow2 链接克隆已落地。
+2. `GAP-06`：继续强化 Guest Agent 诊断和客户机内软件包可见性，但保持固定动作边界；Cloud-init 只读诊断已落地。
 3. `GAP-10`：ZFS、iSCSI、Ceph RBD 等专用存储池和卷克隆/迁移/格式转换，补齐单机存储管理深度。
 4. `GAP-19`：恢复向导和版本检查；升级前预检安全包明确不实施。
 5. `GAP-15`：仅在出现明确自动化需求时补 CLI、SDK 或 IaC Provider，不重复建设 Token/OpenAPI 基础。

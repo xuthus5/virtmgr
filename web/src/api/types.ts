@@ -201,6 +201,7 @@ export type VMCreateInput = {
   diskPath: string;
   diskFormat: string;
   imageId?: number;
+  imageCloneMode?: VMImageCloneMode;
   targetPool?: string;
   diskBus?: VMDiskBus;
   network: string;
@@ -275,6 +276,8 @@ export type VMImage = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type VMImageCloneMode = "full" | "linked";
 
 export type VMImageInput = {
   name: string;
@@ -757,6 +760,22 @@ export type GuestAgentInfo = {
   diagnosticCode?: string;
   diagnosticHint?: string;
   probedAt: string;
+};
+
+export type GuestAgentCloudInit = {
+  installed: boolean;
+  state: "done" | "running" | "error" | "disabled" | "not_run" | "unknown";
+  status?: string;
+  extendedStatus?: string;
+  stage?: string;
+  datasource?: string;
+  lastUpdate?: string;
+  errors: string[];
+  recoverableErrors: string[];
+  log?: string;
+  logPath?: string;
+  logTruncated: boolean;
+  checkedAt: string;
 };
 
 export type GuestAgentAction = "shutdown" | "reboot" | "sync-time" | "trim";

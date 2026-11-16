@@ -57,8 +57,8 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 复制来源卷为独立系统盘，目标路径不得与来源相同；失败时清理已克隆磁盘和新域。当前只提供全量克隆，不支持链接克隆、格式转换或跨池自动搬移。
-- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理和 systemd 服务只读诊断；服务诊断只执行固定 `systemctl list-units` 查询且最多返回 500 项，不提供启停或修改。手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
+- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 和 `imageCloneMode`：默认 `full` 复制来源卷为独立系统盘；`linked` 仅允许同存储池 qcow2 来源，创建带 backing store 的轻量覆盖层，目标路径不得与来源相同。链接克隆的基础卷仍被其他卷引用时禁止删除。创建失败时清理已克隆磁盘和新域；跨池链接克隆、格式转换和跨池自动搬移暂不提供。
+- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断和 Linux Cloud-init 执行诊断；服务诊断只执行固定 `systemctl list-units` 查询且最多返回 500 项，Cloud-init 诊断只执行固定 `cloud-init status` 查询并读取固定日志路径，最多返回 32 KiB 日志尾部，均不提供任意命令、启停或配置修改。手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
 - 开机自启动写能力：详情页通过 `PATCH /vms/{uuid}/autostart` 切换持久域的 autostart；临时域、Viewer 和全局只读模式拒绝修改，成功/失败均记录 `vm.autostart` 审计。
@@ -725,6 +725,7 @@ type PassthroughDevice = {
 | `GET/POST` | `/vms/{uuid}/guest-agent/ssh-keys[/add|/remove]` | 查询、添加或移除 SSH 公钥；审计只记录数量与 SHA-256 指纹 |
 | `GET/POST` | `/vms/{uuid}/guest-agent/processes[/signal]` | 固定 `ps` 命令读取进程；仅 SIGTERM/SIGKILL，拒绝 PID 1 |
 | `GET` | `/vms/{uuid}/guest-agent/users` | 查询当前登录用户 |
+| `GET` | `/vms/{uuid}/guest-agent/cloud-init` | 读取 Linux 客户机 Cloud-init 状态、错误和固定日志尾部；只执行固定诊断命令 |
 | `GET/PUT` | `/vms/{uuid}/guest-agent/policy` | 读取或由 Admin 更新期望状态 |
 | `GET` | `/vms/{uuid}/guest-agent/health?hours=&limit=` | 读取健康样本、连通率和故障历史 |
 | `GET` | `/vms/{uuid}/snapshot-policies` | 定时快照策略列表（已实现） |
@@ -1220,7 +1221,7 @@ WantedBy=multi-user.target
 - 全局搜索、批量操作、只读模式开关。
 - 移动端表格、控制台和详情页可用性验收。
 
-当前 P1 已落地快照、ISO/qcow2/raw 镜像上传、运行时 ISO 挂载/替换与弹出、VM 克隆、Guest Agent 主机名/IP、受控文件/密码/SSH/进程管理和 systemd 服务只读诊断、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索（含存储卷、镜像、模板和任务）、虚拟机批量生命周期操作、运行时只读模式开关，以及目录、NFS 和 LVM 存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片、ISO 弹窗、Guest Agent 服务区和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
+当前 P1 已落地快照、ISO/qcow2/raw 镜像上传、运行时 ISO 挂载/替换与弹出、VM 克隆、Guest Agent 主机名/IP、受控文件/密码/SSH/进程管理、systemd 服务只读诊断和 Cloud-init 执行诊断、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索（含存储卷、镜像、模板和任务）、虚拟机批量生命周期操作、运行时只读模式开关，以及目录、NFS 和 LVM 存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片、ISO 弹窗、Guest Agent 服务区与 Cloud-init 诊断和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
 
 验收：常见运维任务不依赖 `virsh`；长任务有进度和失败原因。
 
@@ -1231,7 +1232,7 @@ WantedBy=multi-user.target
 - 多宿主机 registry/agent、迁移。
 - OIDC、细粒度 RBAC、审计 Webhook。
 
-当前 P2 已落地 UEFI/Secure Boot、cloud-init NoCloud seed ISO、虚拟机模板、PCI/USB 直通、定时快照策略、管理员持久 XML 编辑、虚拟机配置导出与冷备份：默认 BIOS 保持向后兼容；UEFI 使用 firmware 自动选择，Secure Boot 通过 loader secure 标志启用。cloud-init 用户数据由纯 Go ISO9660 生成器写入存储池卷，通过只读 CD-ROM 挂载，审计不保存用户内容。模板由 SQLite 持久化，支持 CRUD、权限/只读校验和从模板预填创建表单。直通使用 libvirt 节点设备和 hostdev XML，支持运行中热插拔、持久配置写入、跨虚拟机重复分配校验和审计。定时快照策略使用 SQLite 调度元数据和进程内每分钟调度器，支持 CRUD、立即执行、启用/禁用、保留清理和失败状态回写；清理仅作用于带 `[policy:<id>]` 标记的快照。XML 编辑锁定域身份、拒绝 QEMU commandline 命名空间并通过 libvirt validate/define 更新持久配置。配置导出提供版本化 JSON、持久/运行态 XML、快照元数据和只读模式下的审计闭环，不包含磁盘数据。冷备份将持久 XML、manifest 和可写磁盘复制到活跃存储池，以 `vm.backup` 任务展示真实进度，失败回滚本次产物，审计不保存 XML 正文，且暂不包含内存状态或恢复能力。创建审计记录固件、安全启动和 cloud-init 元信息，虚拟机详情展示回读结果，Go 单元测试、HTTP 集成测试与严格串行 Playwright 覆盖创建、模板、直通、策略、XML 编辑、导出和冷备份流程。
+当前 P2 已落地 UEFI/Secure Boot、cloud-init NoCloud seed ISO、虚拟机模板、PCI/USB 直通、定时快照策略、管理员持久 XML 编辑、虚拟机配置导出与冷备份：默认 BIOS 保持向后兼容；UEFI 使用 firmware 自动选择，Secure Boot 通过 loader secure 标志启用。cloud-init 用户数据由纯 Go ISO9660 生成器写入存储池卷，通过只读 CD-ROM 挂载，审计不保存用户内容；Linux 客户机还可通过 Guest Agent 查看 Cloud-init 状态、错误和日志尾部。镜像库支持同存储池 qcow2 链接克隆，基础卷被引用时禁止删除。模板由 SQLite 持久化，支持 CRUD、权限/只读校验和从模板预填创建表单。直通使用 libvirt 节点设备和 hostdev XML，支持运行中热插拔、持久配置写入、跨虚拟机重复分配校验和审计。定时快照策略使用 SQLite 调度元数据和进程内每分钟调度器，支持 CRUD、立即执行、启用/禁用、保留清理和失败状态回写；清理仅作用于带 `[policy:<id>]` 标记的快照。XML 编辑锁定域身份、拒绝 QEMU commandline 命名空间并通过 libvirt validate/define 更新持久配置。配置导出提供版本化 JSON、持久/运行态 XML、快照元数据和只读模式下的审计闭环，不包含磁盘数据。冷备份将持久 XML、manifest 和可写磁盘复制到活跃存储池，以 `vm.backup` 任务展示真实进度，失败回滚本次产物，审计不保存 XML 正文，且暂不包含内存状态或恢复能力。创建审计记录固件、安全启动、cloud-init 元信息和镜像克隆方式，虚拟机详情展示回读结果，Go 单元测试、HTTP 集成测试与严格串行 Playwright 覆盖创建、模板、直通、策略、XML 编辑、导出和冷备份流程。
 
 ## 13. 与 dosh 的复用边界
 

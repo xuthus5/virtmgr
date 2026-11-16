@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { FileText, KeyRound, LoaderCircle, Server, ShieldAlert, Terminal, Users } from "lucide-react";
+import { Cloud, FileText, KeyRound, LoaderCircle, Server, ShieldAlert, Terminal, Users } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type {
   GuestAgentAuthorizedKeys,
+  GuestAgentCloudInit,
   GuestAgentFileContent,
   GuestAgentHealthHistory,
   GuestAgentPolicy,
@@ -77,6 +78,7 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
   const [authorizedKeys, setAuthorizedKeys] = useState<GuestAgentAuthorizedKeys | null>(null);
   const [processes, setProcesses] = useState<GuestAgentProcess[]>([]);
   const [services, setServices] = useState<GuestAgentService[]>([]);
+  const [cloudInit, setCloudInit] = useState<GuestAgentCloudInit | null>(null);
   const [users, setUsers] = useState<GuestAgentUser[]>([]);
   const [policy, setPolicy] = useState<GuestAgentPolicy | null>(null);
   const [health, setHealth] = useState<GuestAgentHealthHistory | null>(null);
@@ -131,6 +133,11 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
     mutationFn: () => api.guestAgentServices(uuid),
     onSuccess: (result) => { setServices(result.items); notify("success", `已读取 ${result.total} 个 systemd 服务。`); },
     onError: (cause) => notify("error", errorMessage(cause, "读取客户机服务失败。")),
+  });
+  const cloudInitMutation = useMutation({
+    mutationFn: () => api.guestAgentCloudInit(uuid),
+    onSuccess: (result) => { setCloudInit(result); notify("success", result.installed ? `Cloud-init 状态已读取：${result.state}` : "未检测到 cloud-init，或客户机无法执行固定诊断命令。"); },
+    onError: (cause) => notify("error", errorMessage(cause, "读取 Cloud-init 状态失败。")),
   });
   const usersMutation = useMutation({
     mutationFn: () => api.guestAgentUsers(uuid),
@@ -243,6 +250,35 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
             </div>
           )) : <p className="p-3 text-muted-foreground">尚未读取服务状态。仅支持使用 systemd 的 Linux 客户机。</p>}
         </div>
+      </section>
+
+      <section className="min-w-0 space-y-3 rounded-md border p-3" aria-labelledby="guest-cloud-init-heading" data-testid="guest-agent-cloud-init">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2"><Cloud className="h-4 w-4" /><h3 id="guest-cloud-init-heading" className="text-sm font-semibold">Cloud-init 执行诊断</h3><Badge variant="outline">只读</Badge></div>
+          <Button variant="outline" size="sm" data-testid="guest-agent-cloud-init-load" onClick={() => cloudInitMutation.mutate()} disabled={cloudInitMutation.isPending}>{cloudInitMutation.isPending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}读取</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">仅执行固定的 cloud-init 状态查询，并读取固定日志尾部；不执行任意命令或修改客户机配置。</p>
+        {cloudInit ? (
+          <div className="min-w-0 space-y-3 text-xs" data-testid="guest-agent-cloud-init-result">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={!cloudInit.installed ? "secondary" : cloudInit.state === "done" ? "success" : cloudInit.state === "error" ? "destructive" : cloudInit.state === "running" ? "warning" : "secondary"}>
+                {!cloudInit.installed ? "未检测到" : cloudInit.state}
+              </Badge>
+              {cloudInit.status ? <span>status: <span className="font-mono">{cloudInit.status}</span></span> : null}
+              {cloudInit.extendedStatus ? <span>extended: <span className="font-mono">{cloudInit.extendedStatus}</span></span> : null}
+              {cloudInit.logTruncated ? <Badge variant="warning">日志已截断</Badge> : null}
+            </div>
+            {cloudInit.installed ? <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+              <div className="min-w-0 rounded-md border bg-muted/20 p-2"><p className="text-muted-foreground">阶段</p><p className="mt-1 break-all font-mono">{cloudInit.stage || "-"}</p></div>
+              <div className="min-w-0 rounded-md border bg-muted/20 p-2"><p className="text-muted-foreground">数据源</p><p className="mt-1 break-all font-mono">{cloudInit.datasource || "-"}</p></div>
+              <div className="min-w-0 rounded-md border bg-muted/20 p-2"><p className="text-muted-foreground">最近更新</p><p className="mt-1 break-all font-mono">{cloudInit.lastUpdate || "-"}</p></div>
+              <div className="min-w-0 rounded-md border bg-muted/20 p-2"><p className="text-muted-foreground">检查时间</p><p className="mt-1 break-all font-mono">{new Date(cloudInit.checkedAt).toLocaleString("zh-CN")}</p></div>
+            </div> : null}
+            {cloudInit.errors.length ? <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-destructive"><p className="font-medium">执行错误</p><ul className="mt-1 list-disc space-y-1 break-all pl-4 font-mono">{cloudInit.errors.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+            {cloudInit.recoverableErrors.length ? <div className="rounded-md border border-warning/30 bg-warning/5 p-2 text-warning"><p className="font-medium">可恢复错误</p><ul className="mt-1 list-disc space-y-1 break-all pl-4 font-mono">{cloudInit.recoverableErrors.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+            {cloudInit.log ? <div className="min-w-0 space-y-1"><div className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground"><span>日志尾部</span><span className="break-all font-mono">{cloudInit.logPath || "-"}</span></div><pre data-testid="guest-agent-cloud-init-log" className="max-h-64 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">{cloudInit.log}</pre></div> : <p className="text-muted-foreground">未读取到 Cloud-init 日志尾部。</p>}
+          </div>
+        ) : <p className="text-muted-foreground">尚未读取 Cloud-init 状态。</p>}
       </section>
 
       <section className="space-y-2 rounded-md border p-3" aria-labelledby="guest-policy-heading">

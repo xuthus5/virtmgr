@@ -35,6 +35,7 @@ type VMBackend interface {
 	ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
+	GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error)
 }
 
 type VMInventory interface {
@@ -430,6 +431,32 @@ func (s *Service) ListServices(ctx context.Context, command ProcessCommand) ([]d
 		}
 	}
 	return services, nil
+}
+
+func (s *Service) CloudInit(ctx context.Context, command ProcessCommand) (domain.GuestAgentCloudInit, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return domain.GuestAgentCloudInit{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.GuestAgentCloudInit{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.cloud_init.get", command.UUID, nil, domain.ErrForbidden)
+	}
+	result, err := s.backend.GetGuestAgentCloudInit(ctx, command.UUID)
+	if err != nil {
+		return domain.GuestAgentCloudInit{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.cloud_init.get", command.UUID, nil, err)
+	}
+	if s.audit != nil {
+		if err := s.audit.RecordAudit(ctx, domain.AuditEvent{
+			OccurredAt: time.Now().UTC(), RequestID: command.Request.RequestID,
+			Actor: command.Request.Session.User.Username, Role: command.Request.Session.User.Role,
+			Action: "vm.guest_agent.cloud_init.get", TargetKind: "vm", TargetID: command.UUID,
+			SourceIP: command.Request.SourceIP, Result: "success",
+			Detail: map[string]any{"state": result.State, "errorCount": len(result.Errors), "logBytes": len(result.Log)},
+		}); err != nil {
+			return domain.GuestAgentCloudInit{}, fmt.Errorf("record guest agent cloud-init audit: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) SignalProcess(ctx context.Context, command ProcessSignalCommand) (domain.Task, error) {

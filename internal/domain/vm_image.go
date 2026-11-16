@@ -1,6 +1,27 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+type VMImageCloneMode string
+
+const (
+	VMImageCloneModeFull   VMImageCloneMode = "full"
+	VMImageCloneModeLinked VMImageCloneMode = "linked"
+)
+
+func NormalizeVMImageCloneMode(value string) (VMImageCloneMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(VMImageCloneModeFull):
+		return VMImageCloneModeFull, true
+	case string(VMImageCloneModeLinked):
+		return VMImageCloneModeLinked, true
+	default:
+		return "", false
+	}
+}
 
 type VMImage struct {
 	ID              int64     `json:"id"`

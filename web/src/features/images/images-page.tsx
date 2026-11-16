@@ -262,7 +262,7 @@ export function ImagesPage() {
         </CardContent>
       </Card>
 
-      <div className="mt-4 flex items-start gap-2 rounded-md border bg-muted/25 px-3 py-2 text-xs text-muted-foreground"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>当前创建虚拟机使用全量克隆，不会与基础镜像共享写入链。镜像上传只支持 qcow2/raw，链接克隆与跨池自动搬移暂未提供。</p></div>
+      <div className="mt-4 flex items-start gap-2 rounded-md border bg-muted/25 px-3 py-2 text-xs text-muted-foreground"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><p>创建虚拟机时可选择全量克隆，或为 qcow2 镜像选择同存储池链接克隆。链接克隆的基础卷在子卷存在时禁止删除；跨池自动搬移和镜像格式转换暂未提供。</p></div>
 
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>

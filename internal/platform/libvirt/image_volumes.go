@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 
 	"virtmgr/internal/domain"
 
@@ -85,6 +88,102 @@ func (c *Client) CloneStorageVolume(ctx context.Context, sourcePoolName, sourceV
 		}
 	}
 	return storageVolumeFromLibvirt(targetVolume)
+}
+
+func (c *Client) CloneStorageVolumeLinked(ctx context.Context, sourcePoolName, sourceVolumeName, targetPoolName, targetName string) (domain.StorageVolume, error) {
+	if strings.TrimSpace(sourcePoolName) == "" || strings.TrimSpace(sourcePoolName) != strings.TrimSpace(targetPoolName) {
+		return domain.StorageVolume{}, fmt.Errorf("%w: linked clone source and target must use the same storage pool", domain.ErrInvalidInput)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ensureConnectionLocked(ctx); err != nil {
+		return domain.StorageVolume{}, err
+	}
+	pool, err := c.conn.LookupStoragePoolByName(sourcePoolName)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
+			return domain.StorageVolume{}, domain.ErrNotFound
+		}
+		return domain.StorageVolume{}, fmt.Errorf("lookup linked clone storage pool %s: %w", sourcePoolName, err)
+	}
+	defer func() { _ = pool.Free() }()
+	poolInfo, err := pool.GetInfo()
+	if err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("read linked clone storage pool %s info: %w", sourcePoolName, err)
+	}
+	if poolInfo.State != libvirt.STORAGE_POOL_RUNNING {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	sourceVolume, err := pool.LookupStorageVolByName(sourceVolumeName)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
+			return domain.StorageVolume{}, domain.ErrNotFound
+		}
+		return domain.StorageVolume{}, fmt.Errorf("lookup linked clone source volume %s: %w", sourceVolumeName, err)
+	}
+	defer func() { _ = sourceVolume.Free() }()
+	source, err := storageVolumeFromLibvirt(sourceVolume)
+	if err != nil {
+		return domain.StorageVolume{}, err
+	}
+	if strings.ToLower(source.Format) != "qcow2" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: linked clone requires a qcow2 source volume", domain.ErrInvalidInput)
+	}
+	sourcePath, err := sourceVolume.GetPath()
+	if err != nil || strings.TrimSpace(sourcePath) == "" {
+		return domain.StorageVolume{}, fmt.Errorf("read linked clone source volume %s path: %w", sourceVolumeName, err)
+	}
+	if existing, lookupErr := pool.LookupStorageVolByName(targetName); lookupErr == nil {
+		_ = existing.Free()
+		return domain.StorageVolume{}, domain.ErrConflict
+	} else if !errors.Is(lookupErr, libvirt.ERR_NO_STORAGE_VOL) {
+		return domain.StorageVolume{}, fmt.Errorf("check linked clone target volume %s: %w", targetName, lookupErr)
+	}
+	volumeXML := buildLinkedCloneVolumeXML(targetName, source.CapacityBytes, sourcePath)
+	targetVolume, err := pool.StorageVolCreateXML(volumeXML, 0)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
+			return domain.StorageVolume{}, domain.ErrConflict
+		}
+		return domain.StorageVolume{}, fmt.Errorf("create linked clone volume %s: %w", targetName, err)
+	}
+	defer func() { _ = targetVolume.Free() }()
+	xmlText, err := targetVolume.GetXMLDesc(0)
+	if err != nil || !storageVolumeXMLReferencesBacking(xmlText, sourcePath) {
+		_ = targetVolume.Delete(libvirt.STORAGE_VOL_DELETE_NORMAL)
+		if err != nil {
+			return domain.StorageVolume{}, fmt.Errorf("verify linked clone volume %s: %w", targetName, err)
+		}
+		return domain.StorageVolume{}, fmt.Errorf("linked clone volume %s did not retain the expected backing store", targetName)
+	}
+	if err := pool.Refresh(0); err == nil {
+		if refreshed, lookupErr := pool.LookupStorageVolByName(targetName); lookupErr == nil {
+			defer func() { _ = refreshed.Free() }()
+			if result, infoErr := storageVolumeFromLibvirt(refreshed); infoErr == nil {
+				return result, nil
+			}
+		}
+	}
+	return storageVolumeFromLibvirt(targetVolume)
+}
+
+func buildLinkedCloneVolumeXML(name string, capacity uint64, backingPath string) string {
+	return fmt.Sprintf("<volume type='file'><name>%s</name><capacity unit='bytes'>%d</capacity><allocation unit='bytes'>0</allocation><target><format type='qcow2'/></target><backingStore><path>%s</path><format type='qcow2'/></backingStore></volume>",
+		escapeXML(name), capacity, escapeXML(backingPath))
+}
+
+func storageVolumeXMLReferencesBacking(xmlText, backingPath string) bool {
+	var parsed storageVolumeXML
+	if err := xml.Unmarshal([]byte(xmlText), &parsed); err != nil {
+		return false
+	}
+	cleanBacking := filepath.Clean(strings.TrimSpace(backingPath))
+	for _, backing := range parsed.BackingStore {
+		if filepath.Clean(strings.TrimSpace(backing.Path)) == cleanBacking {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) StorageVolumeChecksum(ctx context.Context, poolName, volumeName string) (string, error) {

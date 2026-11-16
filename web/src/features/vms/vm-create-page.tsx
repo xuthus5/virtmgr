@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Image as ImageIcon, LayoutTemplate, LoaderCircle, Plus, Server } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { VMBootOrder, VMCreateInput, VMDiskBus, VMFirmware, VMNICModel, VMTemplate } from "@/api/types";
+import type { VMBootOrder, VMCreateInput, VMDiskBus, VMFirmware, VMImageCloneMode, VMNICModel, VMTemplate } from "@/api/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,7 @@ export function VMCreatePage() {
   const [isoPool, setIsoPool] = useState("");
   const [sourceMode, setSourceMode] = useState<"disk" | "image">("disk");
   const [selectedImageID, setSelectedImageID] = useState("");
+  const [imageCloneMode, setImageCloneMode] = useState<VMImageCloneMode>("full");
   const [error, setError] = useState("");
   const [selectedTemplateID, setSelectedTemplateID] = useState("");
   const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
@@ -101,6 +102,7 @@ export function VMCreatePage() {
   const templates = templatesQuery.data?.items ?? [];
   const images = imagesQuery.data?.items ?? [];
   const selectedImage = images.find((image) => String(image.id) === selectedImageID);
+  const linkedCloneAvailable = selectedImage?.format === "qcow2" && diskPool === selectedImage.pool;
   const selectedTemplate = templates.find((template) => String(template.id) === selectedTemplateID);
 
   useEffect(() => {
@@ -134,6 +136,10 @@ export function VMCreatePage() {
       ?? activePools[0];
     setIsoPool(preferred.name);
   }, [activePools, isoPool]);
+
+  useEffect(() => {
+    if (imageCloneMode === "linked" && !linkedCloneAvailable) setImageCloneMode("full");
+  }, [imageCloneMode, linkedCloneAvailable]);
 
   const mutation = useMutation({
     mutationFn: (input: VMCreateInput) => api.createVM(input),
@@ -218,7 +224,7 @@ export function VMCreatePage() {
       name: form.name.trim(),
       vcpus: Number(form.vcpus),
       memoryMiB: Number(form.memoryMiB),
-      ...(sourceMode === "image" ? { diskPath: "", diskFormat: "", imageId: Number(selectedImageID), targetPool: diskPool } : { diskPath: form.diskPath.trim(), diskFormat: form.diskFormat }),
+      ...(sourceMode === "image" ? { diskPath: "", diskFormat: "", imageId: Number(selectedImageID), imageCloneMode, targetPool: diskPool } : { diskPath: form.diskPath.trim(), diskFormat: form.diskFormat }),
       diskBus: form.diskBus,
       network: form.network.trim(),
       nicModel: form.nicModel,
@@ -393,6 +399,29 @@ export function VMCreatePage() {
                   {activePools.map((pool) => <option key={pool.uuid || pool.name} value={pool.name}>{pool.name} · {pool.targetPath || "无目标路径"}</option>)}
                 </select>
                 <p className="text-xs text-muted-foreground">克隆卷命名为 <span className="font-mono">{form.name || "<name>"}-disk.{selectedImage?.format ?? "qcow2"}</span>；创建域失败时会清理已克隆磁盘。</p>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="vm-image-clone-mode">克隆方式</Label>
+                <select
+                  id="vm-image-clone-mode"
+                  data-testid="vm-image-clone-mode"
+                  value={imageCloneMode}
+                  onChange={(event) => {
+                    const mode = event.target.value as VMImageCloneMode;
+                    setImageCloneMode(mode);
+                    if (mode === "linked" && selectedImage) setDiskPool(selectedImage.pool);
+                  }}
+                  disabled={!canCreate}
+                  className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                >
+                  <option value="full">全量克隆（独立磁盘）</option>
+                  <option value="linked" disabled={!linkedCloneAvailable}>链接克隆（节省空间，仅同池 qcow2）</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {linkedCloneAvailable
+                    ? "链接克隆创建轻量 qcow2 覆盖层，虚拟机写入不会修改基础镜像。基础卷在其子卷存在时禁止删除。"
+                    : "链接克隆要求基础镜像为 qcow2，且目标存储池与镜像来源池一致；当前将使用全量克隆。"}
+                </p>
               </div>
               </>}
               <div className="space-y-2">

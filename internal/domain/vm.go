@@ -169,24 +169,25 @@ func NormalizeVMBootOrder(value string) (VMBootOrder, bool) {
 }
 
 type VMCreateSpec struct {
-	Name       string         `json:"name"`
-	VCPUs      uint           `json:"vcpus"`
-	MemoryMiB  uint64         `json:"memoryMiB"`
-	DiskPath   string         `json:"diskPath"`
-	DiskFormat string         `json:"diskFormat"`
-	ImageID    int64          `json:"imageId,omitempty"`
-	TargetPool string         `json:"targetPool,omitempty"`
-	DiskBus    VMDiskBus      `json:"diskBus,omitempty"`
-	Network    string         `json:"network"`
-	NICModel   VMNICModel     `json:"nicModel,omitempty"`
-	ISOPath    string         `json:"isoPath,omitempty"`
-	BootOrder  VMBootOrder    `json:"bootOrder,omitempty"`
-	Firmware   VMFirmware     `json:"firmware"`
-	SecureBoot bool           `json:"secureBoot"`
-	CloudInit  *CloudInitSpec `json:"cloudInit,omitempty"`
-	GuestAgent *bool          `json:"guestAgent,omitempty"`
-	Autostart  bool           `json:"autostart"`
-	Start      bool           `json:"start"`
+	Name           string           `json:"name"`
+	VCPUs          uint             `json:"vcpus"`
+	MemoryMiB      uint64           `json:"memoryMiB"`
+	DiskPath       string           `json:"diskPath"`
+	DiskFormat     string           `json:"diskFormat"`
+	ImageID        int64            `json:"imageId,omitempty"`
+	ImageCloneMode VMImageCloneMode `json:"imageCloneMode,omitempty"`
+	TargetPool     string           `json:"targetPool,omitempty"`
+	DiskBus        VMDiskBus        `json:"diskBus,omitempty"`
+	Network        string           `json:"network"`
+	NICModel       VMNICModel       `json:"nicModel,omitempty"`
+	ISOPath        string           `json:"isoPath,omitempty"`
+	BootOrder      VMBootOrder      `json:"bootOrder,omitempty"`
+	Firmware       VMFirmware       `json:"firmware"`
+	SecureBoot     bool             `json:"secureBoot"`
+	CloudInit      *CloudInitSpec   `json:"cloudInit,omitempty"`
+	GuestAgent     *bool            `json:"guestAgent,omitempty"`
+	Autostart      bool             `json:"autostart"`
+	Start          bool             `json:"start"`
 }
 
 func (spec VMCreateSpec) GuestAgentEnabled() bool {

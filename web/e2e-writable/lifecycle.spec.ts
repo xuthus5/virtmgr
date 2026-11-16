@@ -86,6 +86,11 @@ test("可写模式 Guest Agent 服务诊断在桌面和移动端可读", async (
   await expect(page.getByTestId("guest-agent-service-debug-shell.service")).toContainText("inactive/dead");
   await expect(page.getByTestId("guest-agent-services")).toContainText("不支持启动、停止、重启或修改服务");
 
+  await page.getByTestId("guest-agent-cloud-init-load").click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("Cloud-init 状态已读取：done");
+  await expect(page.getByTestId("guest-agent-cloud-init-result")).toContainText("DataSourceNoCloud");
+  await expect(page.getByTestId("guest-agent-cloud-init-log")).toContainText("Cloud-init v. 24.4");
+
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     const layout = await page.evaluate(() => ({
@@ -99,6 +104,7 @@ test("可写模式 Guest Agent 服务诊断在桌面和移动端可读", async (
     await expect(service).toBeVisible();
     const box = await service.boundingBox();
     expect(box?.width ?? width + 1, `${width}px 服务行应适应视口`).toBeLessThanOrEqual(width);
+    await expect(page.getByTestId("guest-agent-cloud-init")).toBeVisible();
   }
 });
 
@@ -1524,6 +1530,29 @@ test("模板绑定镜像并从镜像全量克隆创建虚拟机", async ({ page 
   await templateDialog.getByLabel("输入模板名称确认").fill("e2e-image-template");
   await templateDialog.getByTestId("confirm-delete-template").click();
   await expect(page.getByTestId("template-row-e2e-image-template")).toHaveCount(0);
+});
+
+test("同存储池 qcow2 镜像可创建链接克隆虚拟机", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/new");
+  await page.getByLabel("名称", { exact: true }).fill("e2e-linked-vm");
+  await page.getByTestId("vm-disk-source-image").check();
+  await selectOptionContaining(page.getByTestId("vm-image"), "ubuntu-24.04-cloud-base");
+  await page.getByLabel("目标存储池", { exact: true }).selectOption("default");
+  await expect(page.getByTestId("vm-image-clone-mode").locator("option[value=linked]")).toBeEnabled();
+  await page.getByTestId("vm-image-clone-mode").selectOption("linked");
+  await expect(page.getByTestId("vm-image-clone-mode")).toHaveValue("linked");
+  await page.getByRole("button", { name: "创建虚拟机", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
+  await expect(page.getByRole("heading", { name: "e2e-linked-vm", exact: true })).toBeVisible();
+  await expect(page.getByTestId("vm-disk-source")).toHaveText("/var/lib/libvirt/images/e2e-linked-vm-disk.qcow2");
+
+  await page.getByTestId("vm-delete-button").click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-linked-vm");
+  await dialog.getByTestId("confirm-delete-vm").click();
+  await expect(page).toHaveURL(/\/vms$/);
 });
 
 test("任务取消确认交互在安全检查点生效", async ({ page }) => {

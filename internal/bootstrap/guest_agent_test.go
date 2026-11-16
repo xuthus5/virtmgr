@@ -214,6 +214,11 @@ func TestGuestAgentHighRiskControlsAPI(t *testing.T) {
 	}
 	var health domain.GuestAgentHealthHistory
 	getJSON("/api/v1/vms/"+uuid+"/guest-agent/health?hours=24", &health)
+	var cloudInit domain.GuestAgentCloudInit
+	getJSON("/api/v1/vms/"+uuid+"/guest-agent/cloud-init", &cloudInit)
+	if !cloudInit.Installed || cloudInit.State != "done" || cloudInit.Log == "" || cloudInit.LogPath == "" {
+		t.Fatalf("cloud-init diagnostics = %+v", cloudInit)
+	}
 }
 
 func TestGuestAgentControlMutationsRequireCSRFAndWritableMode(t *testing.T) {

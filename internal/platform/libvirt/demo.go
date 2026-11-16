@@ -28,6 +28,7 @@ type DemoBackend struct {
 	pools          map[string]domain.StoragePool
 	volumes        map[string][]domain.StorageVolume
 	volumeData     map[string][]byte
+	volumeBacking  map[string]string
 	networks       map[string]domain.VirtualNetwork
 	leases         map[string][]domain.DHCPLease
 	metricCalls    map[string]uint64
@@ -40,15 +41,16 @@ type DemoBackend struct {
 
 func NewDemo(sinks ...EventSink) *DemoBackend {
 	backend := &DemoBackend{
-		vms:         make(map[string]domain.VM),
-		xmlConfig:   make(map[string]string),
-		snapshots:   make(map[string][]domain.VMSnapshot),
-		pools:       demoStoragePools(),
-		volumes:     demoStorageVolumes(),
-		volumeData:  make(map[string][]byte),
-		networks:    make(map[string]domain.VirtualNetwork),
-		leases:      demoNetworkLeases(),
-		metricCalls: make(map[string]uint64),
+		vms:           make(map[string]domain.VM),
+		xmlConfig:     make(map[string]string),
+		snapshots:     make(map[string][]domain.VMSnapshot),
+		pools:         demoStoragePools(),
+		volumes:       demoStorageVolumes(),
+		volumeData:    make(map[string][]byte),
+		volumeBacking: make(map[string]string),
+		networks:      make(map[string]domain.VirtualNetwork),
+		leases:        demoNetworkLeases(),
+		metricCalls:   make(map[string]uint64),
 		guestFiles: map[string][]byte{
 			"/etc/hostname":   []byte("demo-db-01\n"),
 			"/etc/os-release": []byte("PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n"),
@@ -1386,7 +1388,13 @@ func (d *DemoBackend) DeleteStorageVolume(_ context.Context, poolName, volumeNam
 			}
 		}
 	}
+	for volumeKey, backingPath := range d.volumeBacking {
+		if filepath.Clean(backingPath) == filepath.Clean(target.Path) {
+			return fmt.Errorf("%w: backing store for linked clone volumes %s", domain.ErrVolumeInUse, volumeKey)
+		}
+	}
 	d.volumes[poolName] = append(d.volumes[poolName][:index], d.volumes[poolName][index+1:]...)
+	delete(d.volumeBacking, poolName+"/"+target.Name)
 	d.publish("storage.volume.deleted", "warning", "storage_volume", poolName+"/"+target.Name, target.Name, "存储卷 "+target.Name+" 已删除")
 	return nil
 }

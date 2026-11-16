@@ -1846,6 +1846,7 @@ type fakeImageVolumes struct {
 	targetName    string
 	deleted       []string
 	cloneErr      error
+	linked        bool
 	poolAvailable uint64
 	poolErr       error
 }
@@ -1867,6 +1868,11 @@ func (f *fakeImageVolumes) CloneStorageVolume(_ context.Context, sourcePool, sou
 		return domain.StorageVolume{}, f.cloneErr
 	}
 	return domain.StorageVolume{Name: targetName, Path: "/var/lib/libvirt/images/" + targetName, Format: "qcow2"}, nil
+}
+
+func (f *fakeImageVolumes) CloneStorageVolumeLinked(_ context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error) {
+	f.linked = true
+	return f.CloneStorageVolume(context.Background(), sourcePool, sourceVolume, targetPool, targetName)
 }
 
 func (f *fakeImageVolumes) DeleteStorageVolume(_ context.Context, poolName, volumeName string) error {
@@ -1918,6 +1924,60 @@ func TestCreateVMFromImageRemovesCloneWhenDomainCreationFails(t *testing.T) {
 	}
 	if len(volumes.deleted) != 1 || volumes.deleted[0] != "vms/web-02-disk.qcow2" {
 		t.Fatalf("deleted volumes = %+v", volumes.deleted)
+	}
+}
+
+func TestCreateVMFromLinkedImageUsesOverlayAndAudits(t *testing.T) {
+	repository := &recordingRepository{}
+	audit := &fakeAuditRecorder{}
+	volumes := &fakeImageVolumes{}
+	service := New(repository, audit, false, WithImages(fakeImageRepository{image: domain.VMImage{
+		ID: 9, Name: "ubuntu-24.04", Pool: "images", Volume: "base.qcow2", Format: "qcow2", CapacityBytes: 20 << 30, AllocationBytes: 8 << 30,
+	}}, volumes))
+	vm, err := service.Create(context.Background(), CreateCommand{
+		Spec: domain.VMCreateSpec{
+			Name: "web-linked", VCPUs: 2, MemoryMiB: 2048, ImageID: 9, ImageCloneMode: domain.VMImageCloneModeLinked, TargetPool: "images",
+		},
+		Request: MutationContext{Session: operatorSession(), RequestID: "req-linked-image"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if vm.Name != "web-linked" || !volumes.linked || volumes.targetPool != "images" || volumes.targetName != "web-linked-disk.qcow2" {
+		t.Fatalf("vm=%+v volumes=%+v", vm, volumes)
+	}
+	if len(repository.createdSpecs) != 1 || repository.createdSpecs[0].ImageCloneMode != domain.VMImageCloneModeLinked {
+		t.Fatalf("created spec = %+v", repository.createdSpecs)
+	}
+	if len(audit.events) != 1 || audit.events[0].Detail["imageCloneMode"] != domain.VMImageCloneModeLinked {
+		t.Fatalf("audit = %+v", audit.events)
+	}
+}
+
+func TestCreateVMFromLinkedImageRejectsRawAndCrossPool(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		image  domain.VMImage
+		target string
+	}{
+		{name: "raw", image: domain.VMImage{ID: 1, Pool: "images", Volume: "base.raw", Format: "raw"}, target: "images"},
+		{name: "cross pool", image: domain.VMImage{ID: 2, Pool: "images", Volume: "base.qcow2", Format: "qcow2"}, target: "vms"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &recordingRepository{}
+			volumes := &fakeImageVolumes{}
+			service := New(repository, &fakeAuditRecorder{}, false, WithImages(fakeImageRepository{image: test.image}, volumes))
+			_, err := service.Create(context.Background(), CreateCommand{
+				Spec:    domain.VMCreateSpec{Name: "invalid-linked", VCPUs: 2, MemoryMiB: 2048, ImageID: test.image.ID, ImageCloneMode: domain.VMImageCloneModeLinked, TargetPool: test.target},
+				Request: MutationContext{Session: operatorSession()},
+			})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("Create() error = %v", err)
+			}
+			if volumes.linked || len(repository.createdSpecs) != 0 {
+				t.Fatalf("linked=%v specs=%+v", volumes.linked, repository.createdSpecs)
+			}
+		})
 	}
 }
 

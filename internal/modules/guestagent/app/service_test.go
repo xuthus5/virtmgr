@@ -23,6 +23,7 @@ type fakeBackend struct {
 	signal      domain.GuestAgentProcessSignalSpec
 	processes   []domain.GuestAgentProcess
 	users       []domain.GuestAgentUser
+	cloudInit   domain.GuestAgentCloudInit
 }
 
 func (f *fakeBackend) GetGuestAgentInfo(context.Context, string, bool) (domain.GuestAgentInfo, error) {
@@ -86,6 +87,10 @@ func (f *fakeBackend) SignalGuestAgentProcess(_ context.Context, _ string, spec 
 
 func (f *fakeBackend) ListGuestAgentUsers(context.Context, string) ([]domain.GuestAgentUser, error) {
 	return f.users, nil
+}
+
+func (f *fakeBackend) GetGuestAgentCloudInit(context.Context, string) (domain.GuestAgentCloudInit, error) {
+	return f.cloudInit, nil
 }
 
 type fakeTasks struct{ started, succeeded, failed int }
@@ -188,6 +193,29 @@ func TestGuestAgentActionValidationAndAudit(t *testing.T) {
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "vm.guest_agent.action" || audit.events[0].Result != "success" {
 		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestGuestAgentCloudInitPermissionsAndAudit(t *testing.T) {
+	backend := &fakeBackend{cloudInit: domain.GuestAgentCloudInit{
+		Installed: true, State: "done", Status: "done", Errors: []string{}, RecoverableErrors: []string{}, Log: "cloud-init finished",
+	}}
+	audit := &fakeAudit{}
+	service := New(backend, audit, false)
+	result, err := service.CloudInit(context.Background(), ProcessCommand{UUID: "vm-1", Request: operatorRequest()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != "done" || result.Log != "cloud-init finished" {
+		t.Fatalf("cloud-init result = %+v", result)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.guest_agent.cloud_init.get" || audit.events[0].Detail["state"] != "done" {
+		t.Fatalf("cloud-init audit = %+v", audit.events)
+	}
+	viewer := operatorRequest()
+	viewer.Session.User.Role = domain.RoleViewer
+	if _, err := service.CloudInit(context.Background(), ProcessCommand{UUID: "vm-1", Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("viewer cloud-init error = %v", err)
 	}
 }
 

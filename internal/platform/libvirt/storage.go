@@ -44,6 +44,9 @@ type storageVolumeXML struct {
 			Type string `xml:"type,attr"`
 		} `xml:"format"`
 	} `xml:"target"`
+	BackingStore []struct {
+		Path string `xml:"path"`
+	} `xml:"backingStore"`
 }
 
 func (c *Client) ListStoragePools(ctx context.Context) ([]domain.StoragePool, error) {
@@ -433,6 +436,13 @@ func (c *Client) DeleteStorageVolume(ctx context.Context, poolName, volumeName s
 	if len(attachedTo) > 0 {
 		return fmt.Errorf("%w: attached to %s", domain.ErrVolumeInUse, strings.Join(attachedTo, ", "))
 	}
+	backingChildren, err := c.storageVolumesUsingBackingLocked(volumePath)
+	if err != nil {
+		return err
+	}
+	if len(backingChildren) > 0 {
+		return fmt.Errorf("%w: backing store for linked clone volumes %s", domain.ErrVolumeInUse, strings.Join(backingChildren, ", "))
+	}
 	if err := volume.Delete(libvirt.STORAGE_VOL_DELETE_NORMAL); err != nil {
 		if errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
 			return domain.ErrNotFound
@@ -440,6 +450,50 @@ func (c *Client) DeleteStorageVolume(ctx context.Context, poolName, volumeName s
 		return fmt.Errorf("delete storage volume %s in %s: %w", volumeName, poolName, err)
 	}
 	return nil
+}
+
+func (c *Client) storageVolumesUsingBackingLocked(backingPath string) ([]string, error) {
+	pools, err := c.conn.ListAllStoragePools(libvirt.CONNECT_LIST_STORAGE_POOLS_ACTIVE)
+	if err != nil {
+		return nil, fmt.Errorf("list active storage pools before volume delete: %w", err)
+	}
+	defer func() {
+		for i := range pools {
+			_ = pools[i].Free()
+		}
+	}()
+	target := filepath.Clean(strings.TrimSpace(backingPath))
+	children := make([]string, 0)
+	for i := range pools {
+		pool := &pools[i]
+		poolName, nameErr := pool.GetName()
+		if nameErr != nil {
+			return nil, fmt.Errorf("read storage pool name before volume delete: %w", nameErr)
+		}
+		volumes, listErr := pool.ListAllStorageVolumes(0)
+		if listErr != nil {
+			return nil, fmt.Errorf("list storage volumes in %s before volume delete: %w", poolName, listErr)
+		}
+		for index := range volumes {
+			xmlText, xmlErr := volumes[index].GetXMLDesc(0)
+			volumeName, volumeNameErr := volumes[index].GetName()
+			_ = volumes[index].Free()
+			if xmlErr != nil || volumeNameErr != nil {
+				return nil, fmt.Errorf("inspect storage volume in %s before volume delete: %w", poolName, errors.Join(xmlErr, volumeNameErr))
+			}
+			var parsed storageVolumeXML
+			if err := xml.Unmarshal([]byte(xmlText), &parsed); err != nil {
+				return nil, fmt.Errorf("decode storage volume %s in %s before volume delete: %w", volumeName, poolName, err)
+			}
+			for _, backing := range parsed.BackingStore {
+				if filepath.Clean(strings.TrimSpace(backing.Path)) == target {
+					children = append(children, poolName+"/"+volumeName)
+					break
+				}
+			}
+		}
+	}
+	return children, nil
 }
 
 func (c *Client) domainNamesUsingVolumeLocked(volumePath, volumeName string) ([]string, error) {

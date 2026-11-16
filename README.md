@@ -51,16 +51,16 @@ All screenshots use the built-in demo backend, not production host data.
 |---|---|
 | Overview | Host CPU, memory, libvirt version, VM counts, allocation ratios, warnings, and recent VM status |
 | Virtual machines | Search and filter domains by state, tag, and owner; persist filters locally and favorite frequently used VMs; view state, vCPU, memory, disk, network, IP, and autostart; perform single or batch lifecycle actions |
-| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, full clone from a registered image, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
+| VM creation | BIOS/UEFI, Secure Boot, existing or manual disk, full or same-pool qcow2 linked clone from a registered image, disk bus (virtio/SATA/SCSI), NIC model (virtio/e1000), boot order, network selection, ISO, autostart, and a Cloud-init seed ISO with user-data, network-config, and vendor-data |
 | VM import | Import a RAW/QCOW2 system disk or ISO installation media from an active storage pool, or upload one first; copy disk images to an independent volume, or create a blank QCOW2 system disk and mount the ISO as a read-only boot CD-ROM |
-| VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, structured Guest Agent information, controlled file/password/SSH/process actions, policy health history, snapshots, and domain XML |
+| VM details | Tags/notes/owner metadata, hardware summary, live and historical CPU/memory/network/disk throughput and IOPS trends, per-NIC throughput, disks, NICs, structured Guest Agent information, Cloud-init execution status and log-tail diagnostics, controlled file/password/SSH/process actions, policy health history, snapshots, and domain XML |
 | Console | Embedded and standalone noVNC / xterm.js consoles, VNC-to-serial switching, Cockpit-style key combinations, scaling, disconnect/reconnect, fullscreen, and a detachable window; all sessions use one-time tokens and a server-side WebSocket proxy |
 | VM operations | Start, graceful shutdown, reboot, reset, pause, resume, force off, delete, clone, import, cold backup, autostart, CPU/memory adjustment, disk expansion, and data-disk/NIC hotplug |
 | Domain XML | Read live or persistent XML in CodeMirror; admins can validate and edit the persistent configuration in writable mode |
 | Configuration history | Automatically archives persistent domain XML after config changes and external libvirt updates; compare, pin, download, and roll back to an earlier definition |
 | Snapshots | Create, revert, delete, and schedule per-VM snapshots with interval or daily-time retention policies |
 | Backups | Central cold-backup catalog, manual integrity checks, restore as a new VM, interval/daily schedules, retention, pinning, failed-task retry, and task SSE state |
-| Image library | Register existing qcow2/raw volumes with OS metadata; refresh allocation and SHA-256 on demand; bind images to templates and create VMs by full clone without deleting the source volume when unregistering |
+| Image library | Register existing qcow2/raw volumes with OS metadata; refresh allocation and SHA-256 on demand; bind images to templates and create VMs by full clone or same-pool qcow2 linked clone without deleting the source volume when unregistering |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; stream ISO, qcow2, and raw image uploads; protect in-use volumes |
 | Networking | NAT, isolated, and external bridge networks, host bridge discovery, IPv4/DHCP configuration, live leases, static DHCP hosts with CSV import/export, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
@@ -376,7 +376,7 @@ scripts/                  Development and E2E helpers
 - Container deployment requires the host libvirt socket and a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Online/incremental backup, in-place restore, cross-host replication, and backup download are not implemented.
 - VM import supports active-pool QCOW2/RAW system disks and ISO installation media. ISO imports create a blank system disk and retain the source ISO as a read-only CD-ROM. OVA/OVF, VMDK, VHDX, and format conversion are not implemented.
-- The image library supports qcow2/raw uploads and full clones. Linked clones, format conversion, and cross-pool automatic movement are not implemented.
+- The image library supports qcow2/raw uploads, full clones, and same-pool qcow2 linked clones. Cross-pool linked clones, format conversion, and cross-pool automatic movement are not implemented.
 - Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
 - External bridge networks attach to an existing host Linux bridge and use upstream addressing/DHCP. VirtMgr does not create host bridges and does not manage VLAN, bond, OVS, SR-IOV, IPv6/RA, or security groups.
 - Alerts use the existing rule-level Webhook only. Notification centers, SMTP, Slack/Teams, PagerDuty, alert silencing, and escalation policies are not provided.

@@ -344,6 +344,21 @@ func (d *DemoBackend) ListGuestAgentUsers(ctx context.Context, uuid string) ([]d
 	return users, nil
 }
 
+func (d *DemoBackend) GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error) {
+	if _, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool { return capabilities.Processes }); err != nil {
+		return domain.GuestAgentCloudInit{}, err
+	}
+	return domain.GuestAgentCloudInit{
+		Installed: true, State: "done", Status: "done", ExtendedStatus: "done", Stage: "None",
+		Datasource: "DataSourceNoCloud [seed=/dev/sr0][dsmode=net]", LastUpdate: time.Now().UTC().Format(time.RFC3339),
+		Errors: []string{}, RecoverableErrors: []string{},
+		Log: "Cloud-init v. 24.4-0ubuntu1~24.04.1 finished at " + time.Now().UTC().Format(time.RFC3339) + ". Datasource DataSourceNoCloud [seed=/dev/sr0][dsmode=net]. Up 3.42 seconds\n" +
+			"2026-11-16 10:21:03,290 - util.py[DEBUG]: Running command ['systemctl', 'start', 'ssh.service'] with allowed return codes [0] (shell=False, capture=True)\n" +
+			"2026-11-16 10:21:03,425 - cc_final_message.py[INFO]: Used fallback datasource\n",
+		LogPath: "/var/log/cloud-init-output.log", LogTruncated: false, CheckedAt: time.Now().UTC(),
+	}, nil
+}
+
 func (d *DemoBackend) demoGuestAgentCapability(ctx context.Context, uuid string, allowed func(domain.GuestAgentCapabilities) bool) (domain.GuestAgentInfo, error) {
 	info, err := d.GetGuestAgentInfo(ctx, uuid, true)
 	if err != nil {

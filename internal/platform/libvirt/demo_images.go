@@ -45,6 +45,38 @@ func (d *DemoBackend) CloneStorageVolume(_ context.Context, sourcePoolName, sour
 	return target, nil
 }
 
+func (d *DemoBackend) CloneStorageVolumeLinked(_ context.Context, sourcePoolName, sourceVolumeName, targetPoolName, targetName string) (domain.StorageVolume, error) {
+	if sourcePoolName != targetPoolName {
+		return domain.StorageVolume{}, fmt.Errorf("%w: linked clone source and target must use the same storage pool", domain.ErrInvalidInput)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	sourcePool, ok := d.pools[sourcePoolName]
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if sourcePool.State != domain.StoragePoolStateActive {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	source, ok := d.demoVolumeLocked(sourcePoolName, sourceVolumeName)
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if source.Format != "qcow2" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: linked clone requires a qcow2 source volume", domain.ErrInvalidInput)
+	}
+	if _, exists := d.demoVolumeLocked(sourcePoolName, targetName); exists {
+		return domain.StorageVolume{}, domain.ErrConflict
+	}
+	target := domain.StorageVolume{
+		Name: targetName, Path: filepath.Join(sourcePool.TargetPath, targetName), Type: "file", Format: "qcow2",
+		CapacityBytes: source.CapacityBytes, AllocationBytes: 0,
+	}
+	d.volumes[sourcePoolName] = append(d.volumes[sourcePoolName], target)
+	d.volumeBacking[sourcePoolName+"/"+targetName] = source.Path
+	return target, nil
+}
+
 func (d *DemoBackend) StorageVolumeChecksum(_ context.Context, poolName, volumeName string) (string, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

@@ -84,6 +84,7 @@ type ImageRepository interface {
 type ImageVolumeRepository interface {
 	GetStoragePool(ctx context.Context, name string) (domain.StoragePool, error)
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
+	CloneStorageVolumeLinked(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 }
 
@@ -604,6 +605,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 	if normalized.ImageID > 0 {
 		detail["imageId"] = normalized.ImageID
 		detail["imageName"] = imageName
+		detail["imageCloneMode"] = normalized.ImageCloneMode
 		detail["targetPool"] = normalized.TargetPool
 	}
 	detail["uuid"] = vm.UUID
@@ -634,18 +636,36 @@ func (s *Service) prepareImageDisk(ctx context.Context, spec *domain.VMCreateSpe
 		return domain.VMImage{}, domain.ErrInvalidInput
 	}
 	targetName := imageDiskName(spec.Name, image.Format)
+	cloneMode, ok := domain.NormalizeVMImageCloneMode(string(spec.ImageCloneMode))
+	if !ok {
+		return domain.VMImage{}, domain.ErrInvalidInput
+	}
+	if cloneMode == domain.VMImageCloneModeLinked {
+		if image.Format != "qcow2" || targetPool != image.Pool {
+			return domain.VMImage{}, fmt.Errorf("%w: linked clone requires a qcow2 image and the same target storage pool", domain.ErrInvalidInput)
+		}
+	}
 	pool, err := s.imageVolumes.GetStoragePool(ctx, targetPool)
 	if err != nil {
 		return domain.VMImage{}, err
 	}
 	required := domain.StorageProvisionRequiredBytes(image.Format, image.CapacityBytes, image.AllocationBytes)
+	if cloneMode == domain.VMImageCloneModeLinked {
+		required = domain.StorageProvisionRequiredBytes("qcow2", 0, 0) + (64 << 20)
+	}
 	if !domain.StoragePoolHasCapacity(pool, required) {
 		return domain.VMImage{}, fmt.Errorf("%w: target pool %s requires %d bytes, only %d available", domain.ErrStorageInsufficient, targetPool, required, pool.AvailableBytes)
 	}
-	volume, err := s.imageVolumes.CloneStorageVolume(ctx, image.Pool, image.Volume, targetPool, targetName)
+	var volume domain.StorageVolume
+	if cloneMode == domain.VMImageCloneModeLinked {
+		volume, err = s.imageVolumes.CloneStorageVolumeLinked(ctx, image.Pool, image.Volume, targetPool, targetName)
+	} else {
+		volume, err = s.imageVolumes.CloneStorageVolume(ctx, image.Pool, image.Volume, targetPool, targetName)
+	}
 	if err != nil {
 		return domain.VMImage{}, err
 	}
+	spec.ImageCloneMode = cloneMode
 	spec.DiskPath = volume.Path
 	spec.DiskFormat = image.Format
 	spec.TargetPool = targetPool
@@ -1516,6 +1536,11 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 			return domain.VMCreateSpec{}, fmt.Errorf("%w: disk format must be qcow2 or raw", domain.ErrInvalidInput)
 		}
 	}
+	cloneMode, ok := domain.NormalizeVMImageCloneMode(string(spec.ImageCloneMode))
+	if !ok || (cloneMode == domain.VMImageCloneModeLinked && spec.ImageID == 0) {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: image clone mode must be full or linked and linked mode requires an image", domain.ErrInvalidInput)
+	}
+	spec.ImageCloneMode = cloneMode
 	diskBus, ok := domain.NormalizeVMDiskBus(string(spec.DiskBus))
 	if !ok {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: disk bus must be virtio, sata or scsi", domain.ErrInvalidInput)

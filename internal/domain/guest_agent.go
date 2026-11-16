@@ -218,6 +218,22 @@ type GuestAgentUser struct {
 	LoginTime int64  `json:"loginTime,omitempty"`
 }
 
+type GuestAgentCloudInit struct {
+	Installed         bool      `json:"installed"`
+	State             string    `json:"state"`
+	Status            string    `json:"status,omitempty"`
+	ExtendedStatus    string    `json:"extendedStatus,omitempty"`
+	Stage             string    `json:"stage,omitempty"`
+	Datasource        string    `json:"datasource,omitempty"`
+	LastUpdate        string    `json:"lastUpdate,omitempty"`
+	Errors            []string  `json:"errors"`
+	RecoverableErrors []string  `json:"recoverableErrors"`
+	Log               string    `json:"log,omitempty"`
+	LogPath           string    `json:"logPath,omitempty"`
+	LogTruncated      bool      `json:"logTruncated"`
+	CheckedAt         time.Time `json:"checkedAt"`
+}
+
 func ValidGuestAgentUsername(value string) bool {
 	return guestAgentUsernamePattern.MatchString(strings.TrimSpace(value))
 }
