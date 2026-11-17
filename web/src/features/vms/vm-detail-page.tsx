@@ -12,6 +12,7 @@ import {
   Download,
   HardDrive,
   History,
+  KeyRound,
   LoaderCircle,
   MemoryStick,
   MonitorPlay,
@@ -53,6 +54,7 @@ import { Progress } from "@/components/ui/progress";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { VMConsoleCard } from "@/features/console/vm-console-card";
 import { VMGuestAgentCard } from "@/features/guest-agent/vm-guest-agent-card";
+import { VMPasswordCard } from "@/features/guest-agent/vm-password-card";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey } from "@/features/vms/use-vm-query";
@@ -366,6 +368,16 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           <Button
             variant="outline"
             size="sm"
+            data-testid="vm-password-open"
+            title="修改或重置虚拟机内已有用户的密码"
+            onClick={() => {
+              document.getElementById("vm-password-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              window.setTimeout(() => document.getElementById("vm-guest-password-username")?.focus(), 250);
+            }}
+          ><KeyRound className="h-4 w-4" />修改客户机密码</Button>
+          <Button
+            variant="outline"
+            size="sm"
             data-testid="vm-export-button"
             disabled={exportMutation.isPending}
             title="下载包含虚拟机定义、XML 与快照元数据的 JSON 文件"
@@ -453,6 +465,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           ) : null}
         </CardContent>
       </Card>
+
+      <VMPasswordCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
 
       <VMConsoleCard
         uuid={uuid}

@@ -511,6 +511,12 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await expect(page.getByTestId("vm-hostname")).toHaveText("demo-db-01");
   await expect(page.getByTestId("vm-ip-addresses")).toHaveText("192.168.122.102");
   await expect(page.getByTestId("vm-agent-status")).toHaveText("已连接");
+  await expect(page.getByTestId("vm-password-open")).toBeVisible();
+  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
+  await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
+  await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-card")).toBeInViewport();
   await expect(page.getByTestId("vm-guest-agent-card")).toBeVisible();
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
   await expect(page.getByTestId("guest-agent-hostname")).toHaveText("demo-db-01");

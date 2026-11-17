@@ -119,6 +119,10 @@ test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", 
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
   await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
+  await expect(page.getByTestId("vm-password-username")).toBeDisabled();
+  await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
   await expect(page.getByTestId("vm-iso-attach-open")).toBeVisible();
   await expect(page.getByTestId("vm-iso-attach-open")).toBeDisabled();
   await expect(page.getByTestId("guest-agent-controls")).toHaveCount(0);
@@ -134,5 +138,7 @@ test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", 
     expect(layout.bodyWidth, `${width}px 虚拟机详情 body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
     const isoButton = await page.getByTestId("vm-iso-attach-open").boundingBox();
     expect(isoButton?.width ?? width + 1, `${width}px ISO 操作按钮应适应视口`).toBeLessThanOrEqual(width);
+    const passwordCard = await page.getByTestId("vm-password-card").boundingBox();
+    expect(passwordCard?.width ?? width + 1, `${width}px 客户机密码卡片应适应视口`).toBeLessThanOrEqual(width);
   }
 });

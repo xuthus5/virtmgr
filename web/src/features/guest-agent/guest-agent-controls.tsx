@@ -30,7 +30,6 @@ import { formatBytes } from "@/lib/utils";
 
 type PendingAction =
   | { kind: "file-write" }
-  | { kind: "password" }
   | { kind: "ssh-add" }
   | { kind: "ssh-remove" }
   | { kind: "signal"; process: GuestAgentProcess };
@@ -73,7 +72,6 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
   const [writeText, setWriteText] = useState("");
   const [overwrite, setOverwrite] = useState(false);
   const [username, setUsername] = useState("root");
-  const [password, setPassword] = useState("");
   const [keys, setKeys] = useState("");
   const [authorizedKeys, setAuthorizedKeys] = useState<GuestAgentAuthorizedKeys | null>(null);
   const [processes, setProcesses] = useState<GuestAgentProcess[]>([]);
@@ -98,11 +96,6 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
       notify("success", `已写入 ${formatBytes(response.result.bytesWritten)}，任务 ${response.task.id} 已完成。`);
     },
     onError: (cause) => { setPending(null); notify("error", errorMessage(cause, "写入客户机文件失败。")); },
-  });
-  const passwordMutation = useMutation({
-    mutationFn: () => api.resetGuestAgentPassword(uuid, { username: username.trim(), password }),
-    onSuccess: () => { setPending(null); setPassword(""); notify("success", "密码已重置；内容和任务审计均不保存明文密码。"); },
-    onError: (cause) => { setPending(null); notify("error", errorMessage(cause, "重置密码失败。")); },
   });
   const loadKeysMutation = useMutation({
     mutationFn: () => api.guestAgentSSHKeys(uuid, username.trim()),
@@ -159,7 +152,6 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
     if (!pending) return;
     switch (pending.kind) {
       case "file-write": writeFileMutation.mutate(); break;
-      case "password": passwordMutation.mutate(); break;
       case "ssh-add": addKeysMutation.mutate(); break;
       case "ssh-remove": removeKeysMutation.mutate(); break;
       case "signal": signalMutation.mutate({ pid: pending.process.pid, signal: "term" }); break;
@@ -199,20 +191,12 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
         <Button variant="destructive" size="sm" disabled={!writePath.trim() || !overwrite} onClick={() => setPending({ kind: "file-write" })}>确认写入文件</Button>
       </section>
 
-      <section className="grid gap-4 rounded-md border p-3 lg:grid-cols-2" aria-labelledby="guest-access-heading">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2"><KeyRound className="h-4 w-4" /><h3 id="guest-access-heading" className="text-sm font-semibold">密码重置</h3></div>
-          <Input aria-label="密码重置用户名" value={username} onChange={(event) => setUsername(event.target.value)} />
-          <Input aria-label="新密码" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          <Button variant="destructive" size="sm" data-testid="guest-agent-password-reset" disabled={!username.trim() || !password} onClick={() => setPending({ kind: "password" })}>重置密码</Button>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2"><KeyRound className="h-4 w-4" /><h3 className="text-sm font-semibold">SSH authorized_keys</h3></div>
-          <div className="flex gap-2"><Input aria-label="SSH 用户名" value={username} onChange={(event) => setUsername(event.target.value)} /><Button variant="outline" onClick={() => loadKeysMutation.mutate()} disabled={loadKeysMutation.isPending || !username.trim()}>读取</Button></div>
-          {authorizedKeys ? <p className="text-xs text-muted-foreground">当前用户 <span className="font-mono">{authorizedKeys.username}</span> 有 {authorizedKeys.keys.length} 个公钥。</p> : null}
-          <textarea aria-label="SSH 公钥" value={keys} onChange={(event) => setKeys(event.target.value)} className="min-h-20 w-full rounded-md border bg-card p-2 font-mono text-xs" placeholder="每行一个 OpenSSH 公钥" />
-          <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!keys.trim()} onClick={() => setPending({ kind: "ssh-add" })}>添加公钥</Button><Button size="sm" variant="outline" disabled={!keys.trim()} onClick={() => setPending({ kind: "ssh-remove" })}>移除公钥</Button></div>
-        </div>
+      <section className="space-y-2 rounded-md border p-3" aria-labelledby="guest-ssh-heading">
+        <div className="flex items-center gap-2"><KeyRound className="h-4 w-4" /><h3 id="guest-ssh-heading" className="text-sm font-semibold">SSH authorized_keys</h3></div>
+        <div className="flex gap-2"><Input aria-label="SSH 用户名" value={username} onChange={(event) => setUsername(event.target.value)} /><Button variant="outline" onClick={() => loadKeysMutation.mutate()} disabled={loadKeysMutation.isPending || !username.trim()}>读取</Button></div>
+        {authorizedKeys ? <p className="text-xs text-muted-foreground">当前用户 <span className="font-mono">{authorizedKeys.username}</span> 有 {authorizedKeys.keys.length} 个公钥。</p> : null}
+        <textarea aria-label="SSH 公钥" value={keys} onChange={(event) => setKeys(event.target.value)} className="min-h-20 w-full rounded-md border bg-card p-2 font-mono text-xs" placeholder="每行一个 OpenSSH 公钥" />
+        <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!keys.trim()} onClick={() => setPending({ kind: "ssh-add" })}>添加公钥</Button><Button size="sm" variant="outline" disabled={!keys.trim()} onClick={() => setPending({ kind: "ssh-remove" })}>移除公钥</Button></div>
       </section>
 
       <section className="grid gap-4 rounded-md border p-3 lg:grid-cols-2" aria-labelledby="guest-process-heading">

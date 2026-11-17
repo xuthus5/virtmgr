@@ -46,6 +46,9 @@ test("可写模式完成启动和强制下电确认", async ({ page }) => {
   await addChannel.click();
   await expect(page.getByTestId("guest-agent-notice")).toContainText("已补充 QEMU Guest Agent 通道");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("未连接");
+  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 未连接");
+  await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
 });
 
 test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ page }) => {
@@ -55,16 +58,23 @@ test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ p
 
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
   await expect(page.getByTestId("guest-agent-controls")).toBeVisible();
+  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
   await page.getByLabel("客户机文件路径").fill("/etc/os-release");
   await page.getByTestId("guest-agent-file-read").click();
   await expect(page.getByTestId("guest-agent-file-preview")).toContainText("Ubuntu 24.04.1 LTS");
   await expect(page.getByTestId("guest-agent-notice")).toContainText("文件读取完成");
 
-  await page.getByLabel("新密码").fill("temporary-e2e-secret");
-  await page.getByTestId("guest-agent-password-reset").click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "确认执行", exact: true }).click();
-  await expect(page.getByTestId("guest-agent-notice")).toContainText("密码已重置");
-  await expect(page.getByLabel("新密码")).toHaveValue("");
+  await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-username")).toBeFocused();
+  await page.getByTestId("vm-password-new").fill("temporary-e2e-secret");
+  await page.getByTestId("vm-password-confirm").fill("temporary-e2e-secret");
+  await page.getByTestId("vm-password-submit").click();
+  await expect(page.getByTestId("vm-password-confirm-dialog")).toContainText("demo-db-01");
+  await page.getByTestId("vm-password-confirm-submit").click();
+  await expect(page.getByTestId("vm-password-notice")).toContainText("密码修改任务已创建");
+  await expect(page.getByTestId("vm-password-new")).toHaveValue("");
+  await expect(page.getByTestId("vm-password-confirm")).toHaveValue("");
 
   await page.getByTestId("guest-agent-process-load").click();
   const processRow = page.getByTestId("guest-agent-process-918");
@@ -195,15 +205,17 @@ test("虚拟机详情内嵌串口控制台可连接并收发数据", async ({ pa
   const panel = page.getByTestId("vm-console-panel");
   await expect(panel).toHaveAttribute("data-kind", "serial");
   await expect(panel).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
-  const terminal = page.getByTestId("vm-console-serial-screen").locator(".xterm");
+  const screen = page.getByTestId("vm-console-serial-screen");
+  const terminal = screen.locator(".xterm");
   await expect(terminal).toBeVisible();
-  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("VirtMgr demo serial console");
-  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("login:");
+  await screen.scrollIntoViewIfNeeded();
+  await expect(screen).toContainText("VirtMgr demo serial console");
+  await expect(screen).toContainText("login:");
 
-  await page.getByTestId("vm-console-serial-screen").locator("textarea").focus();
+  await screen.locator("textarea").focus();
   await page.keyboard.type("e2e-serial");
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("vm-console-serial-screen")).toContainText("[demo] e2e-serial");
+  await expect(screen).toContainText("[demo] e2e-serial");
 });
 
 test("图形控制台可分离到独立窗口", async ({ page }) => {

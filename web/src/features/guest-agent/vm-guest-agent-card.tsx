@@ -164,7 +164,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
   const canAddChannel = guestAgentCanAddChannel(vm.state);
 
   return (
-    <Card className="mt-4" data-testid="vm-guest-agent-card">
+    <Card className="mt-4 scroll-mt-20" id="vm-guest-agent-card" data-testid="vm-guest-agent-card">
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
