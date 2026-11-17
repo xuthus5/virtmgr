@@ -371,7 +371,7 @@ func guestAgentCapabilities(response guestInfoResponse) domain.GuestAgentCapabil
 			commands[strings.TrimSpace(command.Name)] = true
 		}
 	}
-	return domain.GuestAgentCapabilities{
+	capabilities := domain.GuestAgentCapabilities{
 		Hostname: commands["guest-get-host-name"],
 		Network:  commands["guest-network-get-interfaces"],
 		OSInfo:   commands["guest-get-osinfo"],
@@ -391,6 +391,8 @@ func guestAgentCapabilities(response guestInfoResponse) domain.GuestAgentCapabil
 		Timezone:      commands["guest-get-timezone"],
 		NetworkRoutes: commands["guest-network-get-route"],
 	}
+	capabilities.FilesystemResize = capabilities.Processes && capabilities.FSInfo
+	return capabilities
 }
 
 func parseGuestTimezone(raw string) (string, error) {

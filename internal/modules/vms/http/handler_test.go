@@ -41,6 +41,7 @@ type handlerRepository struct {
 	detachErr        error
 	detachedDevice   string
 	xmlFormat        domain.VMXMLFormat
+	xmlText          string
 	xmlErr           error
 	defineXMLErr     error
 	definedXML       string
@@ -64,6 +65,11 @@ type handlerRepository struct {
 	openedConsole    uint
 	openedSerial     string
 	sentKeys         []uint
+	diskQoSTarget    string
+	diskQoSSpec      domain.VMDiskQoSSpec
+	networkQoSMAC    string
+	networkQoSSpec   domain.VMNetworkQoSSpec
+	qosErr           error
 }
 
 type testConsoleConn struct{ *strings.Reader }
@@ -110,7 +116,43 @@ func (f *handlerRepository) GetVMXML(_ context.Context, uuid string, format doma
 	if f.xmlErr != nil {
 		return domain.VMXML{}, f.xmlErr
 	}
-	return domain.VMXML{UUID: uuid, Name: "api-01", Format: format, XML: "<domain/>"}, nil
+	xmlText := f.xmlText
+	if xmlText == "" {
+		xmlText = "<domain/>"
+	}
+	return domain.VMXML{UUID: uuid, Name: "api-01", Format: format, XML: xmlText}, nil
+}
+
+func (f *handlerRepository) UpdateVMDiskQoS(_ context.Context, uuid, target string, spec domain.VMDiskQoSSpec) (domain.VM, error) {
+	f.diskQoSTarget = target
+	f.diskQoSSpec = spec
+	if f.qosErr != nil {
+		return domain.VM{}, f.qosErr
+	}
+	for _, vm := range f.vms {
+		if vm.UUID == uuid {
+			qos := domain.DiskQoS(spec)
+			vm.Disks[0].QoS = &qos
+			return vm, nil
+		}
+	}
+	return domain.VM{}, domain.ErrNotFound
+}
+
+func (f *handlerRepository) UpdateVMNetworkQoS(_ context.Context, uuid, mac string, spec domain.VMNetworkQoSSpec) (domain.VM, error) {
+	f.networkQoSMAC = mac
+	f.networkQoSSpec = spec
+	if f.qosErr != nil {
+		return domain.VM{}, f.qosErr
+	}
+	for _, vm := range f.vms {
+		if vm.UUID == uuid {
+			qos := domain.NetworkQoS(spec)
+			vm.Interfaces[0].QoS = &qos
+			return vm, nil
+		}
+	}
+	return domain.VM{}, domain.ErrNotFound
 }
 
 func (f *handlerRepository) DefineVMXML(_ context.Context, uuid, xmlText string) (domain.VMXML, error) {
@@ -1199,6 +1241,75 @@ func TestSnapshotRoutes(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(stdhttp.MethodDelete, "/vms/uuid-a/snapshots/before-upgrade", nil))
 	if recorder.Code != stdhttp.StatusNoContent || repository.deletedSnapshot != "before-upgrade" {
 		t.Fatalf("delete status = %d snapshot=%q", recorder.Code, repository.deletedSnapshot)
+	}
+}
+
+const vmConfigurationXML = `<domain type='kvm'>
+  <name>api-01</name>
+  <uuid>uuid-a</uuid>
+  <os><type arch='x86_64'>hvm</type><boot dev='hd'/></os>
+  <cpu mode='host-model'><topology sockets='1' cores='2' threads='1'/></cpu>
+  <devices>
+    <disk type='file' device='disk'><source file='/images/api.qcow2'/><target dev='vda' bus='virtio'/></disk>
+    <disk type='file' device='cdrom'><source file='/images/install.iso'/><target dev='sda' bus='sata'/><readonly/></disk>
+    <interface type='network'><mac address='52:54:00:01:12:99'/><source network='default'/><model type='virtio'/></interface>
+  </devices>
+</domain>`
+
+func TestBootCPUAndQoSRoutes(t *testing.T) {
+	vm := domain.VM{
+		UUID: "uuid-a", Name: "api-01", State: domain.VMStateRunning, Persistent: true, VCPUs: 2, MaxVCPUs: 2,
+		Disks: []domain.Disk{
+			{Device: "disk", Target: "vda", Bus: "virtio", Source: "/images/api.qcow2"},
+			{Device: "cdrom", Target: "sda", Bus: "sata", Source: "/images/install.iso", ReadOnly: true},
+		},
+		Interfaces: []domain.NetworkInterface{{MAC: "52:54:00:01:12:99", Type: "network", Source: "default"}},
+	}
+	repository := &handlerRepository{vms: []domain.VM{vm}, xmlText: vmConfigurationXML}
+	session := operatorSession()
+	router := newHandlerRouter(repository, &session, true)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/boot", strings.NewReader(`{"devices":["cdrom","hd","network"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || !strings.Contains(repository.definedXML, `<boot dev="cdrom">`) {
+		t.Fatalf("boot status = %d xml=%s body=%s", recorder.Code, repository.definedXML, recorder.Body.String())
+	}
+
+	shutoff := vm
+	shutoff.State = domain.VMStateShutoff
+	repository.vms = []domain.VM{shutoff}
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/cpu", strings.NewReader(`{"model":"Cascadelake-Server","sockets":1,"cores":2,"threads":1}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || !strings.Contains(repository.definedXML, "Cascadelake-Server") {
+		t.Fatalf("cpu status = %d xml=%s body=%s", recorder.Code, repository.definedXML, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/disks/vda/qos", strings.NewReader(`{"totalBytesSec":20971520,"readBytesSec":10485760,"writeBytesSec":0,"totalIops":0,"readIops":1000,"writeIops":500}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || repository.diskQoSTarget != "vda" || repository.diskQoSSpec.ReadIOPS != 1000 {
+		t.Fatalf("disk qos status = %d target=%q spec=%+v body=%s", recorder.Code, repository.diskQoSTarget, repository.diskQoSSpec, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/network-interfaces/52:54:00:01:12:99/qos", strings.NewReader(`{"inboundAverageBytes":10485760,"inboundPeakBytes":20971520,"inboundBurstBytes":1048576,"outboundAverageBytes":5242880,"outboundPeakBytes":0,"outboundBurstBytes":0}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || repository.networkQoSMAC != "52:54:00:01:12:99" || repository.networkQoSSpec.InboundPeakBytes != 20<<20 {
+		t.Fatalf("network qos status = %d mac=%q spec=%+v body=%s", recorder.Code, repository.networkQoSMAC, repository.networkQoSSpec, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/network-interfaces/52%3A54%3A00%3A01%3A12%3A99/qos", strings.NewReader(`{"inboundAverageBytes":10485760}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || repository.networkQoSMAC != "52:54:00:01:12:99" {
+		t.Fatalf("encoded network qos status = %d mac=%q body=%s", recorder.Code, repository.networkQoSMAC, recorder.Body.String())
 	}
 }
 

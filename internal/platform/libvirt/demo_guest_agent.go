@@ -59,7 +59,7 @@ func (d *DemoBackend) GetGuestAgentInfo(_ context.Context, uuid string, _ bool) 
 		Hostname: true, Network: true, OSInfo: true, FSInfo: true,
 		Shutdown: true, Reboot: true, TimeSync: true, Trim: true, Quiesce: true,
 		FileAccess: true, PasswordReset: true, SSHKeys: true, Processes: true, Users: true,
-		Timezone: true, NetworkRoutes: true,
+		Timezone: true, NetworkRoutes: true, FilesystemResize: true,
 	}
 	info.Timezone = "Asia/Shanghai"
 	info.Routes = []domain.GuestAgentRoute{
@@ -313,6 +313,49 @@ func (d *DemoBackend) ListGuestAgentServices(ctx context.Context, uuid string) (
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return append([]domain.GuestAgentService(nil), d.guestServices...), nil
+}
+
+func (d *DemoBackend) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (domain.GuestAgentDiagnostics, error) {
+	if _, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool { return capabilities.Processes }); err != nil {
+		return domain.GuestAgentDiagnostics{}, err
+	}
+	return domain.GuestAgentDiagnostics{
+		CheckedAt: time.Now().UTC(),
+		FailedServices: []domain.GuestAgentService{
+			{Unit: "app-worker.service", Load: "loaded", Active: "failed", Sub: "failed", Description: "Background worker (demo failure)"},
+		},
+		ServiceLogs: []domain.GuestAgentServiceLog{
+			{Unit: "app-worker.service", Content: "demo-worker[1042]: failed to connect to database: connection timed out", Truncated: false},
+		},
+		KernelWarnings:  []string{"demo-kernel: warning: PCIe link degraded on 0000:00:05.0"},
+		SystemErrors:    []string{"demo-system: app-worker.service: Failed with result 'exit-code'."},
+		OOMEvents:       []string{},
+		Recommendations: []string{"检查失败服务的 systemd 日志，确认依赖、配置和端口冲突。"},
+		CommandErrors:   []string{},
+	}, nil
+}
+
+func (d *DemoBackend) GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error) {
+	info, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool {
+		return capabilities.FilesystemResize
+	})
+	if err != nil {
+		return domain.GuestAgentFilesystemResizeResult{}, err
+	}
+	for _, filesystem := range info.Filesystems {
+		if filesystem.MountPoint != spec.MountPoint {
+			continue
+		}
+		if filesystem.Type != "ext4" && filesystem.Type != "xfs" {
+			return domain.GuestAgentFilesystemResizeResult{}, domain.ErrActionNotAllowed
+		}
+		total := filesystem.TotalBytes + 2*1024*1024*1024
+		return domain.GuestAgentFilesystemResizeResult{
+			MountPoint: filesystem.MountPoint, Device: filesystem.Device, Filesystem: filesystem.Type,
+			PreviousTotalBytes: filesystem.TotalBytes, TotalBytes: total, FreeBytes: filesystem.FreeBytes + 2*1024*1024*1024,
+		}, nil
+	}
+	return domain.GuestAgentFilesystemResizeResult{}, domain.ErrNotFound
 }
 
 func (d *DemoBackend) SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error {

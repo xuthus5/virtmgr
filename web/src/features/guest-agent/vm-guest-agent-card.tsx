@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -8,16 +8,19 @@ import {
   HardDrive,
   Info,
   LoaderCircle,
+  Maximize2,
   Network,
   Power,
   RefreshCw,
   RotateCcw,
   Scissors,
+  Stethoscope,
 } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type {
   GuestAgentAction,
   GuestAgentActionInput,
+  GuestAgentFilesystem,
   GuestAgentInfo,
   GuestAgentState,
   VM,
@@ -37,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
 import { guestAgentQueryKey, useGuestAgentQuery } from "@/features/guest-agent/use-guest-agent-query";
 import { guestAgentActionUnavailableReason, guestAgentCanAddChannel } from "@/features/guest-agent/guest-agent-model";
 import { GuestAgentControls } from "@/features/guest-agent/guest-agent-controls";
@@ -109,6 +113,8 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
   const [confirmAction, setConfirmAction] = useState<GuestAgentAction | null>(null);
   const [trimMount, setTrimMount] = useState("/");
   const [trimMinimumBytes, setTrimMinimumBytes] = useState("0");
+  const [growFilesystem, setGrowFilesystem] = useState<GuestAgentFilesystem | null>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   const refreshMutation = useMutation({
     mutationFn: () => api.guestAgent(vm.uuid, true),
@@ -149,6 +155,18 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
     },
   });
 
+  const growMutation = useMutation({
+    mutationFn: (mountPoint: string) => api.growGuestAgentFilesystem(vm.uuid, { mountPoint }),
+    onSuccess: (response) => {
+      setGrowFilesystem(null);
+      setNotice({ tone: "success", text: `${response.result.mountPoint} 已扩展至 ${formatBytes(response.result.totalBytes)}，可用 ${formatBytes(response.result.freeBytes)}。` });
+      void queryClient.invalidateQueries({ queryKey: guestAgentQueryKey(vm.uuid) });
+    },
+    onError: (cause) => {
+      setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "客户机文件系统扩容失败。" });
+    },
+  });
+
   function runAction(action: GuestAgentAction) {
     const meta = actionMeta[action];
     if (meta.confirm) {
@@ -162,6 +180,13 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
   const info = query.data;
   const state = info ? stateMeta[info.state] : null;
   const canAddChannel = guestAgentCanAddChannel(vm.state);
+  const diagnosticsQuery = useQuery({
+    queryKey: ["vm", vm.uuid, "guest-agent", "diagnostics"],
+    queryFn: () => api.guestAgentDiagnostics(vm.uuid),
+    enabled: diagnosticsOpen && info?.state === "connected" && info.capabilities.processes,
+    staleTime: 0,
+    retry: 0,
+  });
 
   return (
     <Card className="mt-4 scroll-mt-20" id="vm-guest-agent-card" data-testid="vm-guest-agent-card">
@@ -282,7 +307,26 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
                       <div className="divide-y">
                         {info.filesystems.map((filesystem) => (
                           <div key={`${filesystem.mountPoint}-${filesystem.device}`} className="px-3 py-2 text-xs">
-                            <div className="flex items-center justify-between gap-2"><span className="font-mono font-medium">{filesystem.mountPoint || "-"}</span><span className="text-muted-foreground">{filesystem.type || "-"}</span></div>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-mono font-medium">{filesystem.mountPoint || "-"}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-muted-foreground">{filesystem.type || "-"}</span>
+                                {filesystem.type === "ext4" || filesystem.type === "xfs" ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-[11px]"
+                                    data-testid={`guest-filesystem-grow-${filesystem.mountPoint}`}
+                                    disabled={!canMutate || !info.capabilities.filesystemResize || growMutation.isPending}
+                                    title={!canMutate ? disabledReason : !info.capabilities.filesystemResize ? "当前 Guest Agent 不支持在线扩容" : `在线扩展 ${filesystem.mountPoint} 的分区和文件系统`}
+                                    onClick={() => { setNotice(null); setGrowFilesystem(filesystem); }}
+                                  >
+                                    <Maximize2 className="h-3 w-3" />在线扩容
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
                             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${percent(filesystem.usedBytes ?? 0, filesystem.totalBytes ?? 0)}%` }} /></div>
                             <p className="mt-1 text-muted-foreground">{formatBytes(filesystem.usedBytes ?? 0)} / {formatBytes(filesystem.totalBytes ?? 0)} · 可用 {formatBytes(filesystem.freeBytes ?? 0)}</p>
                           </div>
@@ -290,6 +334,48 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
                       </div>
                     ) : <p className="px-3 py-4 text-xs text-muted-foreground">代理未返回文件系统信息。</p>}
                   </div>
+                </div>
+
+                <div className="rounded-md border" data-testid="guest-agent-diagnostics">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 bg-muted/20 px-3 py-2 text-left text-sm font-medium"
+                    aria-expanded={diagnosticsOpen}
+                    data-testid="guest-agent-diagnostics-toggle"
+                    onClick={() => setDiagnosticsOpen((open) => !open)}
+                  >
+                    <span className="flex items-center gap-2"><Stethoscope className="h-4 w-4" />启动与故障诊断</span>
+                    <span className="text-xs font-normal text-muted-foreground">{diagnosticsOpen ? "收起" : "检查失败服务、OOM 与系统日志"}</span>
+                  </button>
+                  {diagnosticsOpen ? (
+                    <div className="space-y-3 border-t px-3 py-3 text-xs">
+                      {!info.capabilities.processes ? <p className="text-muted-foreground">客户机 Guest Agent 未提供固定命令执行能力，无法进行启动诊断。</p> : null}
+                      {diagnosticsQuery.isLoading ? <p className="flex items-center gap-2 text-muted-foreground"><LoaderCircle className="h-3.5 w-3.5 animate-spin" />正在执行固定诊断命令...</p> : null}
+                      {diagnosticsQuery.isError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">{diagnosticsQuery.error instanceof ApiError ? diagnosticsQuery.error.message : "读取诊断信息失败。"}</p> : null}
+                      {diagnosticsQuery.data ? (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={diagnosticsQuery.data.failedServices.length || diagnosticsQuery.data.oomEvents.length ? "warning" : "success"}>
+                              {diagnosticsQuery.data.failedServices.length ? `${diagnosticsQuery.data.failedServices.length} 个服务失败` : "无失败服务"}
+                            </Badge>
+                            <Badge variant={diagnosticsQuery.data.oomEvents.length ? "destructive" : "secondary"}>{diagnosticsQuery.data.oomEvents.length} 个 OOM 事件</Badge>
+                            <span className="text-muted-foreground">检查于 {formatDateTime(diagnosticsQuery.data.checkedAt)}</span>
+                          </div>
+                          {diagnosticsQuery.data.failedServices.length ? (
+                            <div><p className="mb-1 font-medium">失败服务</p><div className="flex flex-wrap gap-1.5">{diagnosticsQuery.data.failedServices.map((service) => <Badge key={service.unit} variant="outline" className="font-mono">{service.unit}</Badge>)}</div></div>
+                          ) : null}
+                          {diagnosticsQuery.data.serviceLogs.length ? (
+                            <div className="space-y-2"><p className="font-medium">服务日志</p>{diagnosticsQuery.data.serviceLogs.map((log) => <div key={log.unit} className="rounded-md bg-muted/35 p-2"><p className="font-mono text-muted-foreground">{log.unit}{log.truncated ? " · 已截断" : ""}</p><pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px]">{log.content || "-"}</pre></div>)}</div>
+                          ) : null}
+                          {diagnosticsQuery.data.kernelWarnings.length ? <DiagnosticLines title="内核警告" lines={diagnosticsQuery.data.kernelWarnings} /> : null}
+                          {diagnosticsQuery.data.systemErrors.length ? <DiagnosticLines title="系统错误" lines={diagnosticsQuery.data.systemErrors} /> : null}
+                          {diagnosticsQuery.data.oomEvents.length ? <DiagnosticLines title="OOM 事件" lines={diagnosticsQuery.data.oomEvents} /> : null}
+                          {diagnosticsQuery.data.commandErrors.length ? <DiagnosticLines title="命令不可用" lines={diagnosticsQuery.data.commandErrors} /> : null}
+                          <div><p className="mb-1 font-medium">建议</p><ul className="list-disc space-y-1 pl-4 text-muted-foreground">{diagnosticsQuery.data.recommendations.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex flex-wrap gap-2 border-t pt-4" data-testid="guest-agent-actions">
@@ -359,7 +445,29 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Modal
+        open={growFilesystem !== null}
+        onClose={() => { if (!growMutation.isPending) setGrowFilesystem(null); }}
+        title={`在线扩容 ${growFilesystem?.mountPoint || ""}`}
+        description="宿主机磁盘扩容后，客户机内通过 growpart、resize2fs 或 xfs_growfs 扩展当前分区和文件系统。操作仅支持 ext4/xfs 分区块设备，不执行任意命令。"
+        testId="guest-filesystem-grow-modal"
+        footer={<><Button variant="ghost" disabled={growMutation.isPending} onClick={() => setGrowFilesystem(null)}>取消</Button><Button data-testid="guest-filesystem-grow-submit" disabled={growMutation.isPending || !growFilesystem} onClick={() => { if (growFilesystem) growMutation.mutate(growFilesystem.mountPoint); }}>{growMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Maximize2 className="h-4 w-4" />}{growMutation.isPending ? "正在扩容..." : "确认在线扩容"}</Button></>}
+      >
+        <div className="space-y-3 text-sm">
+          <div className="grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-3">
+            <div><p className="text-xs text-muted-foreground">挂载点</p><p className="mt-1 font-mono">{growFilesystem?.mountPoint || "-"}</p></div>
+            <div><p className="text-xs text-muted-foreground">文件系统</p><p className="mt-1">{growFilesystem?.type || "-"}</p></div>
+            <div><p className="text-xs text-muted-foreground">当前容量</p><p className="mt-1 tabular-nums">{formatBytes(growFilesystem?.totalBytes ?? 0)}</p></div>
+          </div>
+          <p className="text-xs text-muted-foreground">请先确认虚拟磁盘已在宿主机侧扩容，并确保客户机内安装了 growpart 与对应文件系统工具。</p>
+        </div>
+      </Modal>
     </Card>
   );
+}
+
+function DiagnosticLines({ title, lines }: { title: string; lines: string[] }) {
+  return <div><p className="mb-1 font-medium">{title}</p><pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-2 text-[11px] text-muted-foreground">{lines.join("\n")}</pre></div>;
 }
 

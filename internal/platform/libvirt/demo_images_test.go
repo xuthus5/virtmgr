@@ -31,3 +31,46 @@ func TestDemoLinkedCloneProtectsBackingVolume(t *testing.T) {
 		t.Fatalf("delete parent after child error = %v", err)
 	}
 }
+
+func TestDemoConvertStorageVolumeCopiesAndChangesFormat(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	if _, err := backend.CreateStorageVolume(ctx, "default", domain.StorageVolumeCreateSpec{Name: "convert-source.qcow2", Format: "qcow2", CapacityBytes: 30 << 30}); err != nil {
+		t.Fatal(err)
+	}
+	converted, err := backend.ConvertStorageVolume(ctx, domain.StorageVolumeConvertSpec{
+		SourcePool: "default", SourceVolume: "convert-source.qcow2",
+		TargetPool: "default", TargetName: "convert-source.raw", TargetFormat: "raw",
+	})
+	if err != nil {
+		t.Fatalf("ConvertStorageVolume() error = %v", err)
+	}
+	if converted.Format != "raw" || converted.Path != "/var/lib/libvirt/images/convert-source.raw" || converted.CapacityBytes != 30<<30 {
+		t.Fatalf("converted volume = %+v", converted)
+	}
+	volumes, err := backend.ListStorageVolumes(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, volume := range volumes {
+		if volume.Name == "convert-source.raw" && volume.Format == "raw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("converted volume not listed: %+v", volumes)
+	}
+	if _, err := backend.ConvertStorageVolume(ctx, domain.StorageVolumeConvertSpec{
+		SourcePool: "default", SourceVolume: "demo-build-01.qcow2",
+		TargetPool: "default", TargetName: "demo-build-01-copy.qcow2", TargetFormat: "qcow2",
+	}); !errors.Is(err, domain.ErrVolumeInUse) {
+		t.Fatalf("in-use conversion error = %v", err)
+	}
+	if _, err := backend.ConvertStorageVolume(ctx, domain.StorageVolumeConvertSpec{
+		SourcePool: "default", SourceVolume: "convert-source.qcow2",
+		TargetPool: "default", TargetName: "demo-build-01.qcow2", TargetFormat: "qcow2",
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("existing target error = %v", err)
+	}
+}

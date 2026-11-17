@@ -181,6 +181,27 @@ func (h *Handler) DeleteVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
+func (h *Handler) ConvertVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.StorageVolumeConvertSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	task, err := h.service.ConvertVolume(r.Context(), storageapp.ConvertVolumeCommand{
+		Pool: chi.URLParam(r, "pool"), Name: chi.URLParam(r, "volume"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, task)
+}
+
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/storage/pools", h.ListPools)
 	r.Get("/storage/pools/{pool}", h.GetPool)
@@ -192,6 +213,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Delete("/storage/pools/{pool}", h.DeletePool)
 		mutating.Post("/storage/pools/{pool}/volumes", h.CreateVolume)
 		mutating.Post("/storage/pools/{pool}/volumes/upload", h.UploadVolume)
+		mutating.Post("/storage/pools/{pool}/volumes/{volume}/convert", h.ConvertVolume)
 		mutating.Delete("/storage/pools/{pool}/volumes/{volume}", h.DeleteVolume)
 	})
 }

@@ -24,6 +24,9 @@ type fakeBackend struct {
 	processes   []domain.GuestAgentProcess
 	users       []domain.GuestAgentUser
 	cloudInit   domain.GuestAgentCloudInit
+	diagnostics domain.GuestAgentDiagnostics
+	resize      domain.GuestAgentFilesystemResizeResult
+	resizeSpec  domain.GuestAgentFilesystemResizeSpec
 }
 
 func (f *fakeBackend) GetGuestAgentInfo(context.Context, string, bool) (domain.GuestAgentInfo, error) {
@@ -78,6 +81,15 @@ func (f *fakeBackend) ListGuestAgentProcesses(context.Context, string) ([]domain
 
 func (f *fakeBackend) ListGuestAgentServices(context.Context, string) ([]domain.GuestAgentService, error) {
 	return []domain.GuestAgentService{{Unit: "nginx.service", Load: "loaded", Active: "active", Sub: "running"}}, nil
+}
+
+func (f *fakeBackend) GetGuestAgentDiagnostics(context.Context, string) (domain.GuestAgentDiagnostics, error) {
+	return f.diagnostics, nil
+}
+
+func (f *fakeBackend) GrowGuestAgentFilesystem(_ context.Context, _ string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error) {
+	f.resizeSpec = spec
+	return f.resize, nil
 }
 
 func (f *fakeBackend) SignalGuestAgentProcess(_ context.Context, _ string, spec domain.GuestAgentProcessSignalSpec) error {
@@ -334,5 +346,72 @@ func TestGuestAgentChannelAudit(t *testing.T) {
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "vm.guest_agent.channel.add" {
 		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestGuestAgentDiagnosticsPermissionsAndAudit(t *testing.T) {
+	backend := &fakeBackend{diagnostics: domain.GuestAgentDiagnostics{
+		FailedServices: []domain.GuestAgentService{{Unit: "worker.service"}},
+		OOMEvents:      []string{"oom-kill"},
+	}}
+	audit := &fakeAudit{}
+	service := New(backend, audit, false)
+	result, err := service.Diagnostics(context.Background(), ProcessCommand{UUID: " vm-1 ", Request: operatorRequest()})
+	if err != nil {
+		t.Fatalf("Diagnostics() error = %v", err)
+	}
+	if len(result.FailedServices) != 1 || len(result.OOMEvents) != 1 {
+		t.Fatalf("diagnostics = %+v", result)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.guest_agent.diagnostics" || audit.events[0].Result != "success" || audit.events[0].Detail["failedServices"] != 1 {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+	viewer := operatorRequest()
+	viewer.Session.User.Role = domain.RoleViewer
+	if _, err := service.Diagnostics(context.Background(), ProcessCommand{UUID: "vm-1", Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("viewer diagnostics error = %v", err)
+	}
+	if _, err := service.Diagnostics(context.Background(), ProcessCommand{UUID: " ", Request: operatorRequest()}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("empty UUID error = %v", err)
+	}
+}
+
+func TestGuestAgentGrowFilesystemValidationPermissionsAndTask(t *testing.T) {
+	backend := &fakeBackend{resize: domain.GuestAgentFilesystemResizeResult{
+		MountPoint: "/data", Filesystem: "ext4", PreviousTotalBytes: 10 << 30, TotalBytes: 12 << 30, FreeBytes: 4 << 30,
+	}}
+	audit := &fakeAudit{}
+	tasks := &fakeTasks{}
+	service := New(backend, audit, false, WithTaskRecorder(tasks))
+	request := operatorRequest()
+	response, err := service.GrowFilesystem(context.Background(), FilesystemGrowCommand{
+		UUID: " vm-1 ", Spec: domain.GuestAgentFilesystemResizeSpec{MountPoint: " /data "}, Request: request,
+	})
+	if err != nil {
+		t.Fatalf("GrowFilesystem() error = %v", err)
+	}
+	if backend.resizeSpec.MountPoint != "/data" || response.Result.TotalBytes != 12<<30 || response.Task.Status != domain.TaskStatusSucceeded {
+		t.Fatalf("response = %+v spec = %+v", response, backend.resizeSpec)
+	}
+	if tasks.started != 1 || tasks.succeeded != 1 || tasks.failed != 0 {
+		t.Fatalf("task counts = %+v", tasks)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.guest_agent.filesystem.grow" || audit.events[0].Detail["mountPoint"] != "/data" || audit.events[0].Detail["filesystem"] != "ext4" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+
+	for _, spec := range []domain.GuestAgentFilesystemResizeSpec{{}, {MountPoint: "relative"}, {MountPoint: "/bad\x00path"}} {
+		if _, err := service.GrowFilesystem(context.Background(), FilesystemGrowCommand{UUID: "vm-1", Spec: spec, Request: request}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("invalid mount %q error = %v", spec.MountPoint, err)
+		}
+	}
+	viewer := request
+	viewer.Session.User.Role = domain.RoleViewer
+	if _, err := service.GrowFilesystem(context.Background(), FilesystemGrowCommand{UUID: "vm-1", Spec: domain.GuestAgentFilesystemResizeSpec{MountPoint: "/data"}, Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("viewer grow error = %v", err)
+	}
+	readOnly := New(backend, audit, true, WithTaskRecorder(tasks))
+	if _, err := readOnly.GrowFilesystem(context.Background(), FilesystemGrowCommand{UUID: "vm-1", Spec: domain.GuestAgentFilesystemResizeSpec{MountPoint: "/data"}, Request: request}); !errors.Is(err, domain.ErrReadOnly) {
+		t.Fatalf("read-only grow error = %v", err)
 	}
 }

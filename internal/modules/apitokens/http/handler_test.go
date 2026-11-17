@@ -125,6 +125,51 @@ func TestOpenAPIContractDescribesBridgeNetworks(t *testing.T) {
 	}
 }
 
+func TestOpenAPIContractCoversGuestAgentResizeConfigurationAndQoS(t *testing.T) {
+	var document struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(openAPIContract, &document); err != nil {
+		t.Fatalf("parse OpenAPI contract: %v", err)
+	}
+	operations := map[string]string{
+		"/vms/{uuid}/guest-agent/diagnostics":            "get",
+		"/vms/{uuid}/guest-agent/filesystem/grow":        "post",
+		"/vms/{uuid}/boot":                               "patch",
+		"/vms/{uuid}/cpu":                                "patch",
+		"/vms/{uuid}/disks/{target}/qos":                 "patch",
+		"/vms/{uuid}/network-interfaces/{mac}/qos":       "patch",
+		"/storage/pools/{pool}/volumes/{volume}/convert": "post",
+	}
+	for path, method := range operations {
+		if _, ok := document.Paths[path][method]; !ok {
+			t.Errorf("OpenAPI operation %s %s is missing", strings.ToUpper(method), path)
+		}
+	}
+	for _, schema := range []string{
+		"GuestAgentDiagnostics", "GuestAgentServiceLog", "GuestAgentFilesystemResizeRequest",
+		"GuestAgentFilesystemResizeResult", "GuestAgentFilesystemResizeResponse", "VMBootRequest",
+		"VMCPURequest", "VMDiskQoSRequest", "VMNetworkQoSRequest", "StorageVolumeConvertRequest",
+	} {
+		if _, ok := document.Components.Schemas[schema]; !ok {
+			t.Errorf("OpenAPI schema %s is missing", schema)
+		}
+	}
+	for property, schema := range map[string]string{
+		"bootDevices": "VM", "cpuModel": "VM", "cpuSockets": "VM", "cpuCores": "VM", "cpuThreads": "VM",
+		"qos": "Disk", "filesystemResize": "GuestAgentCapabilities",
+	} {
+		if _, ok := document.Components.Schemas[schema].Properties[property]; !ok {
+			t.Errorf("OpenAPI schema %s is missing property %s", schema, property)
+		}
+	}
+}
+
 func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 	var document map[string]any
 	if err := json.Unmarshal(openAPIContract, &document); err != nil {
@@ -140,8 +185,10 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms", "/vms/import", "/vms/batch-actions", "/vms/{uuid}", "/vms/{uuid}/xml", "/vms/{uuid}/export",
 		"/vms/{uuid}/snapshots", "/vms/{uuid}/snapshots/{snapshot}", "/vms/{uuid}/snapshots/{snapshot}/revert",
 		"/vms/{uuid}/metrics", "/vms/{uuid}/clone", "/vms/{uuid}/backups", "/vms/{uuid}/iso/eject", "/vms/{uuid}/iso/attach",
-		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}",
-		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
+		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
+		"/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}", "/vms/{uuid}/disks/{target}/qos",
+		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/network-interfaces/{mac}/qos",
+		"/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
 		"/vms/{uuid}/metadata", "/vms/{uuid}/actions/{action}", "/vms/{uuid}/console-token", "/vms/{uuid}/console",
 		"/vms/{uuid}/serial-console", "/vms/{uuid}/console/send-key", "/vms/{uuid}/config-versions",
 		"/vms/{uuid}/config-versions/{version}", "/vms/{uuid}/config-versions/{version}/rollback",
@@ -151,9 +198,10 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms/{uuid}/guest-agent/ssh-keys/add", "/vms/{uuid}/guest-agent/ssh-keys/remove",
 		"/vms/{uuid}/guest-agent/processes", "/vms/{uuid}/guest-agent/processes/signal",
 		"/vms/{uuid}/guest-agent/services", "/vms/{uuid}/guest-agent/users", "/vms/{uuid}/guest-agent/policy",
-		"/vms/{uuid}/guest-agent/health",
+		"/vms/{uuid}/guest-agent/health", "/vms/{uuid}/guest-agent/diagnostics", "/vms/{uuid}/guest-agent/filesystem/grow",
 		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
+		"/storage/pools/{pool}/volumes/{volume}/convert",
 		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
 		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
 		"/networks/{name}/actions/{action}",

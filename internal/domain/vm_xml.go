@@ -471,6 +471,21 @@ func setVMXMLAttribute(node *vmXMLNode, name, value string) {
 	node.Token = start
 }
 
+func removeVMXMLAttribute(node *vmXMLNode, name string) {
+	start, ok := node.Token.(xml.StartElement)
+	if !ok {
+		return
+	}
+	attributes := start.Attr[:0]
+	for _, attribute := range start.Attr {
+		if attribute.Name.Local != name {
+			attributes = append(attributes, attribute)
+		}
+	}
+	start.Attr = attributes
+	node.Token = start
+}
+
 func childrenByName(children []*vmXMLNode, name string) []*vmXMLNode {
 	result := make([]*vmXMLNode, 0)
 	for _, child := range children {
@@ -502,4 +517,211 @@ func removeVMXMLChildren(children []*vmXMLNode, remove func(*vmXMLNode) bool) []
 
 func removeVMXMLNode(children []*vmXMLNode, target *vmXMLNode) []*vmXMLNode {
 	return removeVMXMLChildren(children, func(node *vmXMLNode) bool { return node == target })
+}
+
+type VMNetworkQoSUpdate struct {
+	XML       string
+	DeviceXML string
+}
+
+func SetVMXMLBootDevices(text string, devices []VMBootDevice) (string, error) {
+	normalized := make([]string, 0, len(devices))
+	for _, device := range devices {
+		normalized = append(normalized, string(device))
+	}
+	parsedDevices, ok := NormalizeVMBootDevices(normalized)
+	if !ok {
+		return "", fmt.Errorf("%w: boot devices must be a unique subset of hd, cdrom and network", ErrInvalidInput)
+	}
+	root, err := parseVMXMLTree(text)
+	if err != nil {
+		return "", err
+	}
+	domainNode := firstVMXMLChild(root, "domain")
+	if domainNode == nil {
+		return "", fmt.Errorf("%w: domain XML has no domain element", ErrInvalidInput)
+	}
+	osNode := firstVMXMLChild(domainNode, "os")
+	if osNode == nil {
+		osNode = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "os"}}}
+		domainNode.Children = append([]*vmXMLNode{osNode}, domainNode.Children...)
+	}
+	osNode.Children = removeVMXMLChildren(osNode.Children, func(node *vmXMLNode) bool {
+		return vmXMLNodeName(node) == "boot"
+	})
+	bootNodes := make([]*vmXMLNode, 0, len(parsedDevices))
+	for _, device := range parsedDevices {
+		bootNodes = append(bootNodes, &vmXMLNode{Token: xml.StartElement{
+			Name: xml.Name{Local: "boot"}, Attr: []xml.Attr{{Name: xml.Name{Local: "dev"}, Value: string(device)}},
+		}})
+	}
+	osNode.Children = append(bootNodes, osNode.Children...)
+	devicesNode := firstVMXMLChild(domainNode, "devices")
+	if devicesNode != nil {
+		for _, device := range devicesNode.Children {
+			switch vmXMLNodeName(device) {
+			case "disk", "interface", "hostdev":
+				for _, boot := range childrenByName(device.Children, "boot") {
+					device.Children = removeVMXMLNode(device.Children, boot)
+				}
+			}
+		}
+	}
+	return encodeVMXMLDocument(root)
+}
+
+func SetVMXMLCPUConfig(text string, spec VMCPUConfigSpec) (string, error) {
+	spec.Model = strings.TrimSpace(spec.Model)
+	if spec.Model == "" || len(spec.Model) > 64 || spec.Sockets == 0 || spec.Cores == 0 || spec.Threads == 0 {
+		return "", fmt.Errorf("%w: invalid CPU model or topology", ErrInvalidInput)
+	}
+	root, err := parseVMXMLTree(text)
+	if err != nil {
+		return "", err
+	}
+	domainNode := firstVMXMLChild(root, "domain")
+	if domainNode == nil {
+		return "", fmt.Errorf("%w: domain XML has no domain element", ErrInvalidInput)
+	}
+	cpuNode := firstVMXMLChild(domainNode, "cpu")
+	if cpuNode == nil {
+		cpuNode = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "cpu"}}}
+		insertAt := len(domainNode.Children)
+		for index, child := range domainNode.Children {
+			if vmXMLNodeName(child) == "os" {
+				insertAt = index + 1
+				break
+			}
+		}
+		domainNode.Children = append(domainNode.Children, nil)
+		copy(domainNode.Children[insertAt+1:], domainNode.Children[insertAt:])
+		domainNode.Children[insertAt] = cpuNode
+	}
+	switch spec.Model {
+	case "host-passthrough":
+		setVMXMLAttribute(cpuNode, "mode", "host-passthrough")
+		setVMXMLAttribute(cpuNode, "check", "none")
+		removeVMXMLAttribute(cpuNode, "match")
+		cpuNode.Children = removeVMXMLChildren(cpuNode.Children, func(node *vmXMLNode) bool { return vmXMLNodeName(node) == "model" })
+	case "host-model":
+		setVMXMLAttribute(cpuNode, "mode", "host-model")
+		setVMXMLAttribute(cpuNode, "check", "partial")
+		removeVMXMLAttribute(cpuNode, "match")
+		cpuNode.Children = removeVMXMLChildren(cpuNode.Children, func(node *vmXMLNode) bool { return vmXMLNodeName(node) == "model" })
+	default:
+		setVMXMLAttribute(cpuNode, "mode", "custom")
+		setVMXMLAttribute(cpuNode, "match", "exact")
+		removeVMXMLAttribute(cpuNode, "check")
+		modelNode := firstVMXMLChild(cpuNode, "model")
+		if modelNode == nil {
+			modelNode = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "model"}}}
+			cpuNode.Children = append([]*vmXMLNode{modelNode}, cpuNode.Children...)
+		}
+		modelNode.Children = []*vmXMLNode{{Token: xml.CharData(spec.Model)}}
+		setVMXMLAttribute(modelNode, "fallback", "allow")
+	}
+	setOrReplaceVMXMLChildAttribute(cpuNode, "topology", "sockets", fmt.Sprintf("%d", spec.Sockets))
+	setOrReplaceVMXMLChildAttribute(cpuNode, "topology", "cores", fmt.Sprintf("%d", spec.Cores))
+	setOrReplaceVMXMLChildAttribute(cpuNode, "topology", "threads", fmt.Sprintf("%d", spec.Threads))
+	return encodeVMXMLDocument(root)
+}
+
+func SetVMNetworkQoSXML(text, mac string, spec VMNetworkQoSSpec) (VMNetworkQoSUpdate, error) {
+	mac = strings.TrimSpace(mac)
+	if mac == "" {
+		return VMNetworkQoSUpdate{}, fmt.Errorf("%w: network interface MAC is required", ErrInvalidInput)
+	}
+	root, err := parseVMXMLTree(text)
+	if err != nil {
+		return VMNetworkQoSUpdate{}, err
+	}
+	domainNode := firstVMXMLChild(root, "domain")
+	devicesNode := firstVMXMLChild(domainNode, "devices")
+	if domainNode == nil || devicesNode == nil {
+		return VMNetworkQoSUpdate{}, fmt.Errorf("%w: domain XML has no devices element", ErrInvalidInput)
+	}
+	var target *vmXMLNode
+	for _, device := range childrenByName(devicesNode.Children, "interface") {
+		if strings.EqualFold(vmXMLChildText(device, "mac", "address"), mac) {
+			target = device
+			break
+		}
+	}
+	if target == nil {
+		return VMNetworkQoSUpdate{}, fmt.Errorf("%w: network interface %s was not found", ErrNotFound, mac)
+	}
+	bandwidth := firstVMXMLChild(target, "bandwidth")
+	if spec == (VMNetworkQoSSpec{}) {
+		if bandwidth != nil {
+			target.Children = removeVMXMLNode(target.Children, bandwidth)
+		}
+	} else {
+		if bandwidth == nil {
+			bandwidth = &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "bandwidth"}}}
+			target.Children = append(target.Children, bandwidth)
+		}
+		bandwidth.Children = removeVMXMLChildren(bandwidth.Children, func(node *vmXMLNode) bool {
+			return vmXMLNodeName(node) == "inbound" || vmXMLNodeName(node) == "outbound"
+		})
+		if spec.InboundAverageBytes > 0 || spec.InboundPeakBytes > 0 || spec.InboundBurstBytes > 0 {
+			bandwidth.Children = append(bandwidth.Children, qosBandwidthNode("inbound", spec.InboundAverageBytes, spec.InboundPeakBytes, spec.InboundBurstBytes))
+		}
+		if spec.OutboundAverageBytes > 0 || spec.OutboundPeakBytes > 0 || spec.OutboundBurstBytes > 0 {
+			bandwidth.Children = append(bandwidth.Children, qosBandwidthNode("outbound", spec.OutboundAverageBytes, spec.OutboundPeakBytes, spec.OutboundBurstBytes))
+		}
+		if len(bandwidth.Children) == 0 {
+			target.Children = removeVMXMLNode(target.Children, bandwidth)
+		}
+	}
+	documentXML, err := encodeVMXMLDocument(root)
+	if err != nil {
+		return VMNetworkQoSUpdate{}, err
+	}
+	deviceXML, err := encodeVMXMLSubtree(target)
+	if err != nil {
+		return VMNetworkQoSUpdate{}, err
+	}
+	return VMNetworkQoSUpdate{XML: documentXML, DeviceXML: deviceXML}, nil
+}
+
+func qosBandwidthNode(name string, average, peak, burst uint64) *vmXMLNode {
+	attributes := make([]xml.Attr, 0, 3)
+	if average > 0 {
+		attributes = append(attributes, xml.Attr{Name: xml.Name{Local: "average"}, Value: fmt.Sprintf("%d", average)})
+	}
+	if peak > 0 {
+		attributes = append(attributes, xml.Attr{Name: xml.Name{Local: "peak"}, Value: fmt.Sprintf("%d", peak)})
+	}
+	if burst > 0 {
+		attributes = append(attributes, xml.Attr{Name: xml.Name{Local: "burst"}, Value: fmt.Sprintf("%d", burst)})
+	}
+	return &vmXMLNode{Token: xml.StartElement{Name: xml.Name{Local: name}, Attr: attributes}}
+}
+
+func encodeVMXMLDocument(root *vmXMLNode) (string, error) {
+	var buffer bytes.Buffer
+	encoder := xml.NewEncoder(&buffer)
+	encoder.Indent("", "  ")
+	for _, child := range root.Children {
+		if err := encodeVMXMLNode(encoder, child); err != nil {
+			return "", err
+		}
+	}
+	if err := encoder.Flush(); err != nil {
+		return "", fmt.Errorf("encode domain XML: %w", err)
+	}
+	return xml.Header + buffer.String(), nil
+}
+
+func encodeVMXMLSubtree(node *vmXMLNode) (string, error) {
+	var buffer bytes.Buffer
+	encoder := xml.NewEncoder(&buffer)
+	encoder.Indent("", "  ")
+	if err := encodeVMXMLNode(encoder, node); err != nil {
+		return "", err
+	}
+	if err := encoder.Flush(); err != nil {
+		return "", fmt.Errorf("encode domain device XML: %w", err)
+	}
+	return buffer.String(), nil
 }

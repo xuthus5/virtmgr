@@ -21,6 +21,29 @@ async function loginAs(page: Page, username: string, password: string) {
   await expect(page.getByRole("heading", { name: "总览", exact: true })).toBeVisible();
 }
 
+async function readVMXML(page: Page, uuid: string, format: "live" | "config" = "live") {
+  return page.evaluate(async ({ uuid, format }) => {
+    const response = await fetch(`/api/v1/vms/${uuid}/xml?format=${format}`);
+    if (!response.ok) throw new Error(`read VM XML failed with ${response.status}`);
+    const payload = await response.json() as { xml: string };
+    return payload.xml;
+  }, { uuid, format });
+}
+
+async function readVM(page: Page, uuid: string) {
+  return page.evaluate(async (uuid) => {
+    const response = await fetch(`/api/v1/vms/${uuid}`);
+    if (!response.ok) throw new Error(`read VM failed with ${response.status}`);
+    return response.json();
+  }, uuid);
+}
+
+async function replaceEditorDocument(page: Page, editor: Locator, value: string) {
+  await editor.click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.insertText(value);
+}
+
 type VMTabName = "overview" | "config" | "guest" | "snapshots" | "advanced";
 
 async function openVMTab(page: Page, tab: VMTabName) {
@@ -127,6 +150,51 @@ test("可写模式 Guest Agent 服务诊断在桌面和移动端可读", async (
     const box = await service.boundingBox();
     expect(box?.width ?? width + 1, `${width}px 服务行应适应视口`).toBeLessThanOrEqual(width);
     await expect(page.getByTestId("guest-agent-cloud-init")).toBeVisible();
+  }
+});
+
+test("可写模式通过 Guest Agent 在线扩容文件系统并执行启动诊断", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await openVMTab(page, "guest");
+  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+
+  await page.getByTestId("guest-agent-diagnostics-toggle").click();
+  const diagnostics = page.getByTestId("guest-agent-diagnostics");
+  await expect(diagnostics).toContainText("1 个服务失败", { timeout: 10_000 });
+  await expect(diagnostics).toContainText("0 个 OOM 事件");
+  await expect(diagnostics).toContainText("app-worker.service");
+  await expect(diagnostics).toContainText("内核警告");
+  await expect(diagnostics).toContainText("系统错误");
+  await expect(diagnostics).toContainText("检查失败服务的 systemd 日志");
+
+  await page.getByTestId("guest-filesystem-grow-/").click();
+  const growModal = page.getByTestId("guest-filesystem-grow-modal");
+  await expect(growModal).toBeVisible();
+  await expect(growModal).toContainText("80 GiB");
+  await page.getByTestId("guest-filesystem-grow-submit").click();
+  await expect(page.getByTestId("guest-agent-notice")).toContainText("/ 已扩展至 82 GiB", { timeout: 10_000 });
+  await expect(growModal).toBeHidden();
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px Guest Agent 诊断不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px Guest Agent 诊断 body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    const box = await diagnostics.boundingBox();
+    expect(box?.width ?? width + 1, `${width}px 诊断区域应适应视口`).toBeLessThanOrEqual(width);
+  }
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  for (const action of ["vm.guest_agent.diagnostics", "vm.guest_agent.filesystem.grow"] as const) {
+    await page.getByTestId("audit-action-filter").selectOption(action);
+    await expect(page.getByTestId("audit-total")).toHaveText(/共 [1-9]\d* 条审计记录/);
+    await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("成功");
   }
 });
 
@@ -391,6 +459,55 @@ test("可写模式创建存储卷并刷新列表", async ({ page }) => {
   await expect(page.getByTestId("storage-volume-usage-demo-web-01.qcow2")).toContainText("demo-web-01");
   await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toBeDisabled();
   await expect(page.getByTestId("delete-volume-demo-web-01.qcow2")).toHaveAttribute("title", /demo-web-01.*不能删除/);
+});
+
+test("可写模式转换 qcow2 存储卷为 raw 并跟踪任务", async ({ page }) => {
+  await login(page);
+  await page.goto("/storage");
+  await expect(page.getByTestId("storage-volume-total")).toHaveText("共 4 个卷");
+
+  await page.getByTestId("storage-create-volume").click();
+  await page.getByLabel("卷名称", { exact: true }).fill("e2e-convert-01.qcow2");
+  await page.getByLabel("卷格式", { exact: true }).selectOption("qcow2");
+  await page.getByLabel("容量 (GiB)", { exact: true }).fill("8");
+  await page.getByRole("button", { name: "创建存储卷", exact: true }).click();
+  await expect(page.getByTestId("storage-create-success")).toContainText("e2e-convert-01.qcow2");
+  await expect(page.getByTestId("storage-volume-total")).toHaveText("共 5 个卷");
+
+  await page.getByTestId("convert-volume-e2e-convert-01.qcow2").click();
+  const modal = page.getByTestId("storage-convert-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("e2e-convert-01.qcow2");
+  await expect(modal).toContainText("qcow2");
+  await expect(page.getByTestId("storage-convert-format")).toHaveValue("raw");
+  await expect(page.getByTestId("storage-convert-name")).toHaveValue("e2e-convert-01.raw");
+  await page.getByTestId("storage-convert-submit").click();
+
+  const task = page.getByTestId("storage-convert-task");
+  await expect(task).toHaveAttribute("data-status", "succeeded", { timeout: 10_000 });
+  await expect(task).toContainText("100%");
+  await expect(page.getByTestId("storage-convert-success")).toContainText("e2e-convert-01.qcow2 已转换为 raw");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.getByTestId("storage-volume-total")).toHaveText("共 6 个卷");
+  const converted = page.getByTestId("storage-volume-row-e2e-convert-01.raw");
+  await expect(converted).toContainText("raw");
+  await expect(converted).toContainText(/8(\.0)? GiB/);
+
+  for (const name of ["e2e-convert-01.raw", "e2e-convert-01.qcow2"]) {
+    await page.getByTestId(`delete-volume-${name}`).click();
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByLabel("输入存储卷名称确认").fill(name);
+    await dialog.getByTestId("confirm-delete-volume").click();
+    await expect(page.getByTestId("storage-create-success")).toContainText(`${name} 已删除`);
+  }
+  await expect(page.getByTestId("storage-volume-total")).toHaveText("共 4 个卷");
+
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  await page.getByTestId("audit-action-filter").selectOption("storage.volume.convert");
+  await expect(page.getByTestId("audit-total")).toHaveText("共 1 条审计记录");
+  const auditRow = page.locator('[data-testid^="audit-row-"]').first();
+  await expect(auditRow).toContainText("e2e-convert-01.qcow2");
+  await expect(auditRow).toContainText("成功");
 });
 
 test("可写模式创建 NFS 和 LVM 存储池并约束 LVM 卷", async ({ page }) => {
@@ -696,9 +813,10 @@ test("可写模式直通 PCI 和 USB 设备并写入域 XML", async ({ page }) =
   await openVMTab(page, "advanced");
   const xml = page.getByTestId("vm-xml-content");
   await expect(xml).toContainText("<hostdev mode='subsystem' type='pci'");
-  await expect(xml).toContainText("<hostdev mode='subsystem' type='usb'");
-  await expect(xml).toContainText("bus='0x3b'");
-  await expect(xml).toContainText("vendor id='0x046d'");
+  const completeXML = await readVMXML(page, "22222222-2222-4222-8222-222222222222");
+  expect(completeXML).toContain("<hostdev mode='subsystem' type='usb'");
+  expect(completeXML).toContain("bus='0x3b'");
+  expect(completeXML).toContain("vendor id='0x046d'");
 
   await openVMTab(page, "config");
   await page.getByTestId("vm-passthrough-detach-pci_0000_3b_00_0").click();
@@ -1208,8 +1326,11 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   await editButton.click();
   const editor = page.getByTestId("vm-xml-editor");
   await expect(editor).toBeVisible();
-  const original = await editor.textContent();
-  await editor.fill((original ?? "").replace("<vcpu>2</vcpu>", "<vcpu>3</vcpu>"));
+  const original = await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config");
+  const edited = original
+    .replace("<vcpu>2</vcpu>", "<vcpu>3</vcpu>")
+    .replace(/<topology sockets='1' cores='2' threads='1'\/>/, "<topology sockets='1' cores='3' threads='1'/>");
+  await replaceEditorDocument(page, editor, edited);
   await page.getByTestId("vm-xml-save").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("保存持久配置 XML？");
@@ -1217,10 +1338,12 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
 
   await expect(page.getByTestId("vm-xml-edit-notice")).toContainText("持久配置 XML 已保存");
   await expect(page.getByTestId("vm-xml-content")).toContainText("<vcpu>3</vcpu>");
+  expect(await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config")).toContain("<vcpu>3</vcpu>");
   await page.reload();
   await openVMTab(page, "advanced");
   await page.getByLabel("XML 类型").selectOption("config");
   await expect(page.getByTestId("vm-xml-content")).toContainText("<vcpu>3</vcpu>");
+  expect(await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config")).toContain("cores='3'");
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
   await page.getByTestId("audit-action-filter").selectOption("vm.xml.update");
@@ -1391,6 +1514,110 @@ test("可写模式调整运行中虚拟机的 CPU 和内存并写入审计", asy
   await expect(row).toContainText("调整虚拟机资源");
   await expect(row).toContainText("成功");
   await expect(row).toContainText("vcpus: 10");
+});
+
+test("可写模式修改启动顺序、CPU 拓扑和磁盘网卡限速", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/44444444-4444-4444-8444-444444444444");
+  await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
+  await openVMTab(page, "config");
+
+  await page.getByTestId("vm-advanced-config-open").click();
+  const advanced = page.getByTestId("vm-advanced-config-modal");
+  await expect(advanced).toBeVisible();
+  await page.getByTestId("vm-boot-device-0").selectOption("network");
+  await page.getByTestId("vm-boot-device-1").selectOption("hd");
+  await page.getByTestId("vm-boot-save").click();
+  await expect(page.getByTestId("vm-resources-notice")).toContainText("启动顺序已更新为 网络 → 硬盘");
+
+  const vcpuSummary = await advanced.getByText(/CPU 拓扑乘积必须等于当前 \d+ 个 vCPU。/).textContent();
+  const currentVCPUs = Number(vcpuSummary?.match(/当前 (\d+) 个 vCPU/)?.[1]);
+  expect(Number.isSafeInteger(currentVCPUs)).toBeTruthy();
+  await page.getByTestId("vm-cpu-model").fill("EPYC");
+  await page.getByTestId("vm-cpu-sockets").fill("1");
+  await page.getByTestId("vm-cpu-cores").fill(String(currentVCPUs + 1));
+  await page.getByTestId("vm-cpu-threads").fill("1");
+  await page.getByTestId("vm-cpu-save").click();
+  await expect(advanced).toContainText(`CPU 拓扑乘积必须等于当前 ${currentVCPUs} 个 vCPU`);
+  await page.getByTestId("vm-cpu-cores").fill(String(currentVCPUs));
+  await page.getByTestId("vm-cpu-save").click();
+  await expect(page.getByTestId("vm-resources-notice")).toContainText(`CPU 型号与拓扑已更新，共 ${currentVCPUs} 个 vCPU`);
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
+
+  const vm = await readVM(page, "44444444-4444-4444-8444-444444444444") as {
+    bootDevices: string[];
+    cpuModel: string;
+    cpuSockets: number;
+    cpuCores: number;
+    cpuThreads: number;
+  };
+  expect(vm.bootDevices).toEqual(["network", "hd"]);
+  expect(vm.cpuModel).toBe("EPYC");
+  expect([vm.cpuSockets, vm.cpuCores, vm.cpuThreads]).toEqual([1, currentVCPUs, 1]);
+
+  await page.getByTestId("vm-disk-qos-vda").click();
+  const diskModal = page.getByTestId("vm-disk-qos-modal");
+  await expect(diskModal).toBeVisible();
+  await page.getByTestId("vm-disk-qos-total").fill("64");
+  await page.getByTestId("vm-disk-qos-read").fill("32");
+  await page.getByTestId("vm-disk-qos-write").fill("16");
+  await page.getByTestId("vm-disk-qos-total-iops").fill("1000");
+  await page.getByTestId("vm-disk-qos-read-iops").fill("600");
+  await page.getByTestId("vm-disk-qos-write-iops").fill("400");
+  await page.getByTestId("vm-disk-qos-submit").click();
+  await expect(page.getByTestId("vm-disk-resize-notice")).toContainText("vda 的磁盘 I/O 限制已更新", { timeout: 10_000 });
+
+  await page.getByTestId("vm-network-qos-52:54:00:01:00:04").click();
+  const networkModal = page.getByTestId("vm-network-qos-modal");
+  await expect(networkModal).toBeVisible();
+  await page.getByTestId("vm-network-qos-in").fill("20");
+  await page.getByTestId("vm-network-qos-in-peak").fill("30");
+  await page.getByTestId("vm-network-qos-in-burst").fill("2");
+  await page.getByTestId("vm-network-qos-out").fill("10");
+  await page.getByTestId("vm-network-qos-out-peak").fill("15");
+  await page.getByTestId("vm-network-qos-out-burst").fill("1");
+  await page.getByTestId("vm-network-qos-submit").click();
+  await expect(page.getByTestId("vm-network-interfaces-card")).toContainText("网卡 52:54:00:01:00:04 的带宽限制已更新", { timeout: 10_000 });
+
+  const configured = await readVM(page, "44444444-4444-4444-8444-444444444444") as {
+    disks: Array<{ target: string; qos?: Record<string, number> }>;
+    interfaces: Array<{ mac: string; qos?: Record<string, number> }>;
+  };
+  expect(configured.disks.find((disk) => disk.target === "vda")?.qos).toMatchObject({
+    totalBytesSec: 64 * 1024 * 1024,
+    readBytesSec: 32 * 1024 * 1024,
+    writeBytesSec: 16 * 1024 * 1024,
+    totalIops: 1000,
+    readIops: 600,
+    writeIops: 400,
+  });
+  expect(configured.interfaces.find((item) => item.mac === "52:54:00:01:00:04")?.qos).toMatchObject({
+    inboundAverageBytes: 20 * 1024 * 1024,
+    inboundPeakBytes: 30 * 1024 * 1024,
+    inboundBurstBytes: 2 * 1024 * 1024,
+    outboundAverageBytes: 10 * 1024 * 1024,
+    outboundPeakBytes: 15 * 1024 * 1024,
+    outboundBurstBytes: 1 * 1024 * 1024,
+  });
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px 高级配置不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px 高级配置 body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  for (const action of ["vm.boot.update", "vm.cpu.update", "vm.disk.qos.update", "vm.network.qos.update"] as const) {
+    await page.getByTestId("audit-action-filter").selectOption(action);
+    await expect(page.getByTestId("audit-total")).toHaveText(/共 [1-9]\d* 条审计记录/);
+    await expect(page.locator('[data-testid^="audit-row-"]').first()).toContainText("成功");
+  }
 });
 
 test("可写模式扩容 qcow2 磁盘并写入审计", async ({ page }) => {

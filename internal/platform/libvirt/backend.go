@@ -48,6 +48,8 @@ type Backend interface {
 	RemoveGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	ListGuestAgentProcesses(ctx context.Context, uuid string) ([]domain.GuestAgentProcess, error)
 	ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error)
+	GetGuestAgentDiagnostics(ctx context.Context, uuid string) (domain.GuestAgentDiagnostics, error)
+	GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
 	GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error)
@@ -68,6 +70,7 @@ type Backend interface {
 	UploadStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec, reader io.Reader) (domain.StorageVolume, error)
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	CloneStorageVolumeLinked(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
+	ConvertStorageVolume(ctx context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error)
 	StorageVolumeChecksum(ctx context.Context, poolName, volumeName string) (string, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)

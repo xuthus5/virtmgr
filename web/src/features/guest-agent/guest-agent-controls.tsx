@@ -113,13 +113,16 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
     onError: (cause) => { setPending(null); notify("error", errorMessage(cause, "移除 SSH 公钥失败。")); },
   });
   const processesMutation = useMutation({
-    mutationFn: () => api.guestAgentProcesses(uuid),
-    onSuccess: (result) => { setProcesses(result.items); notify("success", `已读取 ${result.total} 个进程。`); },
+    mutationFn: (announce: boolean) => api.guestAgentProcesses(uuid).then((result) => ({ result, announce })),
+    onSuccess: ({ result, announce }) => {
+      setProcesses(result.items);
+      if (announce) notify("success", `已读取 ${result.total} 个进程。`);
+    },
     onError: (cause) => notify("error", errorMessage(cause, "读取进程失败。")),
   });
   const signalMutation = useMutation({
     mutationFn: (input: GuestAgentProcessSignalInput) => api.signalGuestAgentProcess(uuid, input),
-    onSuccess: (task) => { setPending(null); notify("success", `进程信号任务 ${task.id} 已完成。`); void processesMutation.mutate(); },
+    onSuccess: (task) => { setPending(null); notify("success", `进程信号任务 ${task.id} 已完成。`); void processesMutation.mutate(false); },
     onError: (cause) => { setPending(null); notify("error", errorMessage(cause, "发送进程信号失败。")); },
   });
   const servicesMutation = useMutation({
@@ -201,7 +204,7 @@ export function GuestAgentControls({ uuid, canMutate, disabledReason, notify }: 
 
       <section className="grid gap-4 rounded-md border p-3 lg:grid-cols-2" aria-labelledby="guest-process-heading">
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Terminal className="h-4 w-4" /><h3 id="guest-process-heading" className="text-sm font-semibold">进程</h3></div><Button variant="outline" size="sm" data-testid="guest-agent-process-load" onClick={() => processesMutation.mutate()} disabled={processesMutation.isPending}>读取</Button></div>
+          <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Terminal className="h-4 w-4" /><h3 id="guest-process-heading" className="text-sm font-semibold">进程</h3></div><Button variant="outline" size="sm" data-testid="guest-agent-process-load" onClick={() => processesMutation.mutate(true)} disabled={processesMutation.isPending}>读取</Button></div>
           <div className="max-h-56 divide-y overflow-auto rounded-md border text-xs">
             {processes.length ? processes.map((process) => (
               <div key={process.pid} data-testid={`guest-agent-process-${process.pid}`} className="flex items-center gap-2 px-2 py-1.5">

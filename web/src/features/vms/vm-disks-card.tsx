@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Disc3, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Disc3, Gauge, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { Disk, Role, VM } from "@/api/types";
+import type { Disk, Role, VM, VMDiskQoSInput } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -51,6 +51,14 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const [isoError, setIsoError] = useState("");
   const [detachTarget, setDetachTarget] = useState<string | null>(null);
   const [ejectTarget, setEjectTarget] = useState<Disk | null>(null);
+  const [qosDisk, setQosDisk] = useState<Disk | null>(null);
+  const [qosTotal, setQosTotal] = useState("");
+  const [qosRead, setQosRead] = useState("");
+  const [qosWrite, setQosWrite] = useState("");
+  const [qosTotalIOPS, setQosTotalIOPS] = useState("");
+  const [qosReadIOPS, setQosReadIOPS] = useState("");
+  const [qosWriteIOPS, setQosWriteIOPS] = useState("");
+  const [qosError, setQosError] = useState("");
   const poolsQuery = useStoragePoolsQuery(attachOpen);
   const activePools = (poolsQuery.data?.items ?? []).filter((item) => item.state === "active");
   const selectedPool = pool || activePools[0]?.name || "";
@@ -151,6 +159,19 @@ export function VMDisksCard({ vm, role, readOnly }: {
     },
   });
 
+  const qosMutation = useMutation({
+    mutationFn: ({ target, input }: { target: string; input: VMDiskQoSInput }) => api.updateVMDiskQoS(vm.uuid, target, input),
+    onSuccess: (updated, variables) => {
+      queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
+      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      setQosDisk(null);
+      setNotice({ tone: "success", text: `${variables.target} 的磁盘 I/O 限制已更新。` });
+    },
+    onError: (cause) => setQosError(cause instanceof ApiError ? cause.message : "更新磁盘 I/O 限制失败，请稍后重试。"),
+  });
+
   function openResize(disk: Disk) {
     setSelected(disk);
     setCapacityGiB(String(defaultDiskCapacityGiB(disk)));
@@ -167,6 +188,34 @@ export function VMDisksCard({ vm, role, readOnly }: {
     }
     setFormError("");
     mutation.mutate({ target: selected.target, capacityBytes: result.input.capacityBytes });
+  }
+
+  function openQoS(disk: Disk) {
+    setQosDisk(disk);
+    setQosTotal(qosBytesToMiB(disk.qos?.totalBytesSec));
+    setQosRead(qosBytesToMiB(disk.qos?.readBytesSec));
+    setQosWrite(qosBytesToMiB(disk.qos?.writeBytesSec));
+    setQosTotalIOPS(disk.qos?.totalIops ? String(disk.qos.totalIops) : "");
+    setQosReadIOPS(disk.qos?.readIops ? String(disk.qos.readIops) : "");
+    setQosWriteIOPS(disk.qos?.writeIops ? String(disk.qos.writeIops) : "");
+    setQosError("");
+    setNotice(null);
+  }
+
+  function submitQoS() {
+    if (!qosDisk) return;
+    const total = parseQoSMiB(qosTotal);
+    const read = parseQoSMiB(qosRead);
+    const write = parseQoSMiB(qosWrite);
+    const totalIops = parseQoSIops(qosTotalIOPS);
+    const readIops = parseQoSIops(qosReadIOPS);
+    const writeIops = parseQoSIops(qosWriteIOPS);
+    if ([total, read, write, totalIops, readIops, writeIops].some((value) => value === null)) {
+      setQosError("请输入非负数值；带宽单位为 MiB/s，IOPS 必须为整数。全部留空或为 0 可清除限制。");
+      return;
+    }
+    setQosError("");
+    qosMutation.mutate({ target: qosDisk.target, input: { totalBytesSec: total ?? 0, readBytesSec: read ?? 0, writeBytesSec: write ?? 0, totalIops: totalIops ?? 0, readIops: readIops ?? 0, writeIops: writeIops ?? 0 } });
   }
 
   return (
@@ -264,6 +313,16 @@ export function VMDisksCard({ vm, role, readOnly }: {
                             <Maximize2 className="h-3.5 w-3.5" />扩容
                           </Button>
                           <Button
+                            variant={disk.qos ? "outline" : "ghost"}
+                            size="sm"
+                            data-testid={`vm-disk-qos-${disk.target}`}
+                            disabled={Boolean(disabledReason) || qosMutation.isPending}
+                            title={disabledReason || `配置磁盘 ${disk.target} 的吞吐与 IOPS 限制`}
+                            onClick={() => openQoS(disk)}
+                          >
+                            <Gauge className="h-3.5 w-3.5" />限速
+                          </Button>
+                          <Button
                             variant="ghost"
                             size="icon-sm"
                             data-testid={`vm-disk-detach-${disk.target}`}
@@ -337,6 +396,21 @@ export function VMDisksCard({ vm, role, readOnly }: {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Modal open={qosDisk !== null} onClose={() => { if (!qosMutation.isPending) setQosDisk(null); }} title={`磁盘 I/O 限制 · ${qosDisk?.target || ""}`} description="通过 libvirt iotune 限制磁盘总吞吐、读写吞吐和 IOPS。带宽输入单位为 MiB/s；全部清零可移除限制。" testId="vm-disk-qos-modal" footer={<><Button variant="ghost" disabled={qosMutation.isPending} onClick={() => setQosDisk(null)}>取消</Button><Button data-testid="vm-disk-qos-submit" disabled={qosMutation.isPending} onClick={submitQoS}>{qosMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}{qosMutation.isPending ? "正在保存..." : "保存限制"}</Button></>}>
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-total">总带宽 (MiB/s)</Label><Input id="vm-disk-qos-total" data-testid="vm-disk-qos-total" type="number" min={0} step="any" value={qosTotal} onChange={(event) => setQosTotal(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-read">读带宽 (MiB/s)</Label><Input id="vm-disk-qos-read" data-testid="vm-disk-qos-read" type="number" min={0} step="any" value={qosRead} onChange={(event) => setQosRead(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-write">写带宽 (MiB/s)</Label><Input id="vm-disk-qos-write" data-testid="vm-disk-qos-write" type="number" min={0} step="any" value={qosWrite} onChange={(event) => setQosWrite(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-total-iops">总 IOPS</Label><Input id="vm-disk-qos-total-iops" data-testid="vm-disk-qos-total-iops" type="number" min={0} step={1} value={qosTotalIOPS} onChange={(event) => setQosTotalIOPS(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-read-iops">读 IOPS</Label><Input id="vm-disk-qos-read-iops" data-testid="vm-disk-qos-read-iops" type="number" min={0} step={1} value={qosReadIOPS} onChange={(event) => setQosReadIOPS(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-disk-qos-write-iops">写 IOPS</Label><Input id="vm-disk-qos-write-iops" data-testid="vm-disk-qos-write-iops" type="number" min={0} step={1} value={qosWriteIOPS} onChange={(event) => setQosWriteIOPS(event.target.value)} disabled={qosMutation.isPending} /></div>
+          </div>
+          {qosError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{qosError}</p> : null}
+          <p className="text-xs text-muted-foreground">总限制与读写限制同时存在时，由 QEMU/libvirt 按各自维度共同约束；运行中的虚拟机将同步应用。</p>
+        </div>
+      </Modal>
 
       <Modal open={attachOpen} onClose={() => { if (!attachMutation.isPending) setAttachOpen(false); }} title="附加存储卷" description="从活跃存储池选择 qcow2/raw 卷。运行中的虚拟机使用热插拔，关机虚拟机写入持久配置。" testId="vm-disk-attach-modal" footer={<><Button variant="ghost" disabled={attachMutation.isPending} onClick={() => setAttachOpen(false)}>取消</Button><Button data-testid="vm-disk-attach-submit" disabled={attachMutation.isPending || !selectedPool || !selectedVolume} onClick={() => attachMutation.mutate()}>{attachMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{attachMutation.isPending ? "正在附加..." : "确认附加"}</Button></>}>
         <div className="space-y-4">
@@ -413,4 +487,24 @@ export function VMDisksCard({ vm, role, readOnly }: {
       </AlertDialog>
     </Card>
   );
+}
+
+function qosBytesToMiB(value?: number) {
+  if (!value) return "";
+  return String(Number((value / 1024 / 1024).toFixed(3)));
+}
+
+function parseQoSMiB(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isSafeInteger(Math.round(parsed * 1024 * 1024))) return null;
+  return Math.round(parsed * 1024 * 1024);
+}
+
+function parseQoSIops(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }

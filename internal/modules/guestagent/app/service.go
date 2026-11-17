@@ -33,6 +33,8 @@ type VMBackend interface {
 	RemoveGuestAgentAuthorizedKeys(ctx context.Context, uuid string, spec domain.GuestAgentSSHKeySpec) error
 	ListGuestAgentProcesses(ctx context.Context, uuid string) ([]domain.GuestAgentProcess, error)
 	ListGuestAgentServices(ctx context.Context, uuid string) ([]domain.GuestAgentService, error)
+	GetGuestAgentDiagnostics(ctx context.Context, uuid string) (domain.GuestAgentDiagnostics, error)
+	GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
 	GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error)
@@ -124,6 +126,17 @@ type ProcessSignalCommand struct {
 	UUID    string
 	Spec    domain.GuestAgentProcessSignalSpec
 	Request MutationContext
+}
+
+type FilesystemGrowCommand struct {
+	UUID    string
+	Spec    domain.GuestAgentFilesystemResizeSpec
+	Request MutationContext
+}
+
+type FilesystemGrowResponse struct {
+	Task   domain.Task                             `json:"task"`
+	Result domain.GuestAgentFilesystemResizeResult `json:"result"`
 }
 
 type PolicyCommand struct {
@@ -431,6 +444,60 @@ func (s *Service) ListServices(ctx context.Context, command ProcessCommand) ([]d
 		}
 	}
 	return services, nil
+}
+
+func (s *Service) Diagnostics(ctx context.Context, command ProcessCommand) (domain.GuestAgentDiagnostics, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return domain.GuestAgentDiagnostics{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.GuestAgentDiagnostics{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.diagnostics", command.UUID, nil, domain.ErrForbidden)
+	}
+	diagnostics, err := s.backend.GetGuestAgentDiagnostics(ctx, command.UUID)
+	if err != nil {
+		return domain.GuestAgentDiagnostics{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.diagnostics", command.UUID, nil, err)
+	}
+	detail := map[string]any{
+		"failedServices": len(diagnostics.FailedServices), "kernelWarnings": len(diagnostics.KernelWarnings),
+		"systemErrors": len(diagnostics.SystemErrors), "oomEvents": len(diagnostics.OOMEvents),
+	}
+	if err := s.recordAudit(ctx, command.Request, "vm.guest_agent.diagnostics", command.UUID, "success", detail, nil); err != nil {
+		return domain.GuestAgentDiagnostics{}, fmt.Errorf("record guest agent diagnostics audit: %w", err)
+	}
+	return diagnostics, nil
+}
+
+func (s *Service) GrowFilesystem(ctx context.Context, command FilesystemGrowCommand) (FilesystemGrowResponse, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.Spec.MountPoint = strings.TrimSpace(command.Spec.MountPoint)
+	detail := map[string]any{"mountPoint": command.Spec.MountPoint}
+	if command.UUID == "" || !filepath.IsAbs(command.Spec.MountPoint) || strings.ContainsRune(command.Spec.MountPoint, '\x00') || len(command.Spec.MountPoint) > 4096 {
+		return FilesystemGrowResponse{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return FilesystemGrowResponse{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.filesystem.grow", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return FilesystemGrowResponse{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.filesystem.grow", command.UUID, detail, domain.ErrReadOnly)
+	}
+	var result domain.GuestAgentFilesystemResizeResult
+	task, err := s.runTask(ctx, command.Request, "guest-agent.filesystem.grow", "vm.guest_agent.filesystem.grow", command.UUID, "扩展客户机分区与文件系统", detail, "客户机文件系统已扩展", func() (any, error) {
+		var operationErr error
+		result, operationErr = s.backend.GrowGuestAgentFilesystem(ctx, command.UUID, command.Spec)
+		if operationErr == nil {
+			detail["device"] = result.Device
+			detail["filesystem"] = result.Filesystem
+			detail["previousTotalBytes"] = result.PreviousTotalBytes
+			detail["totalBytes"] = result.TotalBytes
+			detail["freeBytes"] = result.FreeBytes
+		}
+		return result, operationErr
+	})
+	if err != nil {
+		return FilesystemGrowResponse{Task: task}, err
+	}
+	return FilesystemGrowResponse{Task: task, Result: result}, nil
 }
 
 func (s *Service) CloudInit(ctx context.Context, command ProcessCommand) (domain.GuestAgentCloudInit, error) {

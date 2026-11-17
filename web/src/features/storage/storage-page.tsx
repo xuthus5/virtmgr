@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Layers3, LoaderCircle, Plus, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Layers3, LoaderCircle, Plus, Repeat2, Trash2, Upload } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { StoragePoolState, StorageVolume, StorageVolumeCreateInput, StorageVolumeFormat } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
@@ -12,10 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
+import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { StoragePoolsCard } from "@/features/storage/storage-pools-card";
 import { storagePoolsQueryKey, useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
+import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { formatBytes, percent } from "@/lib/utils";
 
 type CreateFormState = {
@@ -65,9 +68,16 @@ export function StoragePage() {
   const [deleteTarget, setDeleteTarget] = useState<StorageVolume | null>(null);
   const [deleteName, setDeleteName] = useState("");
   const [deleteError, setDeleteError] = useState("");
+  const [convertTarget, setConvertTarget] = useState<StorageVolume | null>(null);
+  const [convertPool, setConvertPool] = useState("");
+  const [convertName, setConvertName] = useState("");
+  const [convertFormat, setConvertFormat] = useState<StorageVolumeFormat>("qcow2");
+  const [convertError, setConvertError] = useState("");
+  const [convertTaskID, setConvertTaskID] = useState<string | null>(null);
   const pools = poolsQuery.data?.items ?? [];
   const volumesQuery = useStorageVolumesQuery(selectedPool);
   const selected = pools.find((pool) => pool.name === selectedPool);
+  const convertTaskQuery = useTaskQuery(convertTaskID);
 
   const createMutation = useMutation({
     mutationFn: ({ pool, input }: { pool: string; input: StorageVolumeCreateInput }) => api.createStorageVolume(pool, input),
@@ -117,12 +127,36 @@ export function StoragePage() {
     },
   });
 
+  const convertMutation = useMutation({
+    mutationFn: ({ pool, volume, targetPool, targetName, targetFormat }: { pool: string; volume: string; targetPool: string; targetName: string; targetFormat: StorageVolumeFormat }) => api.convertStorageVolume(pool, volume, { targetPool, targetName, targetFormat }),
+    onSuccess: (task) => {
+      setConvertError("");
+      setConvertTaskID(task.id);
+      setSuccessMessage(`存储卷转换任务已提交：${task.step}。`);
+      setSuccessTestId("storage-convert-success");
+    },
+    onError: (cause) => setConvertError(cause instanceof ApiError ? cause.message : "提交存储卷转换任务失败，请稍后重试。"),
+  });
+
   useEffect(() => {
     if (!pools.length) return;
     if (selectedPool && pools.some((pool) => pool.name === selectedPool)) return;
     const preferred = pools.find((pool) => pool.state === "active") ?? pools[0];
     setSelectedPool(preferred.name);
   }, [pools, selectedPool]);
+
+  useEffect(() => {
+    if (!convertTaskQuery.data || !convertTarget || !selected) return;
+    if (convertTaskQuery.data.status === "succeeded") {
+      setSuccessMessage(`存储卷 ${convertTarget.name} 已转换为 ${convertTaskQuery.data.step.replace(/^存储卷已转换为\s*/, "")}。`);
+      setSuccessTestId("storage-convert-success");
+      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", selected.name] });
+      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", convertPool] });
+      void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
+    } else if (convertTaskQuery.data.status === "failed") {
+      setConvertError(convertTaskQuery.data.error || "存储卷转换任务失败。");
+    }
+  }, [convertTaskQuery.data, convertPool, convertTarget, queryClient, selected]);
 
   const activePools = pools.filter((pool) => pool.state === "active").length;
   const totalCapacity = pools.reduce((sum, pool) => sum + pool.capacityBytes, 0);
@@ -159,6 +193,32 @@ export function StoragePage() {
     setDeleteTarget(volume);
     setDeleteName("");
     setDeleteError("");
+  }
+
+  function openConvert(volume: StorageVolume) {
+    const format: StorageVolumeFormat = volume.format === "qcow2" ? "raw" : "qcow2";
+    setConvertTarget(volume);
+    setConvertPool(selected?.name || selectedPool);
+    setConvertFormat(format);
+    setConvertName(replaceVolumeExtension(volume.name, format));
+    setConvertError("");
+    setConvertTaskID(null);
+  }
+
+  function submitConvert() {
+    if (!selected || !convertTarget) return;
+    if (!convertPool || !convertName.trim()) {
+      setConvertError("请选择目标存储池并填写目标卷名称。");
+      return;
+    }
+    const extension = convertFormat === "qcow2" ? ".qcow2" : ".raw";
+    if (!convertName.trim().toLowerCase().endsWith(extension)) {
+      setConvertError(`目标卷名称必须以 ${extension} 结尾。`);
+      return;
+    }
+    setConvertError("");
+    setConvertTaskID(null);
+    convertMutation.mutate({ pool: selected.name, volume: convertTarget.name, targetPool: convertPool, targetName: convertName.trim(), targetFormat: convertFormat });
   }
 
   function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -357,18 +417,34 @@ export function StoragePage() {
                                 {inUse ? <div className="space-y-1"><Badge variant="warning">使用中</Badge><p className="max-w-56 text-xs text-muted-foreground">{usedBy.map((usage) => `${usage.vmName} · ${usage.target}${usage.readOnly ? "（只读）" : ""}`).join("，")}</p></div> : <Badge variant="secondary">空闲</Badge>}
                               </TableCell>
                               <TableCell>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  data-testid={`delete-volume-${volume.name}`}
-                                  aria-label={`删除存储卷 ${volume.name}`}
-                                  title={inUse ? `被 ${usedBy.map((usage) => usage.vmName).join("、")} 引用，不能删除` : canManage ? "删除未被虚拟机占用的存储卷" : createDisabledReason}
-                                  disabled={!canManage || !selectedActive || deleteMutation.isPending || inUse}
-                                  onClick={() => openDelete(volume)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />删除
-                                </Button>
+                                <div className="flex flex-wrap justify-end gap-1">
+                                  {(volume.format === "qcow2" || volume.format === "raw") && !/\.iso$/i.test(volume.name) ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      data-testid={`convert-volume-${volume.name}`}
+                                      aria-label={`转换或复制存储卷 ${volume.name}`}
+                                      title={inUse ? `被 ${usedBy.map((usage) => usage.vmName).join("、")} 引用，不能转换` : selectedActive ? "转换为 qcow2/raw 或复制到其他存储池" : createDisabledReason}
+                                      disabled={!canManage || !selectedActive || convertMutation.isPending || inUse}
+                                      onClick={() => openConvert(volume)}
+                                    >
+                                      <Repeat2 className="h-3.5 w-3.5" />转换/复制
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    data-testid={`delete-volume-${volume.name}`}
+                                    aria-label={`删除存储卷 ${volume.name}`}
+                                    title={inUse ? `被 ${usedBy.map((usage) => usage.vmName).join("、")} 引用，不能删除` : canManage ? "删除未被虚拟机占用的存储卷" : createDisabledReason}
+                                    disabled={!canManage || !selectedActive || deleteMutation.isPending || inUse}
+                                    onClick={() => openDelete(volume)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />删除
+                                  </Button>
+                                </div>
                               </TableCell>
                             </TableRow>
                           })}
@@ -415,6 +491,42 @@ export function StoragePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Modal
+        open={convertTarget !== null}
+        onClose={() => { if (!convertMutation.isPending) { setConvertTarget(null); setConvertError(""); setConvertTaskID(null); } }}
+        title={`转换或复制 ${convertTarget?.name || ""}`}
+        description="通过 libvirt Storage Volume API 创建独立目标卷并写入 qcow2/raw 格式。源卷保持不变；链接克隆源和运行中虚拟机使用的卷会被拒绝。"
+        testId="storage-convert-modal"
+        footer={<><Button variant="ghost" disabled={convertMutation.isPending} onClick={() => { setConvertTarget(null); setConvertError(""); setConvertTaskID(null); }}>关闭</Button><Button data-testid="storage-convert-submit" disabled={convertMutation.isPending || !convertPool || !convertName.trim()} onClick={submitConvert}>{convertMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}{convertMutation.isPending ? "正在提交..." : "提交转换任务"}</Button></>}
+      >
+        <div className="space-y-4">
+          <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-3">
+            <div><p className="text-xs text-muted-foreground">源存储池</p><p className="mt-1 font-mono">{selected?.name || "-"}</p></div>
+            <div><p className="text-xs text-muted-foreground">源卷</p><p className="mt-1 truncate font-mono">{convertTarget?.name || "-"}</p></div>
+            <div><p className="text-xs text-muted-foreground">源格式</p><p className="mt-1">{convertTarget?.format || "-"}</p></div>
+          </div>
+          <div className="space-y-2"><Label htmlFor="storage-convert-pool">目标存储池</Label><select id="storage-convert-pool" data-testid="storage-convert-pool" value={convertPool} onChange={(event) => setConvertPool(event.target.value)} disabled={convertMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">{(poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active").map((pool) => <option key={pool.name} value={pool.name}>{pool.name} · {pool.type}</option>)}</select></div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+            <div className="space-y-2"><Label htmlFor="storage-convert-name">目标卷名称</Label><Input id="storage-convert-name" data-testid="storage-convert-name" value={convertName} onChange={(event) => setConvertName(event.target.value)} disabled={convertMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="storage-convert-format">目标格式</Label><select id="storage-convert-format" data-testid="storage-convert-format" value={convertFormat} onChange={(event) => { const format = event.target.value as StorageVolumeFormat; setConvertFormat(format); setConvertName((name) => replaceVolumeExtension(name, format)); }} disabled={convertMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="qcow2">qcow2</option><option value="raw">raw</option></select></div>
+          </div>
+          {convertTaskQuery.data ? (
+            <div className="space-y-2 rounded-md border bg-card px-3 py-2" data-testid="storage-convert-task" data-status={convertTaskQuery.data.status}>
+              <div className="flex flex-wrap items-center gap-2"><Badge variant={convertTaskQuery.data.status === "succeeded" ? "success" : convertTaskQuery.data.status === "failed" ? "destructive" : "warning"}>{convertTaskQuery.data.status === "succeeded" ? "已完成" : convertTaskQuery.data.status === "failed" ? "失败" : "执行中"}</Badge><span className="text-xs">{convertTaskQuery.data.step}</span><span className="ml-auto text-xs tabular-nums text-muted-foreground">{convertTaskQuery.data.progress}%</span></div>
+              <Progress value={convertTaskQuery.data.progress} />
+              {convertTaskQuery.data.error ? <p className="text-xs text-destructive">{convertTaskQuery.data.error}</p> : null}
+            </div>
+          ) : null}
+          {convertError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{convertError}</p> : null}
+          <p className="text-xs text-muted-foreground">转换会完整复制数据，耗时取决于卷容量和存储池吞吐。任务可在任务中心查看，源卷不会被修改或删除。</p>
+        </div>
+      </Modal>
     </>
   );
+}
+
+function replaceVolumeExtension(name: string, format: StorageVolumeFormat) {
+  const stem = name.replace(/\.(qcow2|raw)$/i, "");
+  return `${stem || "volume"}.${format}`;
 }

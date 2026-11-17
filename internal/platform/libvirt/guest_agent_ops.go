@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,10 +20,19 @@ import (
 )
 
 const (
-	guestAgentFileChunkBytes = 64 * 1024
-	guestAgentMaxReadBytes   = 1 << 20
-	guestAgentMaxWriteBytes  = 1 << 20
-	guestAgentExecTimeout    = 10 * time.Second
+	guestAgentFileChunkBytes  = 64 * 1024
+	guestAgentMaxReadBytes    = 1 << 20
+	guestAgentMaxWriteBytes   = 1 << 20
+	guestAgentExecTimeout     = 10 * time.Second
+	guestAgentResizeTimeout   = 2 * time.Minute
+	guestAgentDiagnosticBytes = 24 << 10
+	guestAgentDiagnosticLines = 80
+)
+
+var (
+	guestDevicePathPattern  = regexp.MustCompile(`^/dev/[A-Za-z0-9._/-]+$`)
+	guestDeviceNamePattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	guestServiceUnitPattern = regexp.MustCompile(`^[A-Za-z0-9@_.:-]{1,128}\.service$`)
 )
 
 type guestFileOpenResponse struct {
@@ -335,6 +345,214 @@ func (c *Client) ListGuestAgentServices(ctx context.Context, uuid string) ([]dom
 	return services, nil
 }
 
+func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (domain.GuestAgentDiagnostics, error) {
+	info, err := c.requireGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool {
+		return capabilities.Processes
+	})
+	if err != nil {
+		return domain.GuestAgentDiagnostics{}, err
+	}
+	if isWindowsGuest(info.OS) {
+		return domain.GuestAgentDiagnostics{}, errors.Join(domain.ErrGuestAgent, errors.New("boot diagnostics are currently supported only on Linux guests"))
+	}
+	result := domain.GuestAgentDiagnostics{
+		CheckedAt: time.Now().UTC(), FailedServices: []domain.GuestAgentService{},
+		ServiceLogs: []domain.GuestAgentServiceLog{}, KernelWarnings: []string{},
+		SystemErrors: []string{}, OOMEvents: []string{}, Recommendations: []string{}, CommandErrors: []string{},
+	}
+	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
+		failedOutput, failedErr := runFirstGuestCommand(dom, []guestExecCommand{
+			{path: "/bin/systemctl", args: []string{"list-units", "--type=service", "--state=failed", "--no-legend", "--no-pager", "--plain"}},
+			{path: "/usr/bin/systemctl", args: []string{"list-units", "--type=service", "--state=failed", "--no-legend", "--no-pager", "--plain"}},
+		})
+		if failedErr != nil {
+			result.CommandErrors = append(result.CommandErrors, "无法读取失败服务: "+boundedGuestAgentError(failedErr))
+		} else {
+			result.FailedServices = parseGuestServices(failedOutput)
+			if len(result.FailedServices) > 20 {
+				result.FailedServices = result.FailedServices[:20]
+			}
+		}
+
+		kernelOutput, kernelErr := runFirstGuestCommand(dom, []guestExecCommand{
+			{path: "/usr/bin/journalctl", args: []string{"-k", "-b", "-p", "warning", "--no-pager", "-n", "80", "-o", "short-iso"}},
+			{path: "/bin/journalctl", args: []string{"-k", "-b", "-p", "warning", "--no-pager", "-n", "80", "-o", "short-iso"}},
+		})
+		if kernelErr != nil {
+			result.CommandErrors = append(result.CommandErrors, "无法读取内核日志: "+boundedGuestAgentError(kernelErr))
+		} else {
+			result.KernelWarnings = boundedDiagnosticLines(kernelOutput, guestAgentDiagnosticLines)
+		}
+
+		systemOutput, systemErr := runFirstGuestCommand(dom, []guestExecCommand{
+			{path: "/usr/bin/journalctl", args: []string{"-b", "-p", "err", "--no-pager", "-n", "80", "-o", "short-iso"}},
+			{path: "/bin/journalctl", args: []string{"-b", "-p", "err", "--no-pager", "-n", "80", "-o", "short-iso"}},
+		})
+		if systemErr != nil {
+			result.CommandErrors = append(result.CommandErrors, "无法读取系统错误日志: "+boundedGuestAgentError(systemErr))
+		} else {
+			result.SystemErrors = boundedDiagnosticLines(systemOutput, guestAgentDiagnosticLines)
+		}
+		for _, line := range append(append([]string{}, result.KernelWarnings...), result.SystemErrors...) {
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "out of memory") || strings.Contains(lower, "oom-kill") || strings.Contains(lower, "invoked oom-killer") {
+				result.OOMEvents = append(result.OOMEvents, line)
+				if len(result.OOMEvents) >= 20 {
+					break
+				}
+			}
+		}
+		for index, service := range result.FailedServices {
+			if index >= 5 {
+				break
+			}
+			if !guestServiceUnitPattern.MatchString(service.Unit) {
+				continue
+			}
+			logOutput, logErr := runFirstGuestCommand(dom, []guestExecCommand{
+				{path: "/usr/bin/journalctl", args: []string{"-u", service.Unit, "-b", "--no-pager", "-n", "30", "-o", "short-iso"}},
+				{path: "/bin/journalctl", args: []string{"-u", service.Unit, "-b", "--no-pager", "-n", "30", "-o", "short-iso"}},
+			})
+			if logErr != nil {
+				result.CommandErrors = append(result.CommandErrors, "无法读取 "+service.Unit+" 日志: "+boundedGuestAgentError(logErr))
+				continue
+			}
+			content, truncated := truncateGuestDiagnostic(logOutput)
+			result.ServiceLogs = append(result.ServiceLogs, domain.GuestAgentServiceLog{Unit: service.Unit, Content: content, Truncated: truncated})
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.GuestAgentDiagnostics{}, mapGuestAgentOperationError(uuid, "boot-diagnostics", err)
+	}
+	result.Recommendations = guestDiagnosticRecommendations(result)
+	return result, nil
+}
+
+func (c *Client) GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error) {
+	spec.MountPoint = strings.TrimSpace(spec.MountPoint)
+	if spec.MountPoint == "" || !filepath.IsAbs(spec.MountPoint) || strings.ContainsRune(spec.MountPoint, '\x00') || len(spec.MountPoint) > 4096 {
+		return domain.GuestAgentFilesystemResizeResult{}, domain.ErrInvalidInput
+	}
+	info, err := c.requireGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool {
+		return capabilities.FilesystemResize
+	})
+	if err != nil {
+		return domain.GuestAgentFilesystemResizeResult{}, err
+	}
+	if isWindowsGuest(info.OS) {
+		return domain.GuestAgentFilesystemResizeResult{}, errors.Join(domain.ErrGuestAgent, errors.New("online filesystem growth is currently supported only on Linux guests"))
+	}
+	var filesystem *domain.GuestAgentFilesystem
+	for index := range info.Filesystems {
+		if info.Filesystems[index].MountPoint == spec.MountPoint {
+			filesystem = &info.Filesystems[index]
+			break
+		}
+	}
+	if filesystem == nil {
+		return domain.GuestAgentFilesystemResizeResult{}, domain.ErrNotFound
+	}
+	fsType := strings.ToLower(strings.TrimSpace(filesystem.Type))
+	if fsType != "ext4" && fsType != "xfs" {
+		return domain.GuestAgentFilesystemResizeResult{}, fmt.Errorf("%w: only ext4 and xfs filesystems can be grown online", domain.ErrActionNotAllowed)
+	}
+	result := domain.GuestAgentFilesystemResizeResult{
+		MountPoint: spec.MountPoint, Device: filesystem.Device, Filesystem: fsType,
+		PreviousTotalBytes: filesystem.TotalBytes, TotalBytes: filesystem.TotalBytes, FreeBytes: filesystem.FreeBytes,
+	}
+	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
+		mountOutput, err := runFirstGuestCommandWithTimeout(ctx, dom, guestAgentExecTimeout, []guestExecCommand{
+			{path: "/usr/bin/findmnt", args: []string{"-n", "-o", "SOURCE,FSTYPE", "--target", spec.MountPoint}},
+			{path: "/bin/findmnt", args: []string{"-n", "-o", "SOURCE,FSTYPE", "--target", spec.MountPoint}},
+		})
+		if err != nil {
+			return fmt.Errorf("inspect mounted filesystem: %w", err)
+		}
+		fields := strings.Fields(strings.TrimSpace(mountOutput))
+		if len(fields) < 2 {
+			return errors.New("findmnt returned an unexpected response")
+		}
+		source := strings.TrimSpace(fields[0])
+		actualType := strings.ToLower(strings.TrimSpace(fields[1]))
+		if !guestDevicePathPattern.MatchString(source) || strings.Contains(source, "..") {
+			return fmt.Errorf("%w: filesystem source %q is not a directly resizable block device", domain.ErrActionNotAllowed, source)
+		}
+		if actualType != fsType {
+			return fmt.Errorf("%w: filesystem type changed from %s to %s", domain.ErrConflict, fsType, actualType)
+		}
+		parentOutput, err := runFirstGuestCommandWithTimeout(ctx, dom, guestAgentExecTimeout, []guestExecCommand{
+			{path: "/usr/bin/lsblk", args: []string{"-n", "-o", "PKNAME", source}},
+			{path: "/bin/lsblk", args: []string{"-n", "-o", "PKNAME", source}},
+		})
+		if err != nil {
+			return fmt.Errorf("inspect parent block device: %w", err)
+		}
+		parent := strings.TrimSpace(parentOutput)
+		if !guestDeviceNamePattern.MatchString(parent) {
+			return fmt.Errorf("%w: root or LVM filesystems cannot be grown through this operation", domain.ErrActionNotAllowed)
+		}
+		partitionOutput, err := runFirstGuestCommandWithTimeout(ctx, dom, guestAgentExecTimeout, []guestExecCommand{
+			{path: "/usr/bin/lsblk", args: []string{"-n", "-o", "PARTN", source}},
+			{path: "/bin/lsblk", args: []string{"-n", "-o", "PARTN", source}},
+		})
+		if err != nil {
+			return fmt.Errorf("inspect partition number: %w", err)
+		}
+		partition := strings.TrimSpace(partitionOutput)
+		if partition == "" {
+			return fmt.Errorf("%w: filesystem is not backed by a partitioned block device", domain.ErrActionNotAllowed)
+		}
+		if len(partition) > 3 || strings.Trim(partition, "0123456789") != "" || partition == "0" {
+			return errors.New("lsblk returned an invalid partition number")
+		}
+		parentPath := "/dev/" + parent
+		if _, err := runFirstGuestCommandWithTimeout(ctx, dom, guestAgentResizeTimeout, []guestExecCommand{
+			{path: "/usr/bin/growpart", args: []string{parentPath, partition}},
+			{path: "/sbin/growpart", args: []string{parentPath, partition}},
+			{path: "/usr/sbin/growpart", args: []string{parentPath, partition}},
+			{path: "/bin/growpart", args: []string{parentPath, partition}},
+		}); err != nil {
+			return fmt.Errorf("grow partition: %w", err)
+		}
+		resizeCommands := []guestExecCommand{
+			{path: "/usr/sbin/resize2fs", args: []string{source}},
+			{path: "/sbin/resize2fs", args: []string{source}},
+		}
+		if fsType == "xfs" {
+			resizeCommands = []guestExecCommand{
+				{path: "/usr/sbin/xfs_growfs", args: []string{spec.MountPoint}},
+				{path: "/sbin/xfs_growfs", args: []string{spec.MountPoint}},
+			}
+		}
+		if _, err := runFirstGuestCommandWithTimeout(ctx, dom, guestAgentResizeTimeout, resizeCommands); err != nil {
+			return fmt.Errorf("grow filesystem: %w", err)
+		}
+		var fsResponse guestFSInfoResponse
+		if err := guestAgentCall(dom, "guest-get-fsinfo", nil, guestAgentProbeTimeoutSeconds, &fsResponse); err != nil {
+			return fmt.Errorf("read filesystem capacity after growth: %w", err)
+		}
+		for _, item := range fsResponse.Return {
+			if strings.TrimSpace(item.MountPoint) != spec.MountPoint {
+				continue
+			}
+			if item.TotalBytes <= result.PreviousTotalBytes {
+				return fmt.Errorf("%w: filesystem capacity did not increase", domain.ErrActionNotAllowed)
+			}
+			result.TotalBytes = item.TotalBytes
+			if item.FreeBytes != nil {
+				result.FreeBytes = *item.FreeBytes
+			}
+			return nil
+		}
+		return domain.ErrNotFound
+	})
+	if err != nil {
+		return domain.GuestAgentFilesystemResizeResult{}, mapGuestAgentOperationError(uuid, "grow-filesystem", err)
+	}
+	return result, nil
+}
+
 func (c *Client) SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error {
 	signal, ok := domain.ValidGuestAgentProcessSignal(spec.Signal)
 	if !ok || spec.PID <= 1 {
@@ -475,9 +693,13 @@ type guestExecCommand struct {
 }
 
 func runFirstGuestCommand(dom *libvirt.Domain, commands []guestExecCommand) (string, error) {
+	return runFirstGuestCommandWithTimeout(context.Background(), dom, guestAgentExecTimeout, commands)
+}
+
+func runFirstGuestCommandWithTimeout(ctx context.Context, dom *libvirt.Domain, timeout time.Duration, commands []guestExecCommand) (string, error) {
 	var failures []error
 	for _, command := range commands {
-		output, err := runGuestCommand(dom, command.path, command.args)
+		output, err := runGuestCommand(ctx, dom, timeout, command.path, command.args)
 		if err == nil {
 			return output, nil
 		}
@@ -486,7 +708,7 @@ func runFirstGuestCommand(dom *libvirt.Domain, commands []guestExecCommand) (str
 	return "", errors.Join(failures...)
 }
 
-func runGuestCommand(dom *libvirt.Domain, path string, args []string) (string, error) {
+func runGuestCommand(ctx context.Context, dom *libvirt.Domain, timeout time.Duration, path string, args []string) (string, error) {
 	var started guestExecStartResponse
 	if err := guestAgentCall(dom, "guest-exec", map[string]any{
 		"path": path, "arg": args, "capture-output": true,
@@ -496,8 +718,11 @@ func runGuestCommand(dom *libvirt.Domain, path string, args []string) (string, e
 	if started.Return.PID <= 0 {
 		return "", errors.New("guest command did not return a pid")
 	}
-	deadline := time.Now().Add(guestAgentExecTimeout)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		time.Sleep(100 * time.Millisecond)
 		var status guestExecStatusResponse
 		if err := guestAgentCall(dom, "guest-exec-status", map[string]any{"pid": started.Return.PID}, guestAgentProbeTimeoutSeconds, &status); err != nil {
@@ -521,6 +746,56 @@ func runGuestCommand(dom *libvirt.Domain, path string, args []string) (string, e
 		return string(stdout), nil
 	}
 	return "", fmt.Errorf("guest command %s timed out", path)
+}
+
+func boundedDiagnosticLines(output string, limit int) []string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	result := make([]string, 0, limit)
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.ToValidUTF8(line, "�"))
+		if line == "" {
+			continue
+		}
+		if len(line) > 2048 {
+			line = line[:2048]
+		}
+		result = append(result, line)
+		if len(result) >= limit {
+			break
+		}
+	}
+	if result == nil {
+		return []string{}
+	}
+	return result
+}
+
+func truncateGuestDiagnostic(output string) (string, bool) {
+	output = strings.TrimSpace(strings.ToValidUTF8(output, "�"))
+	if len(output) <= guestAgentDiagnosticBytes {
+		return output, false
+	}
+	return output[:guestAgentDiagnosticBytes], true
+}
+
+func guestDiagnosticRecommendations(result domain.GuestAgentDiagnostics) []string {
+	recommendations := make([]string, 0, 4)
+	if len(result.FailedServices) > 0 {
+		recommendations = append(recommendations, "检查失败服务的 systemd 日志，确认依赖、配置和端口冲突。")
+	}
+	if len(result.OOMEvents) > 0 {
+		recommendations = append(recommendations, "检测到 OOM 事件，请检查客户机内存压力、进程上限或内存气球配置。")
+	}
+	if len(result.KernelWarnings) > 0 || len(result.SystemErrors) > 0 {
+		recommendations = append(recommendations, "结合内核与系统错误日志检查驱动、存储和网络设备状态。")
+	}
+	if len(result.CommandErrors) > 0 {
+		recommendations = append(recommendations, "部分固定诊断命令不可用，请确认 systemd/journalctl 已安装且 QGA 有足够权限。")
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "未发现失败的 systemd 服务、OOM 或错误级系统日志。")
+	}
+	return recommendations
 }
 
 func parseGuestProcesses(output string) []domain.GuestAgentProcess {

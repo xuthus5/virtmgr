@@ -6,9 +6,85 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"virtmgr/internal/domain"
 )
+
+func (d *DemoBackend) ConvertStorageVolume(_ context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error) {
+	spec.SourcePool = strings.TrimSpace(spec.SourcePool)
+	spec.SourceVolume = strings.TrimSpace(spec.SourceVolume)
+	spec.TargetPool = strings.TrimSpace(spec.TargetPool)
+	spec.TargetName = strings.TrimSpace(spec.TargetName)
+	spec.TargetFormat = strings.ToLower(strings.TrimSpace(spec.TargetFormat))
+	if (spec.TargetFormat != "qcow2" && spec.TargetFormat != "raw") || spec.SourcePool == "" || spec.SourceVolume == "" || spec.TargetPool == "" || spec.TargetName == "" || (spec.SourcePool == spec.TargetPool && spec.SourceVolume == spec.TargetName) {
+		return domain.StorageVolume{}, domain.ErrInvalidInput
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	sourcePool, ok := d.pools[spec.SourcePool]
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if sourcePool.State != domain.StoragePoolStateActive {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	source, ok := d.demoVolumeLocked(spec.SourcePool, spec.SourceVolume)
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if source.Format != "qcow2" && source.Format != "raw" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: only qcow2 and raw source volumes can be converted", domain.ErrInvalidInput)
+	}
+	if backing, exists := d.volumeBacking[spec.SourcePool+"/"+source.Name]; exists && strings.TrimSpace(backing) != "" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: linked-clone source volumes must be flattened before conversion", domain.ErrActionNotAllowed)
+	}
+	for _, volume := range d.volumes[spec.SourcePool] {
+		if source.Name != volume.Name && filepath.Clean(d.volumeBacking[spec.SourcePool+"/"+volume.Name]) == filepath.Clean(source.Path) {
+			return domain.StorageVolume{}, fmt.Errorf("%w: source volume is a backing store for %s", domain.ErrVolumeInUse, volume.Name)
+		}
+	}
+	for _, vm := range d.vms {
+		if vm.State == domain.VMStateShutoff || vm.State == domain.VMStateCrashed {
+			continue
+		}
+		for _, disk := range vm.Disks {
+			if diskUsesVolume(disk.Source, source.Path, source.Name) {
+				return domain.StorageVolume{}, fmt.Errorf("%w: source volume is attached to running VM %s", domain.ErrVolumeInUse, vm.Name)
+			}
+		}
+	}
+	targetPool, ok := d.pools[spec.TargetPool]
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if targetPool.State != domain.StoragePoolStateActive {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	if _, exists := d.demoVolumeLocked(spec.TargetPool, spec.TargetName); exists {
+		return domain.StorageVolume{}, domain.ErrConflict
+	}
+	if targetPool.Type == "logical" && spec.TargetFormat != "raw" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: logical LVM pools only support raw volumes", domain.ErrInvalidInput)
+	}
+	required := domain.StorageProvisionRequiredBytes(spec.TargetFormat, source.CapacityBytes, source.AllocationBytes)
+	if !domain.StoragePoolHasCapacity(targetPool, required) {
+		return domain.StorageVolume{}, fmt.Errorf("%w: target pool requires %d bytes", domain.ErrStorageInsufficient, required)
+	}
+	target := domain.StorageVolume{
+		Name: spec.TargetName, Path: filepath.Join(targetPool.TargetPath, spec.TargetName), Type: "file", Format: spec.TargetFormat,
+		CapacityBytes: source.CapacityBytes, AllocationBytes: source.AllocationBytes,
+	}
+	if spec.TargetFormat == "raw" {
+		target.AllocationBytes = source.CapacityBytes
+	}
+	d.volumes[spec.TargetPool] = append(d.volumes[spec.TargetPool], target)
+	if body, exists := d.volumeData[spec.SourcePool+"/"+source.Name]; exists {
+		d.volumeData[spec.TargetPool+"/"+target.Name] = append([]byte(nil), body...)
+	}
+	d.publish("storage.volume.converted", "info", "storage_volume", spec.TargetPool+"/"+target.Name, target.Name, "存储卷 "+source.Name+" 已复制并转换为 "+spec.TargetFormat)
+	return target, nil
+}
 
 func (d *DemoBackend) CloneStorageVolume(_ context.Context, sourcePoolName, sourceVolumeName, targetPoolName, targetName string) (domain.StorageVolume, error) {
 	d.mu.Lock()

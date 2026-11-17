@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, LoaderCircle, Network, RefreshCw, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Gauge, LoaderCircle, Network, RefreshCw, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { VM, VMNICModel } from "@/api/types";
+import type { NetworkInterface, VM, VMNetworkQoSInput, VMNICModel } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -15,6 +15,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
@@ -32,6 +35,14 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
   const [model, setModel] = useState<VMNICModel>("virtio");
   const [detachMAC, setDetachMAC] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [qosInterface, setQosInterface] = useState<NetworkInterface | null>(null);
+  const [qosInbound, setQosInbound] = useState("");
+  const [qosInboundPeak, setQosInboundPeak] = useState("");
+  const [qosInboundBurst, setQosInboundBurst] = useState("");
+  const [qosOutbound, setQosOutbound] = useState("");
+  const [qosOutboundPeak, setQosOutboundPeak] = useState("");
+  const [qosOutboundBurst, setQosOutboundBurst] = useState("");
+  const [qosError, setQosError] = useState("");
 
   const selectedNetwork = network || networks[0]?.name || "";
 
@@ -61,11 +72,69 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
     onError: (cause) => setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "移除网卡失败，请稍后重试。" }),
   });
 
+  const qosMutation = useMutation({
+    mutationFn: ({ mac, input }: { mac: string; input: VMNetworkQoSInput }) => api.updateVMNetworkQoS(vm.uuid, mac, input),
+    onSuccess: (updated, variables) => {
+      invalidate(updated);
+      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      setQosInterface(null);
+      setNotice({ tone: "success", text: `网卡 ${variables.mac} 的带宽限制已更新。` });
+    },
+    onError: (cause) => setQosError(cause instanceof ApiError ? cause.message : "更新网卡带宽限制失败，请稍后重试。"),
+  });
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedNetwork) return;
     setNotice(null);
     attachMutation.mutate();
+  }
+
+  function openQoS(networkInterface: NetworkInterface) {
+    setQosInterface(networkInterface);
+    setQosInbound(qosBytesToMiB(networkInterface.qos?.inboundAverageBytes));
+    setQosInboundPeak(qosBytesToMiB(networkInterface.qos?.inboundPeakBytes));
+    setQosInboundBurst(qosBytesToMiB(networkInterface.qos?.inboundBurstBytes));
+    setQosOutbound(qosBytesToMiB(networkInterface.qos?.outboundAverageBytes));
+    setQosOutboundPeak(qosBytesToMiB(networkInterface.qos?.outboundPeakBytes));
+    setQosOutboundBurst(qosBytesToMiB(networkInterface.qos?.outboundBurstBytes));
+    setQosError("");
+    setNotice(null);
+  }
+
+  function submitQoS() {
+    if (!qosInterface?.mac) return;
+    const inbound = parseQosMiB(qosInbound);
+    const inboundPeak = parseQosMiB(qosInboundPeak);
+    const inboundBurst = parseQosMiB(qosInboundBurst);
+    const outbound = parseQosMiB(qosOutbound);
+    const outboundPeak = parseQosMiB(qosOutboundPeak);
+    const outboundBurst = parseQosMiB(qosOutboundBurst);
+    if ([inbound, inboundPeak, inboundBurst, outbound, outboundPeak, outboundBurst].some((value) => value === null)) {
+      setQosError("请输入非负数值，带宽单位为 MiB/s，突发缓冲单位为 MiB。");
+      return;
+    }
+    if (((inboundPeak ?? 0) > 0 || (inboundBurst ?? 0) > 0) && (inbound ?? 0) === 0) {
+      setQosError("配置入站峰值或突发缓冲时，必须填写入站平均值。");
+      return;
+    }
+    if (((outboundPeak ?? 0) > 0 || (outboundBurst ?? 0) > 0) && (outbound ?? 0) === 0) {
+      setQosError("配置出站峰值或突发缓冲时，必须填写出站平均值。");
+      return;
+    }
+    if ((inboundPeak ?? 0) > 0 && (inboundPeak ?? 0) < (inbound ?? 0)) {
+      setQosError("入站峰值不能小于入站平均值。");
+      return;
+    }
+    if ((outboundPeak ?? 0) > 0 && (outboundPeak ?? 0) < (outbound ?? 0)) {
+      setQosError("出站峰值不能小于出站平均值。");
+      return;
+    }
+    setQosError("");
+    qosMutation.mutate({ mac: qosInterface.mac, input: {
+      inboundAverageBytes: inbound ?? 0, inboundPeakBytes: inboundPeak ?? 0, inboundBurstBytes: inboundBurst ?? 0,
+      outboundAverageBytes: outbound ?? 0, outboundPeakBytes: outboundPeak ?? 0, outboundBurstBytes: outboundBurst ?? 0,
+    } });
   }
 
   return (
@@ -122,9 +191,14 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
                 <TableCell>{item.model || "-"}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{item.address || "-"}</TableCell>
                 <TableCell className="text-right">
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label={`移除网卡 ${item.mac || index}`} data-testid={`vm-network-detach-${item.mac || index}`} disabled={!canMutate || !item.mac || vm.interfaces.length <= 1 || detachMutation.isPending} title={vm.interfaces.length <= 1 ? "至少保留一个网络接口" : !item.mac ? "网卡没有 MAC 地址" : disabledReason || "移除网卡"} onClick={() => setDetachMAC(item.mac || null)}>
-                    <Unplug className="h-4 w-4" />
-                  </Button>
+                  <div className="flex justify-end gap-1">
+                    <Button type="button" variant={item.qos ? "outline" : "ghost"} size="sm" aria-label={`配置网卡 ${item.mac || index} 带宽`} data-testid={`vm-network-qos-${item.mac || index}`} disabled={!canMutate || !item.mac || qosMutation.isPending} title={!item.mac ? "网卡没有 MAC 地址" : disabledReason || "配置入站和出站带宽限制"} onClick={() => openQoS(item)}>
+                      <Gauge className="h-3.5 w-3.5" />带宽
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`移除网卡 ${item.mac || index}`} data-testid={`vm-network-detach-${item.mac || index}`} disabled={!canMutate || !item.mac || vm.interfaces.length <= 1 || detachMutation.isPending} title={vm.interfaces.length <= 1 ? "至少保留一个网络接口" : !item.mac ? "网卡没有 MAC 地址" : disabledReason || "移除网卡"} onClick={() => setDetachMAC(item.mac || null)}>
+                      <Unplug className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}</TableBody>
@@ -146,6 +220,35 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Modal open={qosInterface !== null} onClose={() => { if (!qosMutation.isPending) setQosInterface(null); }} title={`网卡带宽限制 · ${qosInterface?.mac || ""}`} description="通过 libvirt interface bandwidth 限制入站与出站速率。平均值和峰值单位为 MiB/s，burst 为突发缓冲 MiB；全部清零可移除限制。" testId="vm-network-qos-modal" footer={<><Button variant="ghost" disabled={qosMutation.isPending} onClick={() => setQosInterface(null)}>取消</Button><Button data-testid="vm-network-qos-submit" disabled={qosMutation.isPending} onClick={submitQoS}>{qosMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}{qosMutation.isPending ? "正在保存..." : "保存限制"}</Button></>}>
+        <div className="space-y-4">
+          <section className="space-y-3"><p className="text-sm font-medium">入站</p><div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-in">平均 (MiB/s)</Label><Input id="vm-network-qos-in" data-testid="vm-network-qos-in" type="number" min={0} step="any" value={qosInbound} onChange={(event) => setQosInbound(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-in-peak">峰值 (MiB/s)</Label><Input id="vm-network-qos-in-peak" data-testid="vm-network-qos-in-peak" type="number" min={0} step="any" value={qosInboundPeak} onChange={(event) => setQosInboundPeak(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-in-burst">突发缓冲 (MiB)</Label><Input id="vm-network-qos-in-burst" data-testid="vm-network-qos-in-burst" type="number" min={0} step="any" value={qosInboundBurst} onChange={(event) => setQosInboundBurst(event.target.value)} disabled={qosMutation.isPending} /></div>
+          </div></section>
+          <section className="space-y-3 border-t pt-4"><p className="text-sm font-medium">出站</p><div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-out">平均 (MiB/s)</Label><Input id="vm-network-qos-out" data-testid="vm-network-qos-out" type="number" min={0} step="any" value={qosOutbound} onChange={(event) => setQosOutbound(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-out-peak">峰值 (MiB/s)</Label><Input id="vm-network-qos-out-peak" data-testid="vm-network-qos-out-peak" type="number" min={0} step="any" value={qosOutboundPeak} onChange={(event) => setQosOutboundPeak(event.target.value)} disabled={qosMutation.isPending} /></div>
+            <div className="space-y-2"><Label htmlFor="vm-network-qos-out-burst">突发缓冲 (MiB)</Label><Input id="vm-network-qos-out-burst" data-testid="vm-network-qos-out-burst" type="number" min={0} step="any" value={qosOutboundBurst} onChange={(event) => setQosOutboundBurst(event.target.value)} disabled={qosMutation.isPending} /></div>
+          </div></section>
+          {qosError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{qosError}</p> : null}
+        </div>
+      </Modal>
     </Card>
   );
+}
+
+function qosBytesToMiB(value?: number) {
+  if (!value) return "";
+  return String(Number((value / 1024 / 1024).toFixed(3)));
+}
+
+function parseQosMiB(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isSafeInteger(Math.round(parsed * 1024 * 1024))) return null;
+  return Math.round(parsed * 1024 * 1024);
 }

@@ -271,6 +271,19 @@ func (d *DemoBackend) DefineVMXML(_ context.Context, uuid, xmlText string) (doma
 		}
 	}
 	vm.Disks = details.Disks
+	vm.BootDevices = details.BootDevices
+	if (vm.State == domain.VMStateShutoff || vm.State == domain.VMStateCrashed) && details.VCPUs > 0 {
+		vm.VCPUs = details.VCPUs
+		vm.MaxVCPUs = vm.VCPUs
+	}
+	if (vm.State == domain.VMStateShutoff || vm.State == domain.VMStateCrashed) && details.MemoryBytes > 0 {
+		vm.MemoryBytes = details.MemoryBytes
+		vm.MaxMemoryBytes = details.MemoryBytes
+	}
+	vm.CPUModel = details.CPUModel
+	vm.CPUSockets = details.CPUSockets
+	vm.CPUCores = details.CPUCores
+	vm.CPUThreads = details.CPUThreads
 	vm.CloudInit = details.CloudInit
 	vm.AgentConfigured = details.GuestAgent
 	vm.Firmware = details.Firmware
@@ -1825,6 +1838,19 @@ func cloneVM(vm domain.VM) domain.VM {
 	vm.Passthrough = append([]domain.PassthroughDevice{}, vm.Passthrough...)
 	vm.IPAddresses = append([]string{}, vm.IPAddresses...)
 	vm.AllowedActions = append([]domain.VMAction(nil), vm.AllowedActions...)
+	vm.BootDevices = append([]domain.VMBootDevice{}, vm.BootDevices...)
+	for index := range vm.Disks {
+		if vm.Disks[index].QoS != nil {
+			qos := *vm.Disks[index].QoS
+			vm.Disks[index].QoS = &qos
+		}
+	}
+	for index := range vm.Interfaces {
+		if vm.Interfaces[index].QoS != nil {
+			qos := *vm.Interfaces[index].QoS
+			vm.Interfaces[index].QoS = &qos
+		}
+	}
 	return vm
 }
 
@@ -1833,14 +1859,33 @@ func demoVMDomainXML(vm domain.VM) string {
 	builder.WriteString(xml.Header)
 	fmt.Fprintf(&builder, "<domain type='kvm'>\n  <name>%s</name>\n  <uuid>%s</uuid>\n", escapeXML(vm.Name), escapeXML(vm.UUID))
 	fmt.Fprintf(&builder, "  <memory unit='KiB'>%d</memory>\n  <vcpu>%d</vcpu>\n", vm.MemoryBytes/1024, vm.VCPUs)
+	builder.WriteString("  <os")
+	if vm.Firmware == domain.VMFirmwareUEFI {
+		builder.WriteString(" firmware='efi'")
+	}
+	builder.WriteString(">")
+	fmt.Fprintf(&builder, "<type arch='%s' machine='%s'>%s</type>", escapeXML(vm.Arch), escapeXML(vm.Machine), escapeXML(vm.OSType))
 	if vm.Firmware == domain.VMFirmwareUEFI {
 		secure := "no"
 		if vm.SecureBoot {
 			secure = "yes"
 		}
-		fmt.Fprintf(&builder, "  <os firmware='efi'><type arch='%s' machine='%s'>%s</type><loader secure='%s'/></os>\n", escapeXML(vm.Arch), escapeXML(vm.Machine), escapeXML(vm.OSType), secure)
-	} else {
-		fmt.Fprintf(&builder, "  <os><type arch='%s' machine='%s'>%s</type></os>\n", escapeXML(vm.Arch), escapeXML(vm.Machine), escapeXML(vm.OSType))
+		fmt.Fprintf(&builder, "<loader secure='%s'/>", secure)
+	}
+	for _, device := range vm.BootDevices {
+		fmt.Fprintf(&builder, "<boot dev='%s'/>", escapeXML(string(device)))
+	}
+	builder.WriteString("</os>\n")
+	if vm.CPUModel != "" {
+		sockets, cores, threads := vm.CPUSockets, vm.CPUCores, vm.CPUThreads
+		if sockets == 0 || cores == 0 || threads == 0 {
+			sockets, cores, threads = 1, vm.VCPUs, 1
+		}
+		if vm.CPUModel == "host-passthrough" || vm.CPUModel == "host-model" {
+			fmt.Fprintf(&builder, "  <cpu mode='%s'><topology sockets='%d' cores='%d' threads='%d'/></cpu>\n", escapeXML(vm.CPUModel), sockets, cores, threads)
+		} else {
+			fmt.Fprintf(&builder, "  <cpu mode='custom' match='exact'><model fallback='allow'>%s</model><topology sockets='%d' cores='%d' threads='%d'/></cpu>\n", escapeXML(vm.CPUModel), sockets, cores, threads)
+		}
 	}
 	builder.WriteString("  <devices>\n")
 	for _, disk := range vm.Disks {
@@ -1851,10 +1896,25 @@ func demoVMDomainXML(vm domain.VM) string {
 		if strings.HasSuffix(disk.Source, "-cidata.iso") {
 			builder.WriteString("<serial>cloud-init</serial>")
 		}
+		if disk.QoS != nil {
+			fmt.Fprintf(&builder, "<iotune><total_bytes_sec>%d</total_bytes_sec><read_bytes_sec>%d</read_bytes_sec><write_bytes_sec>%d</write_bytes_sec><total_iops_sec>%d</total_iops_sec><read_iops_sec>%d</read_iops_sec><write_iops_sec>%d</write_iops_sec></iotune>",
+				disk.QoS.TotalBytesSec, disk.QoS.ReadBytesSec, disk.QoS.WriteBytesSec, disk.QoS.TotalIOPS, disk.QoS.ReadIOPS, disk.QoS.WriteIOPS)
+		}
 		builder.WriteString("</disk>\n")
 	}
 	for _, network := range vm.Interfaces {
-		fmt.Fprintf(&builder, "    <interface type='%s'><source network='%s'/><mac address='%s'/><model type='%s'/></interface>\n", escapeXML(network.Type), escapeXML(network.Source), escapeXML(network.MAC), escapeXML(network.Model))
+		fmt.Fprintf(&builder, "    <interface type='%s'><source network='%s'/><mac address='%s'/><model type='%s'/>", escapeXML(network.Type), escapeXML(network.Source), escapeXML(network.MAC), escapeXML(network.Model))
+		if network.QoS != nil {
+			builder.WriteString("<bandwidth>")
+			if network.QoS.InboundAverageBytes > 0 || network.QoS.InboundPeakBytes > 0 || network.QoS.InboundBurstBytes > 0 {
+				fmt.Fprintf(&builder, "<inbound average='%d' peak='%d' burst='%d'/>", network.QoS.InboundAverageBytes, network.QoS.InboundPeakBytes, network.QoS.InboundBurstBytes)
+			}
+			if network.QoS.OutboundAverageBytes > 0 || network.QoS.OutboundPeakBytes > 0 || network.QoS.OutboundBurstBytes > 0 {
+				fmt.Fprintf(&builder, "<outbound average='%d' peak='%d' burst='%d'/>", network.QoS.OutboundAverageBytes, network.QoS.OutboundPeakBytes, network.QoS.OutboundBurstBytes)
+			}
+			builder.WriteString("</bandwidth>")
+		}
+		builder.WriteString("</interface>\n")
 	}
 	for _, graphics := range vm.Graphics {
 		fmt.Fprintf(&builder, "    <graphics type='%s' listen='%s' port='%d'/>\n", escapeXML(graphics.Type), escapeXML(graphics.Listen), graphics.Port)
@@ -1887,7 +1947,7 @@ func demoMAC(index int) string {
 }
 
 func demoVMs() []domain.VM {
-	return []domain.VM{
+	vms := []domain.VM{
 		{
 			UUID: "11111111-1111-4111-8111-111111111111", Name: "demo-web-01", State: domain.VMStateRunning,
 			Persistent: true, Autostart: true, VCPUs: 4, MaxVCPUs: 8, MemoryBytes: 8 * 1024 * 1024 * 1024, MaxMemoryBytes: 12 * 1024 * 1024 * 1024,
@@ -1937,6 +1997,18 @@ func demoVMs() []domain.VM {
 			AllowedActions: domain.AllowedVMActions(domain.VMStateShutoff),
 		},
 	}
+	for index := range vms {
+		if vms[index].BootDevices == nil {
+			vms[index].BootDevices = []domain.VMBootDevice{domain.VMBootDeviceDisk}
+		}
+		if vms[index].CPUModel == "" {
+			vms[index].CPUModel = "Skylake-Client"
+			vms[index].CPUSockets = 1
+			vms[index].CPUCores = vms[index].VCPUs
+			vms[index].CPUThreads = 1
+		}
+	}
+	return vms
 }
 
 func demoSerialConsoles() []domain.SerialConsole {

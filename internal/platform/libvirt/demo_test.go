@@ -164,6 +164,13 @@ func TestDemoBackendVMXML(t *testing.T) {
 	if err != nil || !strings.Contains(config.XML, "<vcpu>10</vcpu>") {
 		t.Fatalf("updated config XML = %s, %v", config.XML, err)
 	}
+	updatedVM, err := backend.GetVM(ctx, uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedVM.VCPUs != 8 || updatedVM.MaxVCPUs != 16 {
+		t.Fatalf("updated VM vCPUs = %d/%d", updatedVM.VCPUs, updatedVM.MaxVCPUs)
+	}
 	live, err := backend.GetVMXML(ctx, uuid, domain.VMXMLFormatLive)
 	if err != nil || strings.Contains(live.XML, "<vcpu>10</vcpu>") {
 		t.Fatalf("live XML should remain active state: %s, %v", live.XML, err)
@@ -214,6 +221,43 @@ func TestDemoBackendHostDevicePassthrough(t *testing.T) {
 	}
 	if _, err := backend.AttachHostDevice(ctx, uuid, "net_enp2s0"); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("unsupported device error = %v", err)
+	}
+}
+
+func TestDemoBackendDefineVMXMLUpdatesShutoffResources(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	const uuid = "44444444-4444-4444-8444-444444444444"
+	config, err := backend.GetVMXML(ctx, uuid, domain.VMXMLFormatConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedXML := strings.Replace(config.XML, "<vcpu>2</vcpu>", "<vcpu>4</vcpu>", 1)
+	updatedXML = strings.Replace(updatedXML, "<topology sockets='1' cores='2' threads='1'/>", "<topology sockets='2' cores='2' threads='1'/>", 1)
+	updatedXML = strings.Replace(updatedXML, "<memory unit='KiB'>2097152</memory>", "<memory unit='KiB'>4194304</memory>", 1)
+	if _, err := backend.DefineVMXML(ctx, uuid, updatedXML); err != nil {
+		t.Fatalf("DefineVMXML() error = %v", err)
+	}
+	vm, err := backend.GetVM(ctx, uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vm.VCPUs != 4 || vm.MaxVCPUs != 4 || vm.CPUSockets != 2 || vm.CPUCores != 2 || vm.MemoryBytes != 4<<30 {
+		t.Fatalf("updated shutoff VM = %+v", vm)
+	}
+}
+
+func TestDemoBackendDefineLegacyXMLWithChangedVCPU(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	const uuid = "44444444-4444-4444-8444-444444444444"
+	current, err := backend.GetVMXML(ctx, uuid, domain.VMXMLFormatConfig)
+	if err != nil {
+		t.Fatalf("GetVMXML() error = %v", err)
+	}
+	updatedXML := strings.Replace(current.XML, "<vcpu>2</vcpu>", "<vcpu>3</vcpu>", 1)
+	if _, err := backend.DefineVMXML(ctx, uuid, updatedXML); err != nil {
+		t.Fatalf("DefineVMXML() error = %v", err)
 	}
 }
 

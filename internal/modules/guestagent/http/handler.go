@@ -212,6 +212,41 @@ func (h *Handler) ListServices(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, map[string]any{"items": result, "total": len(result)})
 }
 
+func (h *Handler) Diagnostics(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	context, ok := h.mutationContext(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.Diagnostics(r.Context(), guestagentapp.ProcessCommand{
+		UUID: chi.URLParam(r, "uuid"), Request: context,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) GrowFilesystem(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.GuestAgentFilesystemResizeSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	context, ok := h.mutationContext(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.GrowFilesystem(r.Context(), guestagentapp.FilesystemGrowCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: context,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) CloudInit(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	context, ok := h.mutationContext(w, r)
 	if !ok {
@@ -328,6 +363,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/vms/{uuid}/guest-agent/ssh-keys", h.ListSSHKeys)
 	r.Get("/vms/{uuid}/guest-agent/processes", h.ListProcesses)
 	r.Get("/vms/{uuid}/guest-agent/services", h.ListServices)
+	r.Get("/vms/{uuid}/guest-agent/diagnostics", h.Diagnostics)
 	r.Get("/vms/{uuid}/guest-agent/cloud-init", h.CloudInit)
 	r.Get("/vms/{uuid}/guest-agent/users", h.ListUsers)
 	r.Get("/vms/{uuid}/guest-agent/policy", h.GetPolicy)
@@ -341,6 +377,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/guest-agent/ssh-keys/add", h.AddSSHKeys)
 		mutating.Post("/vms/{uuid}/guest-agent/ssh-keys/remove", h.RemoveSSHKeys)
 		mutating.Post("/vms/{uuid}/guest-agent/processes/signal", h.SignalProcess)
+		mutating.Post("/vms/{uuid}/guest-agent/filesystem/grow", h.GrowFilesystem)
 		mutating.Put("/vms/{uuid}/guest-agent/policy", h.SetPolicy)
 	})
 }

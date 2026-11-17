@@ -168,6 +168,47 @@ func NormalizeVMBootOrder(value string) (VMBootOrder, bool) {
 	}
 }
 
+type VMBootDevice string
+
+const (
+	VMBootDeviceDisk    VMBootDevice = "hd"
+	VMBootDeviceCDROM   VMBootDevice = "cdrom"
+	VMBootDeviceNetwork VMBootDevice = "network"
+)
+
+func NormalizeVMBootDevices(values []string) ([]VMBootDevice, bool) {
+	if len(values) == 0 || len(values) > 3 {
+		return nil, false
+	}
+	result := make([]VMBootDevice, 0, len(values))
+	seen := make(map[VMBootDevice]struct{}, len(values))
+	for _, value := range values {
+		device := VMBootDevice(strings.ToLower(strings.TrimSpace(value)))
+		switch device {
+		case VMBootDeviceDisk, VMBootDeviceCDROM, VMBootDeviceNetwork:
+		default:
+			return nil, false
+		}
+		if _, exists := seen[device]; exists {
+			return nil, false
+		}
+		seen[device] = struct{}{}
+		result = append(result, device)
+	}
+	return result, true
+}
+
+type VMBootSpec struct {
+	Devices []VMBootDevice `json:"devices"`
+}
+
+type VMCPUConfigSpec struct {
+	Model   string `json:"model"`
+	Sockets uint   `json:"sockets"`
+	Cores   uint   `json:"cores"`
+	Threads uint   `json:"threads"`
+}
+
 type VMCreateSpec struct {
 	Name           string           `json:"name"`
 	VCPUs          uint             `json:"vcpus"`
@@ -223,6 +264,24 @@ type VMResourcesSpec struct {
 
 type VMDiskResizeSpec struct {
 	CapacityBytes uint64 `json:"capacityBytes"`
+}
+
+type VMDiskQoSSpec struct {
+	TotalBytesSec uint64 `json:"totalBytesSec"`
+	ReadBytesSec  uint64 `json:"readBytesSec"`
+	WriteBytesSec uint64 `json:"writeBytesSec"`
+	TotalIOPS     uint64 `json:"totalIops"`
+	ReadIOPS      uint64 `json:"readIops"`
+	WriteIOPS     uint64 `json:"writeIops"`
+}
+
+type VMNetworkQoSSpec struct {
+	InboundAverageBytes  uint64 `json:"inboundAverageBytes"`
+	InboundPeakBytes     uint64 `json:"inboundPeakBytes"`
+	InboundBurstBytes    uint64 `json:"inboundBurstBytes"`
+	OutboundAverageBytes uint64 `json:"outboundAverageBytes"`
+	OutboundPeakBytes    uint64 `json:"outboundPeakBytes"`
+	OutboundBurstBytes   uint64 `json:"outboundBurstBytes"`
 }
 
 type VMDiskAttachSpec struct {
@@ -318,23 +377,43 @@ type VMSnapshotList struct {
 }
 
 type Disk struct {
-	Type            string `json:"type,omitempty"`
-	Device          string `json:"device"`
-	Target          string `json:"target"`
-	Bus             string `json:"bus"`
-	Format          string `json:"format,omitempty"`
-	Source          string `json:"source,omitempty"`
-	ReadOnly        bool   `json:"readOnly"`
-	CapacityBytes   uint64 `json:"capacityBytes"`
-	AllocationBytes uint64 `json:"allocationBytes"`
+	Type            string   `json:"type,omitempty"`
+	Device          string   `json:"device"`
+	Target          string   `json:"target"`
+	Bus             string   `json:"bus"`
+	Format          string   `json:"format,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	ReadOnly        bool     `json:"readOnly"`
+	CapacityBytes   uint64   `json:"capacityBytes"`
+	AllocationBytes uint64   `json:"allocationBytes"`
+	QoS             *DiskQoS `json:"qos,omitempty"`
+}
+
+type DiskQoS struct {
+	TotalBytesSec uint64 `json:"totalBytesSec,omitempty"`
+	ReadBytesSec  uint64 `json:"readBytesSec,omitempty"`
+	WriteBytesSec uint64 `json:"writeBytesSec,omitempty"`
+	TotalIOPS     uint64 `json:"totalIops,omitempty"`
+	ReadIOPS      uint64 `json:"readIops,omitempty"`
+	WriteIOPS     uint64 `json:"writeIops,omitempty"`
 }
 
 type NetworkInterface struct {
-	Type    string `json:"type"`
-	MAC     string `json:"mac,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Address string `json:"address,omitempty"`
+	Type    string      `json:"type"`
+	MAC     string      `json:"mac,omitempty"`
+	Source  string      `json:"source,omitempty"`
+	Model   string      `json:"model,omitempty"`
+	Address string      `json:"address,omitempty"`
+	QoS     *NetworkQoS `json:"qos,omitempty"`
+}
+
+type NetworkQoS struct {
+	InboundAverageBytes  uint64 `json:"inboundAverageBytes,omitempty"`
+	InboundPeakBytes     uint64 `json:"inboundPeakBytes,omitempty"`
+	InboundBurstBytes    uint64 `json:"inboundBurstBytes,omitempty"`
+	OutboundAverageBytes uint64 `json:"outboundAverageBytes,omitempty"`
+	OutboundPeakBytes    uint64 `json:"outboundPeakBytes,omitempty"`
+	OutboundBurstBytes   uint64 `json:"outboundBurstBytes,omitempty"`
 }
 
 type Graphics struct {
@@ -376,6 +455,11 @@ type VM struct {
 	OSType          string              `json:"osType,omitempty"`
 	Arch            string              `json:"arch,omitempty"`
 	Machine         string              `json:"machine,omitempty"`
+	BootDevices     []VMBootDevice      `json:"bootDevices"`
+	CPUModel        string              `json:"cpuModel,omitempty"`
+	CPUSockets      uint                `json:"cpuSockets"`
+	CPUCores        uint                `json:"cpuCores"`
+	CPUThreads      uint                `json:"cpuThreads"`
 	Firmware        VMFirmware          `json:"firmware"`
 	SecureBoot      bool                `json:"secureBoot"`
 	CloudInit       bool                `json:"cloudInit"`

@@ -99,6 +99,16 @@ export type Disk = {
   readOnly: boolean;
   capacityBytes: number;
   allocationBytes: number;
+  qos?: DiskQoS;
+};
+
+export type DiskQoS = {
+  totalBytesSec?: number;
+  readBytesSec?: number;
+  writeBytesSec?: number;
+  totalIops?: number;
+  readIops?: number;
+  writeIops?: number;
 };
 
 export type NetworkInterface = {
@@ -107,6 +117,16 @@ export type NetworkInterface = {
   source?: string;
   model?: string;
   address?: string;
+  qos?: NetworkQoS;
+};
+
+export type NetworkQoS = {
+  inboundAverageBytes?: number;
+  inboundPeakBytes?: number;
+  inboundBurstBytes?: number;
+  outboundAverageBytes?: number;
+  outboundPeakBytes?: number;
+  outboundBurstBytes?: number;
 };
 
 export type Graphics = {
@@ -510,6 +530,11 @@ export type VM = {
   osType?: string;
   arch?: string;
   machine?: string;
+  bootDevices?: VMBootDevice[];
+  cpuModel?: string;
+  cpuSockets?: number;
+  cpuCores?: number;
+  cpuThreads?: number;
   firmware: VMFirmware;
   secureBoot: boolean;
   cloudInit: boolean;
@@ -525,6 +550,37 @@ export type VM = {
   agentState?: GuestAgentState;
   allowedActions: VMAction[];
   metadata?: VMMetadata;
+};
+
+export type VMBootDevice = "hd" | "cdrom" | "network";
+
+export type VMBootInput = {
+  devices: VMBootDevice[];
+};
+
+export type VMCPUUpdateInput = {
+  model: string;
+  sockets: number;
+  cores: number;
+  threads: number;
+};
+
+export type VMDiskQoSInput = {
+  totalBytesSec: number;
+  readBytesSec: number;
+  writeBytesSec: number;
+  totalIops: number;
+  readIops: number;
+  writeIops: number;
+};
+
+export type VMNetworkQoSInput = {
+  inboundAverageBytes: number;
+  inboundPeakBytes: number;
+  inboundBurstBytes: number;
+  outboundAverageBytes: number;
+  outboundPeakBytes: number;
+  outboundBurstBytes: number;
 };
 
 export type VMMetadata = {
@@ -732,6 +788,7 @@ export type GuestAgentCapabilities = {
   users: boolean;
   timezone: boolean;
   networkRoutes: boolean;
+  filesystemResize?: boolean;
 };
 
 export type GuestAgentRoute = {
@@ -784,6 +841,41 @@ export type GuestAgentActionInput = {
   action: GuestAgentAction;
   mount?: string;
   minimumBytes?: number;
+};
+
+export type GuestAgentFilesystemResizeInput = {
+  mountPoint: string;
+};
+
+export type GuestAgentFilesystemResizeResult = {
+  mountPoint: string;
+  device?: string;
+  filesystem: string;
+  previousTotalBytes: number;
+  totalBytes: number;
+  freeBytes: number;
+};
+
+export type GuestAgentFilesystemResizeResponse = {
+  task: Task;
+  result: GuestAgentFilesystemResizeResult;
+};
+
+export type GuestAgentServiceLog = {
+  unit: string;
+  content: string;
+  truncated: boolean;
+};
+
+export type GuestAgentDiagnostics = {
+  checkedAt: string;
+  failedServices: GuestAgentService[];
+  serviceLogs: GuestAgentServiceLog[];
+  kernelWarnings: string[];
+  systemErrors: string[];
+  oomEvents: string[];
+  recommendations: string[];
+  commandErrors: string[];
 };
 
 export type GuestAgentFileContent = {
@@ -1127,6 +1219,12 @@ export type StorageVolumeCreateInput = {
   name: string;
   format: StorageVolumeFormat;
   capacityBytes: number;
+};
+
+export type StorageVolumeConvertInput = {
+  targetPool: string;
+  targetName: string;
+  targetFormat: StorageVolumeFormat;
 };
 
 export type StoragePoolList = {

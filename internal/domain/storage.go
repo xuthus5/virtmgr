@@ -95,6 +95,14 @@ type StorageVolumeCreateSpec struct {
 	CapacityBytes uint64 `json:"capacityBytes"`
 }
 
+type StorageVolumeConvertSpec struct {
+	SourcePool   string `json:"sourcePool"`
+	SourceVolume string `json:"sourceVolume"`
+	TargetPool   string `json:"targetPool"`
+	TargetName   string `json:"targetName"`
+	TargetFormat string `json:"targetFormat"`
+}
+
 func CanManageStorage(role Role) bool {
 	return role == RoleOperator || role == RoleAdmin
 }

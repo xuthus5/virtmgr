@@ -27,6 +27,10 @@ type Repository interface {
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 }
 
+type VolumeConverter interface {
+	ConvertStorageVolume(ctx context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error)
+}
+
 type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
@@ -109,6 +113,13 @@ type UploadVolumeCommand struct {
 	Request MutationContext
 }
 
+type ConvertVolumeCommand struct {
+	Pool    string
+	Name    string
+	Spec    domain.StorageVolumeConvertSpec
+	Request MutationContext
+}
+
 var (
 	poolNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
 	volumeNamePattern      = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f]{1,127}$`)
@@ -118,6 +129,7 @@ var (
 	minVolumeBytes         = uint64(1 << 20)
 	maxVolumeBytes         = uint64(16 << 40)
 	maxUploadBytes         = uint64(256 << 30)
+	volumeConvertTimeout   = 4 * time.Hour
 )
 
 func New(repository Repository, audit AuditRecorder, readOnly bool, options ...Option) *Service {
@@ -420,6 +432,148 @@ func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand)
 		return fmt.Errorf("record storage volume delete audit: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeCommand) (domain.Task, error) {
+	command.Pool = strings.TrimSpace(command.Pool)
+	command.Name = strings.TrimSpace(command.Name)
+	command.Spec.TargetPool = strings.TrimSpace(command.Spec.TargetPool)
+	command.Spec.TargetName = strings.TrimSpace(command.Spec.TargetName)
+	command.Spec.TargetFormat = strings.ToLower(strings.TrimSpace(command.Spec.TargetFormat))
+	command.Spec.SourcePool = command.Pool
+	command.Spec.SourceVolume = command.Name
+	detail := convertVolumeDetail(command.Spec)
+	targetID := command.Pool + "/" + command.Name
+	if !domain.CanManageStorage(command.Request.Session.User.Role) {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrReadOnly)
+	}
+	converter, ok := s.repository.(VolumeConverter)
+	if !ok || s.tasks == nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrUnavailable)
+	}
+	if err := validateConvertVolumeCommand(command); err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	sourceVolumes, err := s.repository.ListStorageVolumes(ctx, command.Pool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	var source domain.StorageVolume
+	for _, volume := range sourceVolumes {
+		if volume.Name == command.Name {
+			source = volume
+			break
+		}
+	}
+	if source.Name == "" {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrNotFound)
+	}
+	detail["sourceFormat"] = source.Format
+	detail["sourceCapacityBytes"] = source.CapacityBytes
+	if source.Format != "qcow2" && source.Format != "raw" {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail,
+			fmt.Errorf("%w: only qcow2 and raw source volumes can be converted", domain.ErrInvalidInput))
+	}
+	vms, err := s.repository.ListVMs(ctx)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	if usages := storageVolumeUsage(source, vms); len(usages) > 0 {
+		names := make([]string, 0, len(usages))
+		for _, usage := range usages {
+			names = append(names, usage.VMName)
+		}
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail,
+			fmt.Errorf("%w: source volume is attached to %s", domain.ErrVolumeInUse, strings.Join(names, ", ")))
+	}
+	targetPool, err := s.repository.GetStoragePool(ctx, command.Spec.TargetPool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	detail["targetPool"] = targetPool.Name
+	detail["targetType"] = targetPool.Type
+	if targetPool.State != domain.StoragePoolStateActive {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrUnavailable)
+	}
+	if targetPool.Type == "logical" && command.Spec.TargetFormat != "raw" {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail,
+			fmt.Errorf("%w: logical LVM pools only support raw volumes", domain.ErrInvalidInput))
+	}
+	targetVolumes, err := s.repository.ListStorageVolumes(ctx, command.Spec.TargetPool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	for _, volume := range targetVolumes {
+		if volume.Name == command.Spec.TargetName {
+			return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, domain.ErrConflict)
+		}
+	}
+	required := domain.StorageProvisionRequiredBytes(command.Spec.TargetFormat, source.CapacityBytes, source.AllocationBytes)
+	detail["requiredBytes"] = required
+	if !domain.StoragePoolHasCapacity(targetPool, required) {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail,
+			fmt.Errorf("%w: target pool requires %d bytes, only %d available", domain.ErrStorageInsufficient, required, targetPool.AvailableBytes))
+	}
+
+	startStep := fmt.Sprintf("正在将 %s/%s 转换为 %s", command.Pool, command.Name, command.Spec.TargetFormat)
+	taskID, err := s.tasks.Start(ctx, "storage.volume.convert", "storage_volume", targetID, command.Request.Session.User.Username, startStep)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	now := time.Now().UTC()
+	task := domain.Task{
+		ID: taskID, Kind: "storage.volume.convert", TargetKind: "storage_volume", TargetID: targetID,
+		Status: domain.TaskStatusRunning, Progress: 0, Step: startStep,
+		Actor: command.Request.Session.User.Username, CreatedAt: now, UpdatedAt: now,
+	}
+	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertTimeout)
+	if registrar, ok := s.tasks.(interface {
+		RegisterCancel(string, context.CancelFunc)
+	}); ok {
+		registrar.RegisterCancel(task.ID, cancel)
+	}
+	go func() {
+		defer cancel()
+		result, convertErr := converter.ConvertStorageVolume(jobContext, command.Spec)
+		if convertErr != nil {
+			_ = s.recordMutationAudit(jobContext, command.Request, "storage.volume.convert", targetID, "failure", detail, convertErr)
+			_ = s.tasks.Fail(jobContext, task.ID, 100, "存储卷转换失败", convertErr)
+			return
+		}
+		detail["targetPath"] = result.Path
+		detail["targetCapacityBytes"] = result.CapacityBytes
+		detail["targetAllocationBytes"] = result.AllocationBytes
+		if auditErr := s.recordMutationAudit(jobContext, command.Request, "storage.volume.convert", targetID, "success", detail, nil); auditErr != nil {
+			_ = s.tasks.Fail(jobContext, task.ID, 100, "存储卷转换完成但审计写入失败", auditErr)
+			return
+		}
+		_ = s.tasks.Succeed(jobContext, task.ID, fmt.Sprintf("存储卷已转换为 %s", command.Spec.TargetFormat))
+	}()
+	return task, nil
+}
+
+func validateConvertVolumeCommand(command ConvertVolumeCommand) error {
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) || !poolNamePattern.MatchString(command.Spec.TargetPool) || !validVolumeName(command.Spec.TargetName) {
+		return domain.ErrInvalidInput
+	}
+	extension, ok := volumeFormats[command.Spec.TargetFormat]
+	if !ok || !strings.HasSuffix(strings.ToLower(command.Spec.TargetName), extension) {
+		return fmt.Errorf("%w: target name must end with %s", domain.ErrInvalidInput, extension)
+	}
+	if command.Pool == command.Spec.TargetPool && command.Name == command.Spec.TargetName {
+		return fmt.Errorf("%w: target must differ from source volume", domain.ErrInvalidInput)
+	}
+	return nil
+}
+
+func convertVolumeDetail(spec domain.StorageVolumeConvertSpec) map[string]any {
+	return map[string]any{
+		"sourcePool": spec.SourcePool, "sourceVolume": spec.SourceVolume,
+		"targetPool": spec.TargetPool, "targetName": spec.TargetName, "targetFormat": spec.TargetFormat,
+	}
 }
 
 func normalizeVolumeCreateSpec(spec domain.StorageVolumeCreateSpec) (domain.StorageVolumeCreateSpec, error) {

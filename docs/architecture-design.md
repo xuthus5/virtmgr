@@ -57,8 +57,8 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
 - 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 和 `imageCloneMode`：默认 `full` 复制来源卷为独立系统盘；`linked` 仅允许同存储池 qcow2 来源，创建带 backing store 的轻量覆盖层，目标路径不得与来源相同。链接克隆的基础卷仍被其他卷引用时禁止删除。创建失败时清理已克隆磁盘和新域；跨池链接克隆、格式转换和跨池自动搬移暂不提供。
-- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。虚拟机详情顶部提供“修改客户机密码”操作，点击后打开聚焦密码弹窗；Agent 未连接、通道未配置或未声明密码能力时弹窗解释原因和安装/连接步骤。完整 Agent 状态、能力矩阵和诊断信息位于“客户机”标签，概览页仅在已连接时显示紧凑徽标，未连接时不展开状态卡或安装说明。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断和 Linux Cloud-init 执行诊断；服务诊断只执行固定 `systemctl list-units` 查询且最多返回 500 项，Cloud-init 诊断只执行固定 `cloud-init status` 查询并读取固定日志路径，最多返回 32 KiB 日志尾部，均不提供任意命令、启停或配置修改。手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
+- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 和 `imageCloneMode`：默认 `full` 复制来源卷为独立系统盘；`linked` 仅允许同存储池 qcow2 来源，创建带 backing store 的轻量覆盖层，目标路径不得与来源相同。链接克隆的基础卷仍被其他卷引用时禁止删除。创建失败时清理已克隆磁盘和新域。存储页可将空闲 qcow2/raw 卷转换格式并复制到其他活跃池，源卷保留、虚拟机引用不自动切换；跨池链接克隆、自动展平和带引用切换的自动搬移暂不提供。
+- Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。虚拟机详情顶部提供“修改客户机密码”操作，点击后打开聚焦密码弹窗；Agent 未连接、通道未配置或未声明密码能力时弹窗解释原因和安装/连接步骤。完整 Agent 状态、能力矩阵和诊断信息位于“客户机”标签，概览页仅在已连接时显示紧凑徽标，未连接时不展开状态卡或安装说明。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断、Linux Cloud-init 执行诊断、启动故障诊断和非根 ext4/xfs 在线扩容；服务诊断只执行固定 `systemctl list-units` 查询且最多返回 500 项，启动故障诊断执行固定 `systemctl`/`journalctl` 查询并限制日志尾部与条数，Cloud-init 诊断只执行固定 `cloud-init status` 查询并读取固定日志路径，最多返回 32 KiB 日志尾部。在线扩容只接受直接块设备承载的非根 ext4/xfs，执行固定 `growpart` 与文件系统扩展命令，拒绝根分区、LVM、Windows 和未知设备。以上能力均不提供任意命令、服务启停或配置修改。手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
 - 开机自启动写能力：详情页通过 `PATCH /vms/{uuid}/autostart` 切换持久域的 autostart；临时域、Viewer 和全局只读模式拒绝修改，成功/失败均记录 `vm.autostart` 审计。
@@ -703,7 +703,11 @@ type PassthroughDevice = {
 | `GET` | `/vms/{uuid}` | 详情 |
 | `PATCH` | `/vms/{uuid}/autostart` | 启停持久域 autostart，请求体 `{ "enabled": boolean }`（已实现） |
 | `PATCH` | `/vms/{uuid}/resources` | 调整 vCPU 与内存，请求体 `{ "vcpus": number, "memoryMiB": number }`（已实现，需 CSRF） |
+| `PATCH` | `/vms/{uuid}/boot` | 修改持久域启动顺序，请求体 `{ "devices": ["hd", "cdrom", "network"] }`；设备必须已存在（已实现，需 CSRF） |
+| `PATCH` | `/vms/{uuid}/cpu` | 修改 CPU 型号与 sockets/cores/threads 拓扑；仅关机/异常停止状态，拓扑乘积必须等于 vCPU 数（已实现，需 CSRF） |
 | `PATCH` | `/vms/{uuid}/disks/{target}` | 扩容 qcow2/raw 数据盘，请求体 `{ "capacityBytes": number }`（已实现，需 CSRF） |
+| `PATCH` | `/vms/{uuid}/disks/{target}/qos` | 设置磁盘吞吐和 IOPS 限制；运行中同步 live/config，清零即移除（已实现，需 CSRF） |
+| `PATCH` | `/vms/{uuid}/network-interfaces/{mac}/qos` | 设置网卡入站/出站 bandwidth；存在峰值或 burst 时必须提供平均值（已实现，需 CSRF） |
 | `POST` | `/vms/{uuid}/actions/{action}` | 白名单动作：start/shutdown/reboot/reset/pause/resume/destroy |
 | `POST` | `/vms/{uuid}/devices` | 直通 PCI/USB 主机设备，请求体 `{ "device": "pci_0000_3b_00_0" }`（已实现） |
 | `DELETE` | `/vms/{uuid}/devices/{device}` | 移除主机设备直通（已实现） |
@@ -726,6 +730,8 @@ type PassthroughDevice = {
 | `GET/POST` | `/vms/{uuid}/guest-agent/processes[/signal]` | 固定 `ps` 命令读取进程；仅 SIGTERM/SIGKILL，拒绝 PID 1 |
 | `GET` | `/vms/{uuid}/guest-agent/users` | 查询当前登录用户 |
 | `GET` | `/vms/{uuid}/guest-agent/cloud-init` | 读取 Linux 客户机 Cloud-init 状态、错误和固定日志尾部；只执行固定诊断命令 |
+| `GET` | `/vms/{uuid}/guest-agent/diagnostics` | 读取失败 systemd 服务、内核/系统错误、OOM 和固定日志尾部；只执行固定只读命令 |
+| `POST` | `/vms/{uuid}/guest-agent/filesystem/grow` | 在线扩展非根 ext4/xfs 的底层分区与文件系统；生成任务并写脱敏审计 |
 | `GET/PUT` | `/vms/{uuid}/guest-agent/policy` | 读取或由 Admin 更新期望状态 |
 | `GET` | `/vms/{uuid}/guest-agent/health?hours=&limit=` | 读取健康样本、连通率和故障历史 |
 | `GET` | `/vms/{uuid}/snapshot-policies` | 定时快照策略列表（已实现） |
@@ -779,6 +785,7 @@ type PassthroughDevice = {
 - `GET /api/v1/storage/pools/{pool}/volumes`（仅活跃池；未激活池返回 `503 UNAVAILABLE`）
 - `POST /api/v1/storage/pools/{pool}/volumes`（仅活跃池；需 CSRF，支持 `qcow2` / `raw`，重名返回 `409 CONFLICT`）
 - `POST /api/v1/storage/pools/{pool}/volumes/upload?name={file}`（仅活跃池；需 CSRF 和 `Content-Length`；支持 `.iso`、`.qcow2`、`.raw`，以原始字节流写入，最大 256 GiB）
+- `POST /api/v1/storage/pools/{pool}/volumes/{volume}/convert`（仅活跃池；需 CSRF；空闲 qcow2/raw 转换为 qcow2/raw 并复制到任意活跃池，返回 `202` 转换任务）
 - `DELETE /api/v1/storage/pools/{pool}/volumes/{volume}`（仅活跃池；需 CSRF；被虚拟机引用返回 `409 VOLUME_IN_USE`）
 - `GET /api/v1/networks`（虚拟网络列表）
 - `GET /api/v1/networks/bridges`（列出尚未被 libvirt 网络占用的活跃宿主机网桥）
@@ -800,6 +807,7 @@ type PassthroughDevice = {
 | `GET` | `/storage/pools/{name}/volumes` | 卷列表 |
 | `POST` | `/storage/pools/{name}/volumes` | 创建 qcow2/raw 卷 |
 | `POST` | `/storage/pools/{name}/volumes/upload` | 流式上传 ISO/qcow2/raw 镜像（已实现同步流式写入） |
+| `POST` | `/storage/pools/{name}/volumes/{volume}/convert` | 空闲 qcow2/raw 格式转换与跨池复制（已实现异步任务；源卷保留） |
 | `DELETE` | `/storage/pools/{name}/volumes/{volume}` | 删除未挂载卷 |
 | `GET` | `/networks` | 虚拟网络与宿主机桥 |
 | `GET` | `/networks/bridges` | 可用于外部桥接的活跃宿主机网桥 |
@@ -1214,7 +1222,7 @@ WantedBy=multi-user.target
 - 全局搜索、批量操作、只读模式开关。
 - 移动端表格、控制台和详情页可用性验收。
 
-当前 P1 已落地快照、ISO/qcow2/raw 镜像上传、运行时 ISO 挂载/替换与弹出、VM 克隆、Guest Agent 主机名/IP、受控文件/密码/SSH/进程管理、systemd 服务只读诊断和 Cloud-init 执行诊断、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索（含存储卷、镜像、模板和任务）、虚拟机批量生命周期操作、运行时只读模式开关，以及目录、NFS 和 LVM 存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片、ISO 弹窗、Guest Agent 服务区与 Cloud-init 诊断和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
+当前 P1 已落地快照、ISO/qcow2/raw 镜像上传、运行时 ISO 挂载/替换与弹出、VM 克隆、Guest Agent 主机名/IP、受控文件/密码/SSH/进程管理、systemd 服务只读诊断、Cloud-init 执行诊断、启动故障诊断、非根 ext4/xfs 在线扩容、宿主机与虚拟机 CPU/内存/网络趋势、全局搜索（含存储卷、镜像、模板和任务）、虚拟机批量生命周期操作、运行时只读模式开关，以及目录、NFS 和 LVM 存储池的创建、启停、刷新和删除。克隆要求源域关机/异常停止、持久化，且可写磁盘由 libvirt 存储池管理；默认在源卷所在活跃池创建独立卷，也可指定目标池。任务失败时回滚已创建卷和域定义。Guest Agent 查询失败按不可用降级，不影响虚拟机详情或列表读取。批量操作逐台校验动作和状态，部分失败不会回滚已成功的虚拟机。只读模式状态持久化并动态作用于全部写服务。移动端表格、详情页、趋势卡片、ISO 弹窗、Guest Agent 服务区与 Cloud-init 诊断和 VNC 控制台，以及跳转主内容、抽屉焦点陷阱、Escape 关闭和键盘聚焦滚动区域均已有严格串行 Playwright 验收。
 
 验收：常见运维任务不依赖 `virsh`；长任务有进度和失败原因。
 

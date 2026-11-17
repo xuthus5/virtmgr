@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"virtmgr/internal/domain"
 	storageapp "virtmgr/internal/modules/storage/app"
@@ -36,6 +37,27 @@ type handlerRepository struct {
 	uploadBytes         []byte
 	deletedPool         string
 	deletedName         string
+}
+
+type convertHandlerRepository struct {
+	*handlerRepository
+	converted chan domain.StorageVolumeConvertSpec
+}
+
+func (f *convertHandlerRepository) ConvertStorageVolume(_ context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error) {
+	f.converted <- spec
+	return domain.StorageVolume{Name: spec.TargetName, Format: spec.TargetFormat, CapacityBytes: 10 << 30}, nil
+}
+
+type storageTaskRecorder struct{}
+
+func (storageTaskRecorder) Start(context.Context, string, string, string, string, string) (string, error) {
+	return "task-convert", nil
+}
+func (storageTaskRecorder) Progress(context.Context, string, int, string) error { return nil }
+func (storageTaskRecorder) Succeed(context.Context, string, string) error       { return nil }
+func (storageTaskRecorder) Fail(context.Context, string, int, string, error) error {
+	return nil
 }
 
 func (f *handlerRepository) ListVMs(context.Context) ([]domain.VM, error) {
@@ -300,5 +322,34 @@ func TestStorageRouteError(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/storage/pools", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestConvertStorageVolumeRouteReturnsAcceptedTask(t *testing.T) {
+	repository := &convertHandlerRepository{
+		handlerRepository: &handlerRepository{volumes: []domain.StorageVolume{{Name: "source.qcow2", Path: "/var/lib/libvirt/images/source.qcow2", Format: "qcow2", CapacityBytes: 10 << 30, AllocationBytes: 2 << 30}}},
+		converted:         make(chan domain.StorageVolumeConvertSpec, 1),
+	}
+	service := storageapp.New(repository, nil, false, storageapp.WithTaskRecorder(storageTaskRecorder{}))
+	router := chi.NewRouter()
+	New(service).Mount(router, allowAll)
+	request := httptest.NewRequest(http.MethodPost, "/storage/pools/default/volumes/source.qcow2/convert", strings.NewReader(`{"targetPool":"default","targetName":"source.raw","targetFormat":"raw"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request = request.WithContext(authctx.WithSession(request.Context(), domain.Session{User: domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin}}))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"kind":"storage.volume.convert"`) {
+		t.Fatalf("response does not contain conversion task: %s", recorder.Body.String())
+	}
+	select {
+	case spec := <-repository.converted:
+		if spec.SourcePool != "default" || spec.SourceVolume != "source.qcow2" || spec.TargetName != "source.raw" || spec.TargetFormat != "raw" {
+			t.Fatalf("converted spec = %+v", spec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for converter")
 	}
 }

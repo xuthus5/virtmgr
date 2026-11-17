@@ -51,22 +51,53 @@ type GuestAgentFilesystem struct {
 }
 
 type GuestAgentCapabilities struct {
-	Hostname      bool `json:"hostname"`
-	Network       bool `json:"network"`
-	OSInfo        bool `json:"osInfo"`
-	FSInfo        bool `json:"fsInfo"`
-	Shutdown      bool `json:"shutdown"`
-	Reboot        bool `json:"reboot"`
-	TimeSync      bool `json:"timeSync"`
-	Trim          bool `json:"trim"`
-	Quiesce       bool `json:"quiesce"`
-	FileAccess    bool `json:"fileAccess"`
-	PasswordReset bool `json:"passwordReset"`
-	SSHKeys       bool `json:"sshKeys"`
-	Processes     bool `json:"processes"`
-	Users         bool `json:"users"`
-	Timezone      bool `json:"timezone"`
-	NetworkRoutes bool `json:"networkRoutes"`
+	Hostname         bool `json:"hostname"`
+	Network          bool `json:"network"`
+	OSInfo           bool `json:"osInfo"`
+	FSInfo           bool `json:"fsInfo"`
+	Shutdown         bool `json:"shutdown"`
+	Reboot           bool `json:"reboot"`
+	TimeSync         bool `json:"timeSync"`
+	Trim             bool `json:"trim"`
+	Quiesce          bool `json:"quiesce"`
+	FileAccess       bool `json:"fileAccess"`
+	PasswordReset    bool `json:"passwordReset"`
+	SSHKeys          bool `json:"sshKeys"`
+	Processes        bool `json:"processes"`
+	Users            bool `json:"users"`
+	Timezone         bool `json:"timezone"`
+	NetworkRoutes    bool `json:"networkRoutes"`
+	FilesystemResize bool `json:"filesystemResize"`
+}
+
+type GuestAgentFilesystemResizeSpec struct {
+	MountPoint string `json:"mountPoint"`
+}
+
+type GuestAgentFilesystemResizeResult struct {
+	MountPoint         string `json:"mountPoint"`
+	Device             string `json:"device,omitempty"`
+	Filesystem         string `json:"filesystem"`
+	PreviousTotalBytes uint64 `json:"previousTotalBytes"`
+	TotalBytes         uint64 `json:"totalBytes"`
+	FreeBytes          uint64 `json:"freeBytes"`
+}
+
+type GuestAgentDiagnostics struct {
+	CheckedAt       time.Time              `json:"checkedAt"`
+	FailedServices  []GuestAgentService    `json:"failedServices"`
+	ServiceLogs     []GuestAgentServiceLog `json:"serviceLogs"`
+	KernelWarnings  []string               `json:"kernelWarnings"`
+	SystemErrors    []string               `json:"systemErrors"`
+	OOMEvents       []string               `json:"oomEvents"`
+	Recommendations []string               `json:"recommendations"`
+	CommandErrors   []string               `json:"commandErrors"`
+}
+
+type GuestAgentServiceLog struct {
+	Unit      string `json:"unit"`
+	Content   string `json:"content"`
+	Truncated bool   `json:"truncated"`
 }
 
 type GuestAgentRoute struct {

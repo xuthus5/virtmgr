@@ -2,6 +2,7 @@ package vmshttp
 
 import (
 	stdhttp "net/http"
+	"net/url"
 	"strings"
 
 	"virtmgr/internal/domain"
@@ -349,6 +350,90 @@ func (h *Handler) UpdateResources(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	httpx.JSON(w, stdhttp.StatusOK, vm)
 }
 
+func (h *Handler) UpdateBootOrder(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMBootSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdateBootOrder(r.Context(), vmsapp.BootCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) UpdateCPUConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMCPUConfigSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdateCPUConfig(r.Context(), vmsapp.CPUCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) UpdateDiskQoS(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMDiskQoSSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdateDiskQoS(r.Context(), vmsapp.DiskQoSCommand{
+		UUID: chi.URLParam(r, "uuid"), Target: chi.URLParam(r, "target"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func (h *Handler) UpdateNetworkQoS(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMNetworkQoSSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdateNetworkQoS(r.Context(), vmsapp.NetworkQoSCommand{
+		UUID: chi.URLParam(r, "uuid"), MAC: decodedPathParam(r, "mac"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
 func (h *Handler) ResizeDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VMDiskResizeSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -440,13 +525,22 @@ func (h *Handler) DetachNetwork(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	vm, err := h.service.DetachNetwork(r.Context(), vmsapp.DetachNetworkCommand{
-		UUID: chi.URLParam(r, "uuid"), MAC: chi.URLParam(r, "mac"), Request: mutationContext(r, session),
+		UUID: chi.URLParam(r, "uuid"), MAC: decodedPathParam(r, "mac"), Request: mutationContext(r, session),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
+func decodedPathParam(r *stdhttp.Request, key string) string {
+	value := chi.URLParam(r, key)
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return value
+	}
+	return decoded
 }
 
 func (h *Handler) AttachHostDevice(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -628,12 +722,16 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Delete("/vms/{uuid}", h.Delete)
 		mutating.Patch("/vms/{uuid}/autostart", h.SetAutostart)
 		mutating.Patch("/vms/{uuid}/resources", h.UpdateResources)
+		mutating.Patch("/vms/{uuid}/boot", h.UpdateBootOrder)
+		mutating.Patch("/vms/{uuid}/cpu", h.UpdateCPUConfig)
 		mutating.Patch("/vms/{uuid}/disks/{target}", h.ResizeDisk)
+		mutating.Patch("/vms/{uuid}/disks/{target}/qos", h.UpdateDiskQoS)
 		mutating.Put("/vms/{uuid}/metadata", h.UpdateMetadata)
 		mutating.Post("/vms/{uuid}/disks", h.AttachDisk)
 		mutating.Delete("/vms/{uuid}/disks/{target}", h.DetachDisk)
 		mutating.Post("/vms/{uuid}/network-interfaces", h.AttachNetwork)
 		mutating.Delete("/vms/{uuid}/network-interfaces/{mac}", h.DetachNetwork)
+		mutating.Patch("/vms/{uuid}/network-interfaces/{mac}/qos", h.UpdateNetworkQoS)
 		mutating.Post("/vms/{uuid}/actions/{action}", h.Action)
 		mutating.Post("/vms/{uuid}/devices", h.AttachHostDevice)
 		mutating.Delete("/vms/{uuid}/devices/{device}", h.DetachHostDevice)
