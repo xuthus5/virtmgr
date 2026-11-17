@@ -66,7 +66,7 @@ func (s *Service) EnsureAdmin(ctx context.Context, username, password string) er
 		return fmt.Errorf("admin username must not be empty")
 	}
 	if password == "" {
-		return fmt.Errorf("VIRTMGR_ADMIN_PASSWORD is required for the first start")
+		return fmt.Errorf("admin_password in server.yaml is required for the first start")
 	}
 	hash, err := HashPassword(password)
 	if err != nil {

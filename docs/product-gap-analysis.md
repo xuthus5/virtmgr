@@ -197,7 +197,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `SH-11`：当管理员设置 1 至 3650 天的审计保留期时，系统应持久化设置；服务启动时和每 6 小时应删除早于保留期的审计记录，并在实际删除后记录 `audit.retention.cleanup`。
 - `SH-12`：当用户导出静态 DHCP 主机时，系统应返回包含 `mac,ip,name` 的 CSV 附件；当 Operator 或 Admin 导入 CSV 或 JSON 时，系统应先校验全部条目，跳过完全相同的重复项，冲突时不得部分写入，成功后记录 `network.dhcp.host.import` 审计。
 - `SH-13`：当用户修改虚拟机状态、标签或负责人筛选时，系统应在浏览器本地保存筛选；用户可收藏或取消收藏虚拟机并只看收藏。本地存储损坏时应安全回退到默认筛选，不影响虚拟机列表读取。
-- `SH-14`：当用户使用官方 Compose 构建镜像时，容器应以非特权用户运行，挂载 libvirt socket 和持久化数据目录，通过环境变量配置监听地址、数据库、只读模式和管理员密码；镜像应包含运行时 libvirt 库和健康检查。
+- `SH-14`：当用户使用官方 Compose 构建镜像时，容器应以非特权用户运行，挂载 libvirt socket、持久化数据目录和只读的 `/etc/virtmgr/server.yaml`，通过 YAML 配置监听地址、数据库、只读模式和管理员密码；镜像应包含运行时 libvirt 库和健康检查。
 - `GAP-03 热插拔`：当虚拟机运行且用户附加 qcow2/raw 数据磁盘或网卡时，系统应更新运行配置和持久配置并采集配置版本；移除磁盘时应拒绝系统盘和在用卷，移除网卡时应拒绝不存在的设备。
 - `GAP-09 Cloud-init`：当用户提供 user-data、network-config 或 vendor-data 时，系统应将全部文件写入 NoCloud ISO；Netplan v2 应支持 DHCP 和静态 IPv4/IPv6 地址、网关和 DNS，非法地址不得静默生成配置。
 - `GAP-12 组织能力`：当 Operator 或 Admin 更新虚拟机标签、备注或负责人时，系统应持久化元数据并记录 `vm.metadata.update`；删除虚拟机时应清理对应元数据，列表查询应支持标签、负责人和关键字过滤。

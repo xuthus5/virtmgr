@@ -405,7 +405,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
       {readOnly ? (
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning" data-testid="vm-read-only-notice" role="status">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>只读模式已开启，生命周期操作已禁用。管理员可通过 <span className="font-mono">VIRTMGR_READ_ONLY=false</span> 启用写操作。</p>
+          <p>只读模式已开启，生命周期操作已禁用。管理员可在系统设置中关闭只读模式。</p>
         </div>
       ) : null}
       {viewer ? (

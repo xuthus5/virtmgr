@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,22 +16,34 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	args := os.Args[1:]
+	if len(args) > 0 {
+		switch args[0] {
 		case "version", "--version", "-v":
 			fmt.Printf("virtmgr %s (%s, %s)\n", version.Version, version.Commit, version.Date)
 			return
 		case "help", "--help", "-h":
 			usage()
 			return
-		default:
-			fmt.Fprintln(os.Stderr, "unknown command:", os.Args[1])
-			usage()
-			os.Exit(2)
 		}
 	}
+	flags := flag.NewFlagSet("virtmgr", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	configPath := config.DefaultPath
+	flags.StringVar(&configPath, "config", config.DefaultPath, "path to server.yaml")
+	flags.StringVar(&configPath, "c", config.DefaultPath, "path to server.yaml")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid arguments:", err)
+		usage()
+		os.Exit(2)
+	}
+	if flags.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "unknown command:", flags.Arg(0))
+		usage()
+		os.Exit(2)
+	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "configuration error:", err)
 		os.Exit(1)
@@ -51,6 +65,6 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  virtmgr             Start the VirtMgr console
-  virtmgr version     Print version information`)
+  virtmgr [--config /etc/virtmgr/server.yaml]  Start the VirtMgr console
+  virtmgr version                             Print version information`)
 }

@@ -127,11 +127,17 @@ make build
 demo 模式使用内置的 libvirt 模拟后端，不需要正在运行的 libvirt 服务，仅用于界面验收和开发调试。
 
 ```bash
-VIRTMGR_DEMO_MODE=true \
-VIRTMGR_DATABASE_PATH=/tmp/virtmgr-demo.db \
-VIRTMGR_ADMIN_PASSWORD='change-this-password' \
-VIRTMGR_READ_ONLY=false \
-./bin/virtmgr
+cat >/tmp/virtmgr-demo.yaml <<'EOF'
+listen: 127.0.0.1:8443
+libvirt_uri: qemu:///system
+database_path: /tmp/virtmgr-demo.db
+admin_username: admin
+admin_password: change-this-password
+read_only: false
+demo_mode: true
+EOF
+
+./bin/virtmgr --config /tmp/virtmgr-demo.yaml
 ```
 
 打开 <http://127.0.0.1:8443>，使用用户名 `admin` 和上面配置的密码登录。
@@ -141,7 +147,9 @@ VIRTMGR_READ_ONLY=false \
 分别在两个终端启动 Go API 和 Vite 开发服务器：
 
 ```bash
-VIRTMGR_ADMIN_PASSWORD='dev-password' VIRTMGR_READ_ONLY=false go run ./cmd/virtmgr
+cp deploy/server.yaml.example server.yaml
+# 编辑 server.yaml，至少设置 admin_password 并按需调整 database_path
+go run ./cmd/virtmgr --config ./server.yaml
 ```
 
 ```bash
@@ -161,32 +169,32 @@ sudo install -d -o virtmgr -g virtmgr -m 0750 /var/lib/virtmgr
 sudo install -d -o root -g virtmgr -m 0750 /etc/virtmgr
 
 sudo install -m 0755 bin/virtmgr /usr/local/bin/virtmgr
-sudo install -m 0640 -o root -g virtmgr deploy/virtmgr.env.example /etc/virtmgr/virtmgr.env
+sudo install -m 0640 -o root -g virtmgr deploy/server.yaml.example /etc/virtmgr/server.yaml
 sudo install -m 0644 deploy/virtmgr.service /etc/systemd/system/virtmgr.service
 ```
 
 如果服务账号已经存在，请调整 `useradd` 命令，不要重复创建。
 
-### 2. 配置环境变量
+### 2. 配置 server.yaml
 
-编辑 `/etc/virtmgr/virtmgr.env`：
+编辑 `/etc/virtmgr/server.yaml`：
 
-```dotenv
-VIRTMGR_LISTEN=127.0.0.1:8443
-VIRTMGR_LIBVIRT_URI=qemu:///system
-VIRTMGR_DATABASE_PATH=/var/lib/virtmgr/virtmgr.db
-VIRTMGR_HOST_NAME=virt-host-01
-VIRTMGR_ADMIN_USERNAME=admin
-VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
-VIRTMGR_SESSION_TTL=8h
-VIRTMGR_COOKIE_SECURE=false
-VIRTMGR_READ_ONLY=true
-VIRTMGR_DEMO_MODE=false
-# 可选：仅这些反向代理地址/CIDR 可设置 X-Forwarded-* 请求头
-VIRTMGR_TRUSTED_PROXIES=
+```yaml
+listen: 127.0.0.1:8443
+libvirt_uri: qemu:///system
+database_path: /var/lib/virtmgr/virtmgr.db
+host_name: virt-host-01
+admin_username: admin
+admin_password: replace-with-a-strong-password
+session_ttl: 8h
+cookie_secure: false
+trusted_proxies:
+  - 127.0.0.1/32
+read_only: false
+demo_mode: false
 ```
 
-`VIRTMGR_ADMIN_PASSWORD` 仅在数据库中没有任何用户时使用。首次成功启动后，应从环境文件中移除明文密码。环境文件应只允许 root 和 `virtmgr` 组读取。
+`admin_password` 仅在数据库中没有任何用户时使用。首次成功启动后，应删除该明文密码。配置文件包含管理员初始密码，应只允许 root 和 `virtmgr` 组读取。VirtMgr 默认读取 `/etc/virtmgr/server.yaml`，也可以通过 `--config` 指定其他路径；未知 YAML 字段会导致启动失败。
 
 ### 3. 启动并验证
 
@@ -211,18 +219,18 @@ VirtMgr 支持两种 HTTPS 部署方式：
 
 **原生 TLS**
 
-```dotenv
-VIRTMGR_LISTEN=0.0.0.0:8443
-VIRTMGR_TLS_CERT_FILE=/etc/virtmgr/tls/fullchain.pem
-VIRTMGR_TLS_KEY_FILE=/etc/virtmgr/tls/privkey.pem
-VIRTMGR_COOKIE_SECURE=true
+```yaml
+listen: 0.0.0.0:8443
+tls_cert_file: /etc/virtmgr/tls/fullchain.pem
+tls_key_file: /etc/virtmgr/tls/privkey.pem
+cookie_secure: true
 ```
 
 证书和私钥必须同时配置。私钥文件应仅允许服务账号读取。
 
 **由 nginx、Caddy 或隧道终止 TLS**
 
-让 VirtMgr 继续监听 `127.0.0.1:8443`，反向代理全部应用路径，并为 Web VNC 保留 WebSocket Upgrade；浏览器通过 HTTPS 访问时，应设置 `VIRTMGR_COOKIE_SECURE=true`。依赖 `X-Forwarded-For` 或 `X-Real-IP` 前，必须将反向代理地址或 CIDR 配置到 `VIRTMGR_TRUSTED_PROXIES`（例如 `127.0.0.1/32` 或 `10.0.0.0/8`）；不受信客户端无法伪造审计与限流使用的来源地址。HTTPS 部署的响应还会包含 `Strict-Transport-Security: max-age=31536000`。
+让 VirtMgr 继续监听 `127.0.0.1:8443`，反向代理全部应用路径，并为 Web VNC 保留 WebSocket Upgrade；浏览器通过 HTTPS 访问时，应设置 `cookie_secure: true`。依赖 `X-Forwarded-For` 或 `X-Real-IP` 前，必须将反向代理地址或 CIDR 配置到 `trusted_proxies`（例如 `127.0.0.1/32` 或 `10.0.0.0/8`）；不受信客户端无法伪造审计与限流使用的来源地址。HTTPS 部署的响应还会包含 `Strict-Transport-Security: max-age=31536000`。
 
 控制台使用同源 `wss://` 连接。部分浏览器允许用户临时跳过自签名证书以打开 HTTPS 页面，却仍会拦截 WebSocket 握手，表现为控制台一直连接但服务端收不到 Upgrade 请求。生产环境应使用浏览器信任的证书和域名；不要依赖 IP 地址加自签名证书作为长期控制台入口。
 
@@ -234,13 +242,9 @@ VIRTMGR_COOKIE_SECURE=true
 
 ```bash
 cd deploy/docker
-cat > .env <<'EOF'
-VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
-VIRTMGR_READ_ONLY=true
-VIRTMGR_COOKIE_SECURE=false
-LIBVIRT_GID=640
-TZ=Asia/Shanghai
-EOF
+cp ../../deploy/server.yaml.example server.yaml
+# 编辑 server.yaml，设置 admin_password、host_name 和可选的 TLS 路径
+# 按需编辑 compose.yaml 中的 LIBVIRT_GID 默认值
 
 # Docker Compose
 docker compose up -d --build
@@ -249,25 +253,25 @@ docker compose up -d --build
 podman compose up -d --build
 ```
 
-`LIBVIRT_GID` 应与宿主机 `/var/run/libvirt/libvirt-sock` 的组 ID 一致：`stat -c '%g' /var/run/libvirt/libvirt-sock`。如需原生 TLS，取消 Compose 中的证书挂载注释并设置 `VIRTMGR_TLS_CERT_FILE` / `VIRTMGR_TLS_KEY_FILE`。如果备份或存储功能需要直接读写宿主机存储目录，请把这些目录以相同路径挂载进容器；不要使用 `--privileged`。
+`LIBVIRT_GID` 应与宿主机 `/var/run/libvirt/libvirt-sock` 的组 ID 一致：`stat -c '%g' /var/run/libvirt/libvirt-sock`。如需原生 TLS，取消 Compose 中的证书挂载注释并在 `server.yaml` 设置 `tls_cert_file` / `tls_key_file`。如果备份或存储功能需要直接读写宿主机存储目录，请把这些目录以相同路径挂载进容器；不要使用 `--privileged`。
 
 ## 配置项
 
-| 环境变量 | 默认值 | 说明 |
+| `server.yaml` 字段 | 默认值 | 说明 |
 |---|---|---|
-| `VIRTMGR_LISTEN` | `127.0.0.1:8443` | HTTP/HTTPS 监听地址 |
-| `VIRTMGR_TLS_CERT_FILE` | 空 | 原生 TLS 的 PEM 证书链，必须与私钥同时配置 |
-| `VIRTMGR_TLS_KEY_FILE` | 空 | 原生 TLS 的 PEM 私钥，必须与证书同时配置 |
-| `VIRTMGR_LIBVIRT_URI` | `qemu:///system` | libvirt 连接 URI |
-| `VIRTMGR_DATABASE_PATH` | `/var/lib/virtmgr/virtmgr.db` | SQLite 数据库路径 |
-| `VIRTMGR_HOST_NAME` | 操作系统主机名 | 页面展示的被管理宿主机名称 |
-| `VIRTMGR_ADMIN_USERNAME` | `admin` | 用户表为空时创建的初始管理员用户名 |
-| `VIRTMGR_ADMIN_PASSWORD` | 未设置 | 初始管理员密码，仅在首次启动时需要 |
-| `VIRTMGR_SESSION_TTL` | `8h` | 登录会话有效期，必须为正的 Go Duration |
-| `VIRTMGR_COOKIE_SECURE` | `false` | 将会话 Cookie 标记为 `Secure`；HTTPS 部署应开启 |
-| `VIRTMGR_TRUSTED_PROXIES` | 空 | 允许提供 `X-Forwarded-For` 和 `X-Real-IP` 的反向代理 IP/CIDR，逗号分隔 |
-| `VIRTMGR_READ_ONLY` | `true` | 初始全局只读状态 |
-| `VIRTMGR_DEMO_MODE` | `false` | 使用 demo 后端，仅用于界面开发，生产环境禁止开启 |
+| `listen` | `127.0.0.1:8443` | HTTP/HTTPS 监听地址 |
+| `tls_cert_file` | 空 | 原生 TLS 的 PEM 证书链，必须与私钥同时配置 |
+| `tls_key_file` | 空 | 原生 TLS 的 PEM 私钥，必须与证书同时配置 |
+| `libvirt_uri` | `qemu:///system` | libvirt 连接 URI |
+| `database_path` | `/var/lib/virtmgr/virtmgr.db` | SQLite 数据库路径 |
+| `host_name` | 操作系统主机名 | 页面展示的被管理宿主机名称 |
+| `admin_username` | `admin` | 用户表为空时创建的初始管理员用户名 |
+| `admin_password` | 空 | 初始管理员密码，仅在首次启动时需要 |
+| `session_ttl` | `8h` | 登录会话有效期，必须为正的 Go Duration |
+| `cookie_secure` | `false` | 将会话 Cookie 标记为 `Secure`；HTTPS 部署应开启 |
+| `trusted_proxies` | 空列表 | 允许提供 `X-Forwarded-For` 和 `X-Real-IP` 的反向代理 IP/CIDR 列表 |
+| `read_only` | `false` | 初始全局只读状态；首次启动后以 SQLite 持久化值为准 |
+| `demo_mode` | `false` | 使用 demo 后端，仅用于界面开发，生产环境禁止开启 |
 
 修改数据库、libvirt 连接或 TLS 路径后需要重启服务。全局只读模式也可以在管理员设置页中动态切换，并会持久化到 SQLite。
 
@@ -363,7 +367,7 @@ internal/domain/          领域类型、校验和错误契约
 internal/modules/         按业务模块拆分的 http/app 层
 internal/platform/        libvirt、SQLite、认证上下文、指标、任务和配置
 web/                      React + TypeScript + Vite + Tailwind 前端
-deploy/                   systemd、容器镜像、Compose 和环境变量示例
+deploy/                   systemd、容器镜像、Compose 和 server.yaml 示例
 docs/                     架构文档与项目截图
 scripts/                  本地开发和 E2E 辅助脚本
 .github/workflows/        发布二进制流水线
@@ -390,7 +394,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 - [产品差距分析](docs/product-gap-analysis.md)——与主流管理工具的差异、单机精品路线和已实施能力状态
 - [备份与恢复方案](docs/backup-design.md)——已实现的冷备份目录、恢复、调度和保留策略
 - [发布流水线](.github/workflows/release.yml)——amd64/arm64 二进制构建与 Release 附件
-- [环境变量示例](deploy/virtmgr.env.example)——生产环境配置模板
+- [server.yaml 示例](deploy/server.yaml.example)——生产环境配置模板
 - [systemd 单元文件](deploy/virtmgr.service)——加固后的服务定义
 - [容器镜像](deploy/docker/Dockerfile) 与 [Compose 示例](deploy/docker/compose.yaml)——libvirt socket 和非特权运行
 

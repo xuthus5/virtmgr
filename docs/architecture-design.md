@@ -485,7 +485,7 @@ func Open(path string) (*sql.DB, error) {
 }
 ```
 
-数据库默认位于 `/var/lib/virtmgr/virtmgr.db`，可通过 `VIRTMGR_DATABASE_PATH` 覆盖。迁移文件使用 `go:embed` 编译进二进制，由 `platform/sqlite/migrate.go` 在启动时按版本顺序执行。
+数据库默认位于 `/var/lib/virtmgr/virtmgr.db`，可通过 `server.yaml` 的 `database_path` 覆盖。迁移文件使用 `go:embed` 编译进二进制，由 `platform/sqlite/migrate.go` 在启动时按版本顺序执行。
 
 首版表：
 
@@ -831,7 +831,7 @@ type PassthroughDevice = {
 
 任务结构包含 `id`、`kind`、`targetKind`、`targetId`、`status`、`progress`、`step`、`error`、`actor`、`createdAt` 和 `updatedAt`。任务记录与审计职责不同：任务表达进度和结果，审计表达谁执行了什么操作；二者可关联同一个资源，但不互相替代。当前存储卷上传通过 `storage.volume.upload` 任务记录流式进度，有界 worker pool 与可取消任务仍属于后续增强。
 
-运行时只读模式保存在 SQLite `settings` 表的 `read_only` 键中。首次启动使用 `VIRTMGR_READ_ONLY` 初始化，之后以数据库持久化值为准；管理员通过 `PUT /settings` 切换，模式变化会立即作用于会话响应以及虚拟机、存储、网络和用户写服务。设置更新不受当前只读状态阻塞，但必须由管理员通过 CSRF 校验执行，并写入 `settings.readonly.update` 审计。
+运行时只读模式保存在 SQLite `settings` 表的 `read_only` 键中。首次启动使用 `server.yaml` 的 `read_only` 初始化，默认非只读，之后以数据库持久化值为准；管理员通过 `PUT /settings` 切换，模式变化会立即作用于会话响应以及虚拟机、存储、网络和用户写服务。设置更新不受当前只读状态阻塞，但必须由管理员通过 CSRF 校验执行，并写入 `settings.readonly.update` 审计。
 
 ## 6. 前端信息架构
 
@@ -1122,15 +1122,15 @@ Tab 内容：
 
 登录方式：
 
-- 默认本地管理员，密码使用 Argon2id，首次启动通过环境变量或 CLI 生成。
+- 默认本地管理员，密码使用 Argon2id，首次启动通过 `server.yaml` 的 `admin_password` 初始化。
 - 可选 PAM 登录，服务运行用户需在明确的 PAM 配置中授权。
 - 会话 Cookie 使用 `HttpOnly + Secure + SameSite=Strict`，空闲/绝对超时与 dosh 保持一致。
 - 写请求校验 CSRF token；全局只读模式直接拒绝所有写操作。
 - 自助改密必须验证当前密码；成功后保留当前会话并撤销该账号其他会话。管理员重置其他账号密码会撤销目标账号全部会话，且不能通过该接口重置自己。
 - 控制台使用一次性 token，不在 URL 中暴露长期会话 Cookie。
 - 失败登录按用户名和来源地址持久化限流：15 分钟内同一用户名/IP 失败 5 次或同一用户名跨来源失败 20 次后返回 `429 TOO_MANY_ATTEMPTS`，成功登录清除失败计数；未知用户和禁用账号执行相同 Argon2id 成本以降低账号枚举信号。
-- 反向代理部署时，只有 `VIRTMGR_TRUSTED_PROXIES` 列出的 IP/CIDR 才能提供 `X-Forwarded-For` / `X-Real-IP`；直连客户端伪造这些请求头不会影响审计或限流来源地址。
-- 原生 TLS 或 `VIRTMGR_COOKIE_SECURE=true` 的部署会返回 `Strict-Transport-Security: max-age=31536000`，其余响应头包含 CSP、`X-Content-Type-Options`、`X-Frame-Options`、Referrer Policy 和 Permissions Policy。
+- 反向代理部署时，只有 `server.yaml` 的 `trusted_proxies` 列出的 IP/CIDR 才能提供 `X-Forwarded-For` / `X-Real-IP`；直连客户端伪造这些请求头不会影响审计或限流来源地址。
+- 原生 TLS 或 `cookie_secure: true` 的部署会返回 `Strict-Transport-Security: max-age=31536000`，其余响应头包含 CSP、`X-Content-Type-Options`、`X-Frame-Options`、Referrer Policy 和 Permissions Policy。
 
 ### 9.3 审计
 
@@ -1182,11 +1182,7 @@ Requires=libvirtd.service
 User=virtmgr
 Group=virtmgr
 SupplementaryGroups=libvirt
-ExecStart=/usr/local/bin/virtmgr
-Environment=VIRTMGR_LISTEN=:8443
-Environment=VIRTMGR_LIBVIRT_URI=qemu:///system
-Environment=VIRTMGR_TRUSTED_PROXIES=127.0.0.1/32
-Environment=VIRTMGR_COOKIE_SECURE=true
+ExecStart=/usr/local/bin/virtmgr --config /etc/virtmgr/server.yaml
 Restart=on-failure
 
 [Install]
@@ -1195,7 +1191,7 @@ WantedBy=multi-user.target
 
 ### 11.2 容器化
 
-- 官方示例位于 `deploy/docker/Dockerfile` 和 `deploy/docker/compose.yaml`，采用 Node 前端、Go CGO 后端和 Debian runtime 三阶段构建。
+- 官方示例位于 `deploy/docker/Dockerfile` 和 `deploy/docker/compose.yaml`，采用 Node 前端、Go CGO 后端和 Debian runtime 三阶段构建；应用配置通过只读挂载的 `/etc/virtmgr/server.yaml` 提供。
 - 容器必须挂载 `/var/run/libvirt/libvirt-sock`，并通过 `group_add` 使用与宿主机 socket 组 ID 一致的补充组；不要以 `--privileged` 运行。
 - 镜像包含 `libvirt0` 运行库、`ca-certificates`、`curl` 和时区数据，默认以非特权用户 `virtmgr` 运行，SQLite 数据持久化到 `/var/lib/virtmgr`。
 - 若备份或存储功能需要直接访问宿主机存储路径，应以相同路径挂载对应目录；优先通过 libvirt API 和受控 socket，而不是挂载整个宿主机根目录。

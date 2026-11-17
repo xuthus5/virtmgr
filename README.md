@@ -127,11 +127,17 @@ make build
 The demo mode uses a libvirt fixture backend and does not require a running libvirt service. It is intended for UI review and development only.
 
 ```bash
-VIRTMGR_DEMO_MODE=true \
-VIRTMGR_DATABASE_PATH=/tmp/virtmgr-demo.db \
-VIRTMGR_ADMIN_PASSWORD='change-this-password' \
-VIRTMGR_READ_ONLY=false \
-./bin/virtmgr
+cat >/tmp/virtmgr-demo.yaml <<'EOF'
+listen: 127.0.0.1:8443
+libvirt_uri: qemu:///system
+database_path: /tmp/virtmgr-demo.db
+admin_username: admin
+admin_password: change-this-password
+read_only: false
+demo_mode: true
+EOF
+
+./bin/virtmgr --config /tmp/virtmgr-demo.yaml
 ```
 
 Open <http://127.0.0.1:8443> and sign in with `admin` and the password configured above.
@@ -141,7 +147,9 @@ Open <http://127.0.0.1:8443> and sign in with `admin` and the password configure
 Run the Go API and Vite development server in separate terminals:
 
 ```bash
-VIRTMGR_ADMIN_PASSWORD='dev-password' VIRTMGR_READ_ONLY=false go run ./cmd/virtmgr
+cp deploy/server.yaml.example server.yaml
+# Edit server.yaml, at minimum admin_password and database_path.
+go run ./cmd/virtmgr --config ./server.yaml
 ```
 
 ```bash
@@ -161,32 +169,32 @@ sudo install -d -o virtmgr -g virtmgr -m 0750 /var/lib/virtmgr
 sudo install -d -o root -g virtmgr -m 0750 /etc/virtmgr
 
 sudo install -m 0755 bin/virtmgr /usr/local/bin/virtmgr
-sudo install -m 0640 -o root -g virtmgr deploy/virtmgr.env.example /etc/virtmgr/virtmgr.env
+sudo install -m 0640 -o root -g virtmgr deploy/server.yaml.example /etc/virtmgr/server.yaml
 sudo install -m 0644 deploy/virtmgr.service /etc/systemd/system/virtmgr.service
 ```
 
 If the service account already exists, adjust the `useradd` command rather than recreating it.
 
-### 2. Configure the environment
+### 2. Configure server.yaml
 
-Edit `/etc/virtmgr/virtmgr.env`:
+Edit `/etc/virtmgr/server.yaml`:
 
-```dotenv
-VIRTMGR_LISTEN=127.0.0.1:8443
-VIRTMGR_LIBVIRT_URI=qemu:///system
-VIRTMGR_DATABASE_PATH=/var/lib/virtmgr/virtmgr.db
-VIRTMGR_HOST_NAME=virt-host-01
-VIRTMGR_ADMIN_USERNAME=admin
-VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
-VIRTMGR_SESSION_TTL=8h
-VIRTMGR_COOKIE_SECURE=false
-VIRTMGR_READ_ONLY=true
-VIRTMGR_DEMO_MODE=false
-# Optional: only addresses/CIDRs of reverse proxies that may set X-Forwarded-*.
-VIRTMGR_TRUSTED_PROXIES=
+```yaml
+listen: 127.0.0.1:8443
+libvirt_uri: qemu:///system
+database_path: /var/lib/virtmgr/virtmgr.db
+host_name: virt-host-01
+admin_username: admin
+admin_password: replace-with-a-strong-password
+session_ttl: 8h
+cookie_secure: false
+trusted_proxies:
+  - 127.0.0.1/32
+read_only: false
+demo_mode: false
 ```
 
-`VIRTMGR_ADMIN_PASSWORD` is only used when the database has no users. After the first successful start, remove the plaintext password from the environment file. Keep the file readable only by root and the `virtmgr` group.
+`admin_password` is only used when the database has no users. After the first successful start, remove the plaintext password. The configuration file contains the initial administrator password, so keep it readable only by root and the `virtmgr` group. VirtMgr reads `/etc/virtmgr/server.yaml` by default; use `--config` to select another path. Unknown YAML fields cause startup to fail.
 
 ### 3. Start and verify
 
@@ -211,18 +219,18 @@ VirtMgr supports HTTPS in two ways:
 
 **Native TLS**
 
-```dotenv
-VIRTMGR_LISTEN=0.0.0.0:8443
-VIRTMGR_TLS_CERT_FILE=/etc/virtmgr/tls/fullchain.pem
-VIRTMGR_TLS_KEY_FILE=/etc/virtmgr/tls/privkey.pem
-VIRTMGR_COOKIE_SECURE=true
+```yaml
+listen: 0.0.0.0:8443
+tls_cert_file: /etc/virtmgr/tls/fullchain.pem
+tls_key_file: /etc/virtmgr/tls/privkey.pem
+cookie_secure: true
 ```
 
 Both TLS files must be configured together. Restrict the private key to the service account.
 
 **TLS termination by nginx, Caddy, or a tunnel**
 
-Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve WebSocket upgrades for the VNC console, and set `VIRTMGR_COOKIE_SECURE=true` whenever the browser accesses the service over HTTPS. Set `VIRTMGR_TRUSTED_PROXIES` to the reverse proxy address or CIDR (for example `127.0.0.1/32` or `10.0.0.0/8`) before relying on `X-Forwarded-For` or `X-Real-IP`; untrusted clients cannot override the recorded source address. HTTPS deployments also receive `Strict-Transport-Security: max-age=31536000`.
+Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve WebSocket upgrades for the VNC console, and set `cookie_secure: true` whenever the browser accesses the service over HTTPS. Set `trusted_proxies` to the reverse proxy addresses or CIDRs (for example `127.0.0.1/32` or `10.0.0.0/8`) before relying on `X-Forwarded-For` or `X-Real-IP`; untrusted clients cannot override the recorded source address. HTTPS deployments also receive `Strict-Transport-Security: max-age=31536000`.
 
 The console uses a same-origin `wss://` connection. Some browsers let users bypass a self-signed certificate for the HTTPS page while still blocking the WebSocket handshake, which leaves the console connecting although the server never receives an Upgrade request. Use a certificate and hostname trusted by the browser in production; do not rely on an IP address with a self-signed certificate as the long-term console entry point.
 
@@ -234,13 +242,9 @@ The repository includes a multi-stage image and a Compose example. The container
 
 ```bash
 cd deploy/docker
-cat > .env <<'EOF'
-VIRTMGR_ADMIN_PASSWORD=replace-with-a-strong-password
-VIRTMGR_READ_ONLY=true
-VIRTMGR_COOKIE_SECURE=false
-LIBVIRT_GID=640
-TZ=Asia/Shanghai
-EOF
+cp ../../deploy/server.yaml.example server.yaml
+# Edit server.yaml for admin_password, host_name, and optional TLS paths.
+# Adjust the LIBVIRT_GID default in compose.yaml when needed.
 
 # Docker Compose
 docker compose up -d --build
@@ -249,25 +253,25 @@ docker compose up -d --build
 podman compose up -d --build
 ```
 
-Set `LIBVIRT_GID` to the group ID that owns `/var/run/libvirt/libvirt-sock` on the host (`stat -c '%g' /var/run/libvirt/libvirt-sock`). For native TLS, uncomment the certificate mount in Compose and set `VIRTMGR_TLS_CERT_FILE` / `VIRTMGR_TLS_KEY_FILE`. If backup or storage features need direct access to host storage paths, mount those directories at the same paths; do not use `--privileged`.
+Set `LIBVIRT_GID` to the group ID that owns `/var/run/libvirt/libvirt-sock` on the host (`stat -c '%g' /var/run/libvirt/libvirt-sock`). For native TLS, uncomment the certificate mount in Compose and set `tls_cert_file` / `tls_key_file` in `server.yaml`. If backup or storage features need direct access to host storage paths, mount those directories at the same paths; do not use `--privileged`.
 
 ## Configuration
 
-| Variable | Default | Description |
+| `server.yaml` field | Default | Description |
 |---|---|---|
-| `VIRTMGR_LISTEN` | `127.0.0.1:8443` | HTTP/HTTPS listen address |
-| `VIRTMGR_TLS_CERT_FILE` | empty | PEM certificate chain for native TLS; must be set with the key |
-| `VIRTMGR_TLS_KEY_FILE` | empty | PEM private key for native TLS; must be set with the certificate |
-| `VIRTMGR_LIBVIRT_URI` | `qemu:///system` | libvirt connection URI |
-| `VIRTMGR_DATABASE_PATH` | `/var/lib/virtmgr/virtmgr.db` | SQLite database path |
-| `VIRTMGR_HOST_NAME` | OS hostname | Display name for the managed host |
-| `VIRTMGR_ADMIN_USERNAME` | `admin` | Initial administrator username when the user table is empty |
-| `VIRTMGR_ADMIN_PASSWORD` | unset | Initial administrator password; required only for the first start |
-| `VIRTMGR_SESSION_TTL` | `8h` | Login session lifetime; must be a positive Go duration |
-| `VIRTMGR_COOKIE_SECURE` | `false` | Mark the session cookie as `Secure`; enable it for HTTPS deployments |
-| `VIRTMGR_TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to supply `X-Forwarded-For` and `X-Real-IP` |
-| `VIRTMGR_READ_ONLY` | `true` | Initial global write-protection state |
-| `VIRTMGR_DEMO_MODE` | `false` | Use the demo backend for UI development; never enable this in production |
+| `listen` | `127.0.0.1:8443` | HTTP/HTTPS listen address |
+| `tls_cert_file` | empty | PEM certificate chain for native TLS; must be set with the key |
+| `tls_key_file` | empty | PEM private key for native TLS; must be set with the certificate |
+| `libvirt_uri` | `qemu:///system` | libvirt connection URI |
+| `database_path` | `/var/lib/virtmgr/virtmgr.db` | SQLite database path |
+| `host_name` | OS hostname | Display name for the managed host |
+| `admin_username` | `admin` | Initial administrator username when the user table is empty |
+| `admin_password` | empty | Initial administrator password; required only for the first start |
+| `session_ttl` | `8h` | Login session lifetime; must be a positive Go duration |
+| `cookie_secure` | `false` | Mark the session cookie as `Secure`; enable it for HTTPS deployments |
+| `trusted_proxies` | empty list | Proxy IPs/CIDRs allowed to supply `X-Forwarded-For` and `X-Real-IP` |
+| `read_only` | `false` | Initial global write-protection state; the persisted SQLite value takes precedence after first start |
+| `demo_mode` | `false` | Use the demo backend for UI development; never enable this in production |
 
 Changes to the database, libvirt connection, or TLS paths require a service restart. The read-only mode can also be changed at runtime from the admin settings page and is persisted in SQLite.
 
@@ -390,7 +394,7 @@ scripts/                  Development and E2E helpers
 - [Backup and restore design](docs/backup-design.md) — implemented cold-backup catalog, restore, scheduling, and retention model (Chinese)
 - [Container image](deploy/docker/Dockerfile) and [Compose example](deploy/docker/compose.yaml) — libvirt socket and unprivileged runtime
 - [Release workflow](.github/workflows/release.yml) — amd64/arm64 binary build and release attachment
-- [Environment example](deploy/virtmgr.env.example) — production-oriented variable template
+- [server.yaml example](deploy/server.yaml.example) — production-oriented configuration template
 - [systemd unit](deploy/virtmgr.service) — hardened service definition
 
 ## License

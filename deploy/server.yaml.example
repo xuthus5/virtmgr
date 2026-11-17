@@ -1,0 +1,28 @@
+# VirtMgr server configuration.
+# Install as /etc/virtmgr/server.yaml, readable by root and the virtmgr group.
+listen: "[::]:8443"
+libvirt_uri: qemu:///system
+database_path: /var/lib/virtmgr/virtmgr.db
+host_name: virt-host-01
+
+admin_username: admin
+# Used only when the users table is empty. Remove this value after the first
+# successful start; the password is stored as an Argon2id hash in SQLite.
+admin_password: replace-with-a-strong-password
+session_ttl: 8h
+
+cookie_secure: false
+# Only these reverse proxy IPs/CIDRs may supply X-Forwarded-For or X-Real-IP.
+trusted_proxies:
+  - 127.0.0.1/32
+  - ::1/128
+
+# Optional native TLS. Set both paths to enable HTTPS, or leave both empty when
+# TLS is terminated by nginx, Caddy or Cloudflare Tunnel.
+tls_cert_file: ""
+tls_key_file: ""
+
+# Initial global write-protection state. Once started, the persisted value in
+# SQLite takes precedence and can be changed from the admin settings page.
+read_only: false
+demo_mode: false

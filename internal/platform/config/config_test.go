@@ -2,19 +2,25 @@ package config
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestLoadDefaults(t *testing.T) {
-	t.Setenv("VIRTMGR_LISTEN", "")
-	t.Setenv("VIRTMGR_LIBVIRT_URI", "")
-	t.Setenv("VIRTMGR_DATABASE_PATH", "")
-	t.Setenv("VIRTMGR_SESSION_TTL", "")
-	t.Setenv("VIRTMGR_TLS_CERT_FILE", "")
-	t.Setenv("VIRTMGR_TLS_KEY_FILE", "")
-	t.Setenv("VIRTMGR_ADMIN_PASSWORD", "")
+func writeConfig(t *testing.T, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
-	cfg, err := Load()
+func TestLoadDefaults(t *testing.T) {
+	t.Setenv("VIRTMGR_LISTEN", "0.0.0.0:9999")
+	t.Setenv("VIRTMGR_READ_ONLY", "true")
+	cfg, err := Load(writeConfig(t, ""))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -24,70 +30,45 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SessionTTL.Hours() != 8 {
 		t.Fatalf("SessionTTL = %v", cfg.SessionTTL)
 	}
-	if !cfg.ReadOnly {
-		t.Fatal("ReadOnly must default to true")
+	if cfg.ReadOnly {
+		t.Fatal("ReadOnly must default to false")
 	}
 	if cfg.TLSEnabled() {
 		t.Fatal("TLS must be disabled by default")
 	}
-}
-
-func TestLoadRejectsInvalidSessionTTL(t *testing.T) {
-	t.Setenv("VIRTMGR_SESSION_TTL", "soon")
-	if _, err := Load(); err == nil {
-		t.Fatal("Load() error = nil, want error")
+	if len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("TrustedProxies = %v", cfg.TrustedProxies)
 	}
 }
 
-func TestLoadReadsOverrides(t *testing.T) {
-	t.Setenv("VIRTMGR_LISTEN", "0.0.0.0:9000")
-	t.Setenv("VIRTMGR_LIBVIRT_URI", "test:///default")
-	t.Setenv("VIRTMGR_DATABASE_PATH", "/tmp/virtmgr.db")
-	t.Setenv("VIRTMGR_SESSION_TTL", "30m")
-	t.Setenv("VIRTMGR_TLS_CERT_FILE", "/etc/virtmgr/tls.crt")
-	t.Setenv("VIRTMGR_TLS_KEY_FILE", "/etc/virtmgr/tls.key")
-	t.Setenv("VIRTMGR_COOKIE_SECURE", "true")
-	t.Setenv("VIRTMGR_READ_ONLY", "false")
-	t.Setenv("VIRTMGR_DEMO_MODE", "true")
-	t.Setenv("VIRTMGR_ADMIN_USERNAME", "root")
-	t.Setenv("VIRTMGR_ADMIN_PASSWORD", "secret")
-
-	cfg, err := Load()
+func TestLoadReadsYAMLOverrides(t *testing.T) {
+	path := writeConfig(t, `
+listen: "0.0.0.0:9000"
+libvirt_uri: test:///default
+database_path: /tmp/virtmgr.db
+host_name: yaml-host
+admin_username: root
+admin_password: secret
+session_ttl: 30m
+tls_cert_file: /etc/virtmgr/tls.crt
+tls_key_file: /etc/virtmgr/tls.key
+cookie_secure: true
+read_only: true
+demo_mode: true
+trusted_proxies:
+  - 127.0.0.1
+  - 10.0.0.0/8
+  - ::1
+`)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Listen != "0.0.0.0:9000" || cfg.SessionTTL.Minutes() != 30 || !cfg.CookieSecure || cfg.ReadOnly || !cfg.DemoMode || !cfg.TLSEnabled() {
+	if cfg.Listen != "0.0.0.0:9000" || cfg.SessionTTL.Minutes() != 30 || !cfg.CookieSecure || !cfg.ReadOnly || !cfg.DemoMode || !cfg.TLSEnabled() {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	if cfg.AdminUsername != "root" || cfg.AdminPassword != "secret" {
-		t.Fatalf("admin config not loaded: %+v", cfg)
-	}
-}
-
-func TestLoadRejectsPartialTLSConfig(t *testing.T) {
-	t.Setenv("VIRTMGR_TLS_CERT_FILE", "/etc/virtmgr/tls.crt")
-	t.Setenv("VIRTMGR_TLS_KEY_FILE", "")
-	if _, err := Load(); err == nil {
-		t.Fatal("Load() error = nil, want error for partial TLS configuration")
-	}
-}
-
-func TestLoadRejectsInvalidBooleanValues(t *testing.T) {
-	for _, key := range []string{"VIRTMGR_COOKIE_SECURE", "VIRTMGR_READ_ONLY", "VIRTMGR_DEMO_MODE"} {
-		t.Run(key, func(t *testing.T) {
-			t.Setenv(key, "definitely-not-a-bool")
-			if _, err := Load(); err == nil {
-				t.Fatalf("Load() error = nil for invalid %s", key)
-			}
-		})
-	}
-}
-
-func TestLoadParsesTrustedProxies(t *testing.T) {
-	t.Setenv("VIRTMGR_TRUSTED_PROXIES", "127.0.0.1, 10.0.0.0/8, ::1")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if cfg.HostName != "yaml-host" || cfg.AdminUsername != "root" || cfg.AdminPassword != "secret" {
+		t.Fatalf("admin or host config not loaded: %+v", cfg)
 	}
 	for _, want := range []netip.Prefix{
 		netip.MustParsePrefix("127.0.0.1/32"),
@@ -107,13 +88,43 @@ func TestLoadParsesTrustedProxies(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidTrustedProxies(t *testing.T) {
-	for _, value := range []string{"not-an-ip", "10.0.0.0/99", "127.0.0.1,,10.0.0.1"} {
-		t.Run(value, func(t *testing.T) {
-			t.Setenv("VIRTMGR_TRUSTED_PROXIES", value)
-			if _, err := Load(); err == nil {
-				t.Fatalf("Load() error = nil for %q", value)
+func TestLoadRejectsMissingOrInvalidFile(t *testing.T) {
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
+		t.Fatal("Load() error = nil for a missing file")
+	}
+	for name, contents := range map[string]string{
+		"unknown field":      "unknown_option: true\n",
+		"invalid session":    "session_ttl: soon\n",
+		"partial tls":        "tls_cert_file: /etc/virtmgr/tls.crt\n",
+		"empty listen":       "listen: \"\"\n",
+		"empty admin":        "admin_username: \"\"\n",
+		"empty proxies":      "trusted_proxies: [\"\"]\n",
+		"invalid proxy":      "trusted_proxies: [not-an-ip]\n",
+		"multiple documents": "listen: 127.0.0.1:8443\n---\nlisten: 127.0.0.1:9443\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, contents))
+			if err == nil {
+				t.Fatalf("Load() error = nil for %q", contents)
+			}
+			if !strings.Contains(err.Error(), "server.yaml") && name != "multiple documents" {
+				t.Fatalf("error should include config path context: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsEmptyPath(t *testing.T) {
+	if _, err := Load(" "); err == nil {
+		t.Fatal("Load() error = nil for an empty path")
+	}
+}
+
+func TestTLSEnabled(t *testing.T) {
+	if (Config{}).TLSEnabled() {
+		t.Fatal("empty config must not enable TLS")
+	}
+	if !(Config{TLSCertFile: "cert", TLSKeyFile: "key"}).TLSEnabled() {
+		t.Fatal("complete TLS config must enable TLS")
 	}
 }

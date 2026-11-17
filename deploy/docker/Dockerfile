@@ -34,15 +34,9 @@ RUN apt-get update \
     && chown -R virtmgr:virtmgr /var/lib/virtmgr /etc/virtmgr
 COPY --from=backend /out/virtmgr /usr/local/bin/virtmgr
 
-ENV VIRTMGR_LISTEN=[::]:8443 \
-    VIRTMGR_LIBVIRT_URI=qemu:///system \
-    VIRTMGR_DATABASE_PATH=/var/lib/virtmgr/virtmgr.db \
-    VIRTMGR_READ_ONLY=true \
-    VIRTMGR_COOKIE_SECURE=false
-
 EXPOSE 8443
 VOLUME ["/var/lib/virtmgr"]
 USER virtmgr
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["curl", "-fsS", "http://127.0.0.1:8443/healthz"]
-ENTRYPOINT ["/usr/local/bin/virtmgr"]
+ENTRYPOINT ["/usr/local/bin/virtmgr", "--config", "/etc/virtmgr/server.yaml"]
