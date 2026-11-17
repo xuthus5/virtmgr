@@ -16,6 +16,13 @@ async function loginAs(page: Page, username: string, password: string) {
   await expect(page.getByRole("heading", { name: "总览", exact: true })).toBeVisible();
 }
 
+type VMTabName = "overview" | "config" | "guest" | "snapshots" | "advanced";
+
+async function openVMTab(page: Page, tab: VMTabName) {
+  await page.getByTestId(`vm-tab-${tab}`).click();
+  await expect(page.getByTestId(`vm-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
+}
+
 test("匿名访问重定向到登录页", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/login$/);
@@ -455,7 +462,7 @@ test("移动端虚拟机详情保持关键操作可用", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
   await expect(page.getByTestId("vm-console-open")).toBeVisible();
   await expect(page.getByTestId("vm-metrics-memory")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "生命周期操作", exact: true })).toBeVisible();
+  await expect(page.getByText("电源操作", { exact: true })).toBeVisible();
   await expect(page.getByTestId("vm-action-pause")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
@@ -510,21 +517,29 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await expect(page.getByTestId("vm-detail-disks")).toHaveText("1");
   await expect(page.getByTestId("vm-hostname")).toHaveText("demo-db-01");
   await expect(page.getByTestId("vm-ip-addresses")).toHaveText("192.168.122.102");
-  await expect(page.getByTestId("vm-agent-status")).toHaveText("已连接");
+  await expect(page.getByTestId("vm-agent-status")).toHaveText("QGA 已连接");
   await expect(page.getByTestId("vm-password-open")).toBeVisible();
-  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-password-card")).toHaveCount(0);
+  await expect(page.getByTestId("vm-guest-agent-card")).toHaveCount(0);
+  await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-dialog")).toBeVisible();
   await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
   await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
-  await page.getByTestId("vm-password-open").click();
-  await expect(page.getByTestId("vm-password-card")).toBeInViewport();
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
+
+  await openVMTab(page, "guest");
   await expect(page.getByTestId("vm-guest-agent-card")).toBeVisible();
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
   await expect(page.getByTestId("guest-agent-hostname")).toHaveText("demo-db-01");
   await expect(page.getByTestId("guest-agent-capabilities")).toContainText("静默快照");
   await expect(page.getByTestId("guest-agent-action-shutdown")).toBeDisabled();
+
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
   await expect(page.getByText("/var/lib/libvirt/images/demo-db-01.qcow2", { exact: true })).toBeVisible();
+
+  await openVMTab(page, "overview");
   await expect(page.getByTestId("vm-console-card")).toBeVisible();
   await expect(page.getByTestId("console-kind-vnc")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("vm-console-message")).toContainText("只读模式下不能打开可交互控制台");
@@ -546,6 +561,7 @@ test("虚拟机详情展示实时资源趋势", async ({ page }) => {
 test("虚拟机详情磁盘数据源保持单行且不会纵向撑高表格", async ({ page }) => {
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await openVMTab(page, "config");
   const source = page.getByTestId("vm-disk-source");
   await expect(source).toBeVisible();
   await expect(source).toHaveText("/var/lib/libvirt/images/demo-db-01.qcow2");
@@ -580,6 +596,7 @@ test("虚拟机详情展示只读域 XML 并支持切换和复制", async ({ pag
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "advanced");
   await expect(page.getByRole("heading", { name: "域 XML", exact: true })).toBeVisible();
 
   const xml = page.getByTestId("vm-xml-content");
@@ -604,6 +621,7 @@ test("只读模式可查看域 XML 版本历史但禁止回滚", async ({ page }
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
   await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
+  await openVMTab(page, "advanced");
 
   await page.getByTestId("vm-config-versions-open").click();
   const dialog = page.getByTestId("vm-config-versions-dialog");
@@ -628,9 +646,14 @@ test("只读模式禁用虚拟机生命周期操作", async ({ page }) => {
   await expect(page.getByTestId("vm-console-open")).toBeDisabled();
   await expect(page.getByTestId("vm-console-connect")).toBeDisabled();
   await expect(page.getByTestId("vm-console-message")).toContainText("只读模式下不能打开可交互控制台");
+  await openVMTab(page, "snapshots");
   await expect(page.getByTestId("vm-snapshots-card")).toBeVisible();
   await expect(page.getByTestId("vm-snapshot-create-toggle")).toBeDisabled();
   await expect(page.getByTestId("vm-snapshot-empty")).toContainText("暂无快照");
+  await expect(page.getByTestId("vm-backup-card")).toBeVisible();
+  await expect(page.getByTestId("vm-backup-open")).toBeDisabled();
+  await expect(page.getByTestId("vm-backup-disabled")).toContainText("只读模式");
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-autostart-toggle")).toBeDisabled();
   await expect(page.getByTestId("vm-resources-card")).toBeVisible();
   await expect(page.getByTestId("vm-resources-readonly")).toContainText("只读模式");
@@ -638,11 +661,11 @@ test("只读模式禁用虚拟机生命周期操作", async ({ page }) => {
   await expect(page.getByTestId("vm-disks-card")).toBeVisible();
   await expect(page.getByTestId("vm-disk-capacity-vda")).toHaveText("20 GiB");
   await expect(page.getByTestId("vm-disk-resize-vda")).toBeDisabled();
+  await openVMTab(page, "advanced");
   await expect(page.getByTestId("vm-clone-open")).toBeDisabled();
-  await expect(page.getByTestId("vm-backup-card")).toBeVisible();
-  await expect(page.getByTestId("vm-backup-open")).toBeDisabled();
-  await expect(page.getByTestId("vm-backup-disabled")).toContainText("只读模式");
-  await expect(page.getByTestId("vm-agent-status")).toHaveText("未连接");
+  await openVMTab(page, "overview");
+  await expect(page.getByTestId("vm-agent-status")).toHaveCount(0);
+  await openVMTab(page, "guest");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("未配置通道");
   await expect(page.getByTestId("guest-agent-add-channel")).toBeDisabled();
   await expect(page.getByTestId("vm-ip-addresses")).toHaveText("-");
@@ -652,6 +675,7 @@ test("只读模式展示 PCI / USB 直通状态但禁用变更", async ({ page }
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-passthrough-card")).toBeVisible();
   await expect(page.getByTestId("vm-passthrough-total")).toHaveText("0 个设备");
   await expect(page.getByTestId("vm-passthrough-empty")).toContainText("当前虚拟机还没有直通 PCI / USB 设备");
@@ -664,6 +688,7 @@ test("只读模式展示定时快照策略但禁用变更", async ({ page }) => 
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "snapshots");
   await expect(page.getByTestId("vm-snapshot-policy-card")).toBeVisible();
   await expect(page.getByTestId("vm-snapshot-policy-total")).toHaveText("0 个策略");
   await expect(page.getByTestId("vm-snapshot-policy-empty")).toContainText("暂无快照策略");
@@ -724,6 +749,7 @@ test("只读模式仍可导出虚拟机配置并记录审计", async ({ page }) 
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
   await expect(page.getByTestId("vm-read-only-notice")).toBeVisible();
+  await openVMTab(page, "advanced");
   const exportButton = page.getByTestId("vm-export-button");
   await expect(exportButton).toBeEnabled();
 

@@ -192,15 +192,17 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
               <Badge variant={state.variant} data-testid="guest-agent-state">{state.label}</Badge>
               <Badge variant={info.channelConfigured ? "outline" : "secondary"}>{info.channelConfigured ? "QGA 通道已配置" : "QGA 通道未配置"}</Badge>
               {info.stale ? <Badge variant="warning">显示上次成功状态</Badge> : null}
-              {info.version ? <span className="text-xs text-muted-foreground">qemu-guest-agent {info.version}</span> : null}
+              {info.state === "connected" && info.version ? <span className="text-xs text-muted-foreground">qemu-guest-agent {info.version}</span> : null}
             </div>
 
-            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">主机名</p><p className="mt-1 truncate font-mono text-xs" data-testid="guest-agent-hostname">{info.hostname || vm.hostname || "-"}</p></div>
-              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">操作系统</p><p className="mt-1 truncate" title={info.os.prettyName || info.os.name}>{info.os.prettyName || info.os.name || info.os.id || "-"}</p></div>
-              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">内核 / 架构</p><p className="mt-1 truncate font-mono text-xs">{info.os.kernelRelease || "-"} · {info.os.arch || "-"}</p></div>
-              <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">最近响应</p><p className="mt-1">{formatDateTime(info.lastSeenAt)}</p></div>
-            </div>
+            {info.state === "connected" ? (
+              <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">主机名</p><p className="mt-1 truncate font-mono text-xs" data-testid="guest-agent-hostname">{info.hostname || vm.hostname || "-"}</p></div>
+                <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">操作系统</p><p className="mt-1 truncate" title={info.os.prettyName || info.os.name}>{info.os.prettyName || info.os.name || info.os.id || "-"}</p></div>
+                <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">内核 / 架构</p><p className="mt-1 truncate font-mono text-xs">{info.os.kernelRelease || "-"} · {info.os.arch || "-"}</p></div>
+                <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">最近响应</p><p className="mt-1">{formatDateTime(info.lastSeenAt)}</p></div>
+              </div>
+            ) : null}
 
             {info.lastError ? (
               <div className="flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning" data-testid="guest-agent-error">

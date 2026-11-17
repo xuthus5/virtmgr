@@ -54,7 +54,7 @@ import { Progress } from "@/components/ui/progress";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { VMConsoleCard } from "@/features/console/vm-console-card";
 import { VMGuestAgentCard } from "@/features/guest-agent/vm-guest-agent-card";
-import { VMPasswordCard } from "@/features/guest-agent/vm-password-card";
+import { VMPasswordDialog } from "@/features/guest-agent/vm-password-dialog";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { useVMMetricsQuery, useVMQuery, useVMXMLQuery, vmQueryKey, vmXMLQueryKey } from "@/features/vms/use-vm-query";
@@ -83,6 +83,16 @@ type ActionMeta = {
   destructive?: boolean;
   confirm?: boolean;
 };
+
+type VMTab = "overview" | "config" | "guest" | "snapshots" | "advanced";
+
+const vmTabs: Array<{ id: VMTab; label: string }> = [
+  { id: "overview", label: "概览" },
+  { id: "config", label: "配置" },
+  { id: "guest", label: "客户机" },
+  { id: "snapshots", label: "快照与备份" },
+  { id: "advanced", label: "高级" },
+];
 
 const XMLCodeEditor = lazy(() =>
   import("@/components/code/xml-code-editor").then((module) => ({ default: module.XMLCodeEditor })),
@@ -150,6 +160,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
   const [xmlConfirmOpen, setXmlConfirmOpen] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [exportNotice, setExportNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<VMTab>("overview");
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const xmlQuery = useVMXMLQuery(uuid, xmlFormat);
   const persistentXMLQuery = useVMXMLQuery(uuid, "config");
   const versionsQuery = useVMConfigVersionsQuery(uuid);
@@ -370,21 +382,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             size="sm"
             data-testid="vm-password-open"
             title="修改或重置虚拟机内已有用户的密码"
-            onClick={() => {
-              document.getElementById("vm-password-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              window.setTimeout(() => document.getElementById("vm-guest-password-username")?.focus(), 250);
-            }}
+            onClick={() => setPasswordOpen(true)}
           ><KeyRound className="h-4 w-4" />修改客户机密码</Button>
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="vm-export-button"
-            disabled={exportMutation.isPending}
-            title="下载包含虚拟机定义、XML 与快照元数据的 JSON 文件"
-            onClick={() => { setExportNotice(null); exportMutation.mutate(); }}
-          >
-            {exportMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}导出配置
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -393,7 +392,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             title={consoleReady ? "打开 VNC 控制台" : consoleReason}
             onClick={() => void navigate({ to: "/console/vms/$uuid", params: { uuid } })}
           ><MonitorPlay className="h-4 w-4" />打开控制台</Button>
-          <Button variant="outline" size="sm" onClick={() => void vmQuery.refetch()} disabled={vmQuery.isFetching}><RefreshCw className={cn("h-4 w-4", vmQuery.isFetching && "animate-spin")} />刷新</Button>
+          <Button variant="outline" size="icon-sm" aria-label="刷新虚拟机状态" title="刷新虚拟机状态" onClick={() => void vmQuery.refetch()} disabled={vmQuery.isFetching}><RefreshCw className={cn("h-4 w-4", vmQuery.isFetching && "animate-spin")} /></Button>
         </div>}
       />
 
@@ -401,18 +400,11 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         <StatusBadge state={vm.state} />
         <Badge variant={vm.persistent ? "outline" : "secondary"}>{vm.persistent ? "持久化域" : "临时域"}</Badge>
         {vm.autostart ? <Badge variant="success">开机自启动</Badge> : <Badge variant="secondary">未设置自启动</Badge>}
+        {vm.agentConnected ? <Badge variant="success" data-testid="vm-agent-status">QGA 已连接</Badge> : null}
+        <span className="text-xs text-muted-foreground">主机名 <span className="font-mono text-foreground" data-testid="vm-hostname">{vm.hostname || "-"}</span></span>
+        <span className="text-xs text-muted-foreground">IP <span className="font-mono text-foreground" data-testid="vm-ip-addresses">{vm.ipAddresses?.length ? vm.ipAddresses.join(", ") : "-"}</span></span>
         <span className="text-xs text-muted-foreground">{vm.osType || "未知 OS"} · {vm.arch || "未知架构"} · {vm.machine || "未知机型"}</span>
       </div>
-
-      {exportNotice ? (
-        <p
-          data-testid="vm-export-notice"
-          role="status"
-          className={cn("mb-4 rounded-md border px-3 py-2 text-xs", exportNotice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")}
-        >
-          {exportNotice.text}
-        </p>
-      ) : null}
 
       {readOnly ? (
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning" data-testid="vm-read-only-notice" role="status">
@@ -427,87 +419,138 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         </div>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>生命周期操作</CardTitle>
-          <CardDescription>操作由后端按 libvirt 当前状态校验；危险动作需要二次确认。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {allowedActions.length ? (
-            <div className="flex flex-wrap gap-2">
-              {allowedActions.map((action) => {
-                const meta = actionMeta[action];
-                const Icon = mutation.isPending && mutation.variables === action ? LoaderCircle : meta.icon;
-                return (
-                  <Button
-                    key={action}
-                    variant={meta.destructive ? "destructive" : "outline"}
-                    size="sm"
-                    disabled={Boolean(unavailableReason)}
-                    title={unavailableReason || meta.description}
-                    data-testid={`vm-action-${action}`}
-                    onClick={() => requestAction(action)}
-                  >
-                    <Icon className={cn("h-4 w-4", mutation.isPending && mutation.variables === action && "animate-spin")} />
-                    {meta.label}
-                  </Button>
-                );
-              })}
+      <section className="mb-4 rounded-lg border bg-card px-3 py-2.5" aria-label="虚拟机电源操作">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-xs font-medium text-muted-foreground">电源操作</span>
+          {allowedActions.length ? allowedActions.map((action) => {
+            const meta = actionMeta[action];
+            const Icon = mutation.isPending && mutation.variables === action ? LoaderCircle : meta.icon;
+            return (
+              <Button
+                key={action}
+                variant={meta.destructive ? "destructive" : "outline"}
+                size="sm"
+                disabled={Boolean(unavailableReason)}
+                title={unavailableReason || meta.description}
+                data-testid={`vm-action-${action}`}
+                onClick={() => requestAction(action)}
+              >
+                <Icon className={cn("h-4 w-4", mutation.isPending && mutation.variables === action && "animate-spin")} />
+                {meta.label}
+              </Button>
+            );
+          }) : <span className="text-sm text-muted-foreground">当前状态没有可用的电源操作。</span>}
+        </div>
+        {unavailableReason ? <p className="mt-2 text-xs text-muted-foreground">{unavailableReason}。</p> : null}
+        {notice ? (
+          <p className={cn("mt-2 rounded-md border px-3 py-2 text-xs", notice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")} role="status">
+            {notice.text}
+          </p>
+        ) : null}
+      </section>
+
+      <div className="mb-4 overflow-x-auto border-b" role="tablist" aria-label="虚拟机详情分类" data-testid="vm-tabs">
+        <div className="flex min-w-max gap-1">
+          {vmTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`vm-tab-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`vm-tabpanel-${tab.id}`}
+              data-testid={`vm-tab-${tab.id}`}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                activeTab === tab.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === "overview" ? (
+        <div role="tabpanel" id="vm-tabpanel-overview" aria-labelledby="vm-tab-overview" data-testid="vm-tabpanel-overview">
+          <VMConsoleCard
+            uuid={uuid}
+            graphics={vm.graphics}
+            serials={vm.serials}
+            state={vm.state}
+            canConnect={canMutate}
+            disabledReason={consoleReason}
+          />
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard label="vCPU" value={vm.vcpus} hint={`上限 ${vm.maxVcpus || vm.vcpus} vCPU`} icon={Cpu} tone="primary" testId="vm-detail-vcpus" />
+            <MetricCard label="内存" value={formatBytes(vm.memoryBytes)} hint={`最大 ${formatBytes(vm.maxMemoryBytes)}`} icon={MemoryStick} tone="success" testId="vm-detail-memory" />
+            <MetricCard label="磁盘" value={vm.disks.length} hint="已连接块设备" icon={HardDrive} tone="neutral" testId="vm-detail-disks" />
+            <MetricCard label="网络接口" value={vm.interfaces.length} hint="虚拟网卡" icon={Network} tone="neutral" testId="vm-detail-interfaces" />
+          </div>
+
+          <div className="mt-4">
+            <ResourceTrendCard
+              title="资源趋势"
+              description="当前虚拟机的 CPU、内存和虚拟网卡采样；运行中或阻塞状态会持续更新。"
+              metrics={metricsQuery.data}
+              isLoading={metricsQuery.isLoading}
+              error={metricsQuery.isError ? (metricsQuery.error instanceof Error ? metricsQuery.error.message : "无法读取虚拟机资源指标") : undefined}
+              testId="vm-metrics"
+              historyKey={uuid}
+              showDiskIO
+            />
+          </div>
+
+          <div className="mt-4">
+            <MetricHistoryCard scope="vm" targetId={uuid} title="虚拟机历史趋势" description="虚拟机运行期间的 CPU、内存、磁盘和网络分钟级采样。" testId="vm-metric-history" />
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "config" ? (
+        <div role="tabpanel" id="vm-tabpanel-config" aria-labelledby="vm-tab-config" data-testid="vm-tabpanel-config">
+          <VMResourcesCard vm={vm} canMutate={canMutate && !resourcesDisabledReason} disabledReason={resourcesDisabledReason} />
+          <VMMetadataCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+        </div>
+      ) : null}
+
+      {activeTab === "guest" ? (
+        <div role="tabpanel" id="vm-tabpanel-guest" aria-labelledby="vm-tab-guest" data-testid="vm-tabpanel-guest">
+          <VMGuestAgentCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+        </div>
+      ) : null}
+
+      {activeTab === "advanced" ? (
+        <div role="tabpanel" id="vm-tabpanel-advanced" aria-labelledby="vm-tab-advanced" data-testid="vm-tabpanel-advanced">
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+            <div>
+              <p className="text-sm font-medium">导出虚拟机配置</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">下载域定义、XML 与快照元数据；不包含磁盘内容。</p>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">当前状态没有可用的生命周期操作。</p>
-          )}
-          {unavailableReason ? <p className="text-xs text-muted-foreground">{unavailableReason}。</p> : null}
-          {notice ? (
-            <p className={cn("rounded-md border px-3 py-2 text-xs", notice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")} role="status">
-              {notice.text}
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="vm-export-button"
+              disabled={exportMutation.isPending}
+              title="下载包含虚拟机定义、XML 与快照元数据的 JSON 文件"
+              onClick={() => { setExportNotice(null); exportMutation.mutate(); }}
+            >
+              {exportMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}导出配置
+            </Button>
+          </div>
+          {exportNotice ? (
+            <p
+              data-testid="vm-export-notice"
+              role="status"
+              className={cn("mt-4 rounded-md border px-3 py-2 text-xs", exportNotice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")}
+            >
+              {exportNotice.text}
             </p>
           ) : null}
-        </CardContent>
-      </Card>
 
-      <VMPasswordCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <VMConsoleCard
-        uuid={uuid}
-        graphics={vm.graphics}
-        serials={vm.serials}
-        state={vm.state}
-        canConnect={canMutate}
-        disabledReason={consoleReason}
-      />
-
-      <VMGuestAgentCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="vCPU" value={vm.vcpus} hint={`上限 ${vm.maxVcpus || vm.vcpus} vCPU`} icon={Cpu} tone="primary" testId="vm-detail-vcpus" />
-        <MetricCard label="内存" value={formatBytes(vm.memoryBytes)} hint={`最大 ${formatBytes(vm.maxMemoryBytes)}`} icon={MemoryStick} tone="success" testId="vm-detail-memory" />
-        <MetricCard label="磁盘" value={vm.disks.length} hint="已连接块设备" icon={HardDrive} tone="neutral" testId="vm-detail-disks" />
-        <MetricCard label="网络接口" value={vm.interfaces.length} hint="虚拟网卡" icon={Network} tone="neutral" testId="vm-detail-interfaces" />
-      </div>
-
-      <VMResourcesCard vm={vm} canMutate={canMutate && !resourcesDisabledReason} disabledReason={resourcesDisabledReason} />
-
-      <VMMetadataCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <div className="mt-4">
-        <ResourceTrendCard
-          title="资源趋势"
-          description="当前虚拟机的 CPU、内存和虚拟网卡采样；运行中或阻塞状态会持续更新。"
-          metrics={metricsQuery.data}
-          isLoading={metricsQuery.isLoading}
-          error={metricsQuery.isError ? (metricsQuery.error instanceof Error ? metricsQuery.error.message : "无法读取虚拟机资源指标") : undefined}
-          testId="vm-metrics"
-          historyKey={uuid}
-          showDiskIO
-        />
-      </div>
-
-      <div className="mt-4">
-        <MetricHistoryCard scope="vm" targetId={uuid} title="虚拟机历史趋势" description="虚拟机运行期间的 CPU、内存、磁盘和网络分钟级采样。" testId="vm-metric-history" />
-      </div>
-
-      <Card className="mt-4" data-testid="vm-clone-card">
+          <Card className="mt-4" data-testid="vm-clone-card">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -594,21 +637,30 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             </div>
           ) : null}
         </CardContent>
-      </Card>
+          </Card>
+        </div>
+      ) : null}
 
-      <VMBackupCard
-        uuid={uuid}
-        vmName={vm.name}
-        state={vm.state}
-        persistent={vm.persistent}
-        role={session.data?.user.role}
-        readOnly={readOnly}
-        disabledReason={backupDisabledReason}
-      />
-      <VMRecentBackupsCard uuid={vm.uuid} />
+      {activeTab === "snapshots" ? (
+        <div role="tabpanel" id="vm-tabpanel-snapshots" aria-labelledby="vm-tab-snapshots" data-testid="vm-tabpanel-snapshots">
+          <VMSnapshotPoliciesCard uuid={uuid} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+          <VMSnapshotsCard uuid={uuid} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+          <VMBackupCard
+            uuid={uuid}
+            vmName={vm.name}
+            state={vm.state}
+            persistent={vm.persistent}
+            role={session.data?.user.role}
+            readOnly={readOnly}
+            disabledReason={backupDisabledReason}
+          />
+          <VMRecentBackupsCard uuid={vm.uuid} />
+        </div>
+      ) : null}
 
-      <div className="mt-4">
-        <Card>
+      {activeTab === "config" ? (
+        <div className="mt-4">
+          <Card data-testid="vm-basic-info">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div><CardTitle>基础信息</CardTitle><CardDescription>来自 libvirt 域定义与实时状态。</CardDescription></div>
@@ -617,13 +669,6 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           </CardHeader>
           <CardContent>
             <DetailItem label="名称">{vm.name}</DetailItem>
-            <DetailItem label="主机名"><span data-testid="vm-hostname">{vm.hostname || "-"}</span></DetailItem>
-            <DetailItem label="IP 地址">
-              <span data-testid="vm-ip-addresses" className="font-mono text-xs">{vm.ipAddresses?.length ? vm.ipAddresses.join(", ") : "-"}</span>
-            </DetailItem>
-            <DetailItem label="Guest Agent">
-              <Badge variant={vm.agentConnected ? "success" : "secondary"} data-testid="vm-agent-status">{vm.agentConnected ? "已连接" : "未连接"}</Badge>
-            </DetailItem>
             <DetailItem label="UUID"><span className="font-mono text-xs">{vm.uuid}</span></DetailItem>
             <DetailItem label="状态码">{vm.state} / {vm.stateReason}</DetailItem>
             <DetailItem label="操作系统">{vm.osType || "-"}</DetailItem>
@@ -682,21 +727,20 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             </div>
             {autostartDisabledReason ? <p className="mt-2 text-xs text-muted-foreground">{autostartDisabledReason}。</p> : null}
           </CardContent>
-        </Card>
+          </Card>
+        </div>
+      ) : null}
 
-      </div>
+      {activeTab === "config" ? (
+        <>
+          <VMDisksCard vm={vm} role={session.data?.user.role} readOnly={readOnly} />
+          <VMNetworkInterfacesCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+          <VMPassthroughCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+        </>
+      ) : null}
 
-      <VMDisksCard vm={vm} role={session.data?.user.role} readOnly={readOnly} />
-
-      <VMNetworkInterfacesCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <VMPassthroughCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <VMSnapshotPoliciesCard uuid={uuid} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <VMSnapshotsCard uuid={uuid} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
-
-      <Card className="mt-4">
+      {activeTab === "advanced" ? (
+        <Card className="mt-4">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -790,7 +834,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             </div>
           ) : null}
         </CardContent>
-      </Card>
+        </Card>
+      ) : null}
 
       <VMConfigVersionsDialog
         uuid={uuid}
@@ -809,7 +854,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
         }}
       />
 
-      {canMutate ? (
+      {activeTab === "advanced" && canMutate ? (
         <Card className="mt-4 border-destructive/30">
           <CardHeader>
             <CardTitle>危险操作</CardTitle>
@@ -829,6 +874,15 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
           </CardContent>
         </Card>
       ) : null}
+
+      <VMPasswordDialog
+        vm={vm}
+        open={passwordOpen}
+        onOpenChange={setPasswordOpen}
+        canMutate={canMutate}
+        disabledReason={snapshotDisabledReason}
+        onOpenGuest={() => setActiveTab("guest")}
+      />
 
       <AlertDialog open={xmlConfirmOpen} onOpenChange={setXmlConfirmOpen}>
         <AlertDialogContent>

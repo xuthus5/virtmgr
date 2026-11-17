@@ -118,17 +118,22 @@ test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", 
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
   await expect(page.getByRole("heading", { name: "demo-db-01", exact: true })).toBeVisible();
-  await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
-  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await expect(page.getByTestId("vm-agent-status")).toHaveText("QGA 已连接");
+  await expect(page.getByTestId("vm-guest-agent-card")).toHaveCount(0);
+  await expect(page.getByTestId("vm-iso-attach-open")).toHaveCount(0);
+
+  await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-dialog")).toBeVisible();
   await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
   await expect(page.getByTestId("vm-password-username")).toBeDisabled();
   await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
-  await expect(page.getByTestId("vm-iso-attach-open")).toBeVisible();
-  await expect(page.getByTestId("vm-iso-attach-open")).toBeDisabled();
-  await expect(page.getByTestId("guest-agent-controls")).toHaveCount(0);
+  const dialog = await page.getByTestId("vm-password-dialog").boundingBox();
+  expect(dialog?.width ?? 321, "320px 客户机密码弹窗应适应视口").toBeLessThanOrEqual(320);
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
 
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
+    await page.getByTestId("vm-tab-overview").click();
     const layout = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
       documentWidth: document.documentElement.scrollWidth,
@@ -136,9 +141,16 @@ test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", 
     }));
     expect(layout.documentWidth, `${width}px 虚拟机详情 document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.bodyWidth, `${width}px 虚拟机详情 body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+
+    await page.getByTestId("vm-tab-config").click();
+    await expect(page.getByTestId("vm-iso-attach-open")).toBeVisible();
+    await expect(page.getByTestId("vm-iso-attach-open")).toBeDisabled();
     const isoButton = await page.getByTestId("vm-iso-attach-open").boundingBox();
     expect(isoButton?.width ?? width + 1, `${width}px ISO 操作按钮应适应视口`).toBeLessThanOrEqual(width);
-    const passwordCard = await page.getByTestId("vm-password-card").boundingBox();
-    expect(passwordCard?.width ?? width + 1, `${width}px 客户机密码卡片应适应视口`).toBeLessThanOrEqual(width);
+
+    await page.getByTestId("vm-tab-guest").click();
+    await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
+    await expect(page.getByTestId("guest-agent-controls")).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   }
 });

@@ -21,6 +21,13 @@ async function loginAs(page: Page, username: string, password: string) {
   await expect(page.getByRole("heading", { name: "总览", exact: true })).toBeVisible();
 }
 
+type VMTabName = "overview" | "config" | "guest" | "snapshots" | "advanced";
+
+async function openVMTab(page: Page, tab: VMTabName) {
+  await page.getByTestId(`vm-tab-${tab}`).click();
+  await expect(page.getByTestId(`vm-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
+}
+
 test("可写模式完成启动和强制下电确认", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
@@ -40,15 +47,18 @@ test("可写模式完成启动和强制下电确认", async ({ page }) => {
   await expect(page.getByText("已关机", { exact: true }).first()).toBeVisible();
   await expect(page.getByTestId("vm-action-start")).toBeEnabled();
 
+  await openVMTab(page, "guest");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("未配置通道");
   const addChannel = page.getByTestId("guest-agent-add-channel");
   await expect(addChannel).toBeEnabled();
   await addChannel.click();
   await expect(page.getByTestId("guest-agent-notice")).toContainText("已补充 QEMU Guest Agent 通道");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("未连接");
-  await expect(page.getByTestId("vm-password-card")).toBeVisible();
+  await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-dialog")).toBeVisible();
   await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 未连接");
   await expect(page.getByTestId("vm-password-submit")).toBeDisabled();
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
 });
 
 test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ page }) => {
@@ -56,25 +66,26 @@ test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ p
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
 
+  await openVMTab(page, "guest");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
   await expect(page.getByTestId("guest-agent-controls")).toBeVisible();
-  await expect(page.getByTestId("vm-password-card")).toBeVisible();
-  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
   await page.getByLabel("客户机文件路径").fill("/etc/os-release");
   await page.getByTestId("guest-agent-file-read").click();
   await expect(page.getByTestId("guest-agent-file-preview")).toContainText("Ubuntu 24.04.1 LTS");
   await expect(page.getByTestId("guest-agent-notice")).toContainText("文件读取完成");
 
   await page.getByTestId("vm-password-open").click();
+  await expect(page.getByTestId("vm-password-dialog")).toBeVisible();
+  await expect(page.getByTestId("vm-password-state")).toHaveText("Guest Agent 已连接");
   await expect(page.getByTestId("vm-password-username")).toBeFocused();
   await page.getByTestId("vm-password-new").fill("temporary-e2e-secret");
   await page.getByTestId("vm-password-confirm").fill("temporary-e2e-secret");
+  await page.getByTestId("vm-password-confirm-check").check();
   await page.getByTestId("vm-password-submit").click();
-  await expect(page.getByTestId("vm-password-confirm-dialog")).toContainText("demo-db-01");
-  await page.getByTestId("vm-password-confirm-submit").click();
   await expect(page.getByTestId("vm-password-notice")).toContainText("密码修改任务已创建");
   await expect(page.getByTestId("vm-password-new")).toHaveValue("");
   await expect(page.getByTestId("vm-password-confirm")).toHaveValue("");
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
 
   await page.getByTestId("guest-agent-process-load").click();
   const processRow = page.getByTestId("guest-agent-process-918");
@@ -88,6 +99,7 @@ test("可写模式使用 Guest Agent 文件、密码和进程管理", async ({ p
 test("可写模式 Guest Agent 服务诊断在桌面和移动端可读", async ({ page }) => {
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await openVMTab(page, "guest");
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
 
   await page.getByTestId("guest-agent-service-load").click();
@@ -258,10 +270,12 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "e2e-created-01", exact: true })).toBeVisible();
   await expect(page.getByText("已关机", { exact: true }).first()).toBeVisible();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
   await expect(page.getByTestId("vm-cloud-init")).toHaveText("已配置");
 
+  await openVMTab(page, "advanced");
   const deleteButton = page.getByTestId("vm-delete-button");
   await expect(deleteButton).toBeEnabled();
   await deleteButton.click();
@@ -288,6 +302,7 @@ test("可写模式通过存储池挂载、替换并弹出安装 ISO", async ({ p
 
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "e2e-iso-attach-01", exact: true })).toBeVisible();
+  await openVMTab(page, "config");
   await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: ".iso" })).toHaveCount(0);
 
   await page.getByTestId("vm-iso-attach-open").click();
@@ -328,6 +343,7 @@ test("可写模式通过存储池挂载、替换并弹出安装 ISO", async ({ p
   await expect(page.locator('[data-testid^="vm-disk-row-"]').filter({ hasText: ".iso" })).toHaveCount(0);
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("demo-db-01.qcow2");
 
+  await openVMTab(page, "advanced");
   await page.getByTestId("vm-delete-button").click();
   const dialog = page.getByRole("alertdialog");
   await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-iso-attach-01");
@@ -569,6 +585,7 @@ test("可写模式克隆虚拟机并跟踪异步任务", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-legacy-01", exact: true }).click();
+  await openVMTab(page, "advanced");
 
   const openClone = page.getByTestId("vm-clone-open");
   await expect(openClone).toBeEnabled();
@@ -604,6 +621,7 @@ test("可写模式创建、回滚和删除虚拟机快照", async ({ page }) => 
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-legacy-01", exact: true }).click();
+  await openVMTab(page, "snapshots");
   await expect(page.getByTestId("vm-snapshots-card")).toBeVisible();
   await expect(page.getByTestId("vm-snapshot-empty")).toContainText("暂无快照");
 
@@ -647,6 +665,7 @@ test("可写模式直通 PCI 和 USB 设备并写入域 XML", async ({ page }) =
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-passthrough-card")).toBeVisible();
   await expect(page.getByTestId("vm-passthrough-empty")).toContainText("当前虚拟机还没有直通 PCI / USB 设备");
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -674,12 +693,14 @@ test("可写模式直通 PCI 和 USB 设备并写入域 XML", async ({ page }) =
   await expect(usbRow).toContainText("Logitech, Inc.");
   await expect(usbRow).toContainText("bus 1 · device 2");
 
+  await openVMTab(page, "advanced");
   const xml = page.getByTestId("vm-xml-content");
   await expect(xml).toContainText("<hostdev mode='subsystem' type='pci'");
   await expect(xml).toContainText("<hostdev mode='subsystem' type='usb'");
   await expect(xml).toContainText("bus='0x3b'");
   await expect(xml).toContainText("vendor id='0x046d'");
 
+  await openVMTab(page, "config");
   await page.getByTestId("vm-passthrough-detach-pci_0000_3b_00_0").click();
   const detachDialog = page.getByTestId("vm-passthrough-detach-dialog");
   await expect(detachDialog).toContainText("移除直通设备？");
@@ -914,6 +935,7 @@ test("可写模式切换虚拟机开机自启动", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-build-01", exact: true }).click();
+  await openVMTab(page, "config");
 
   const toggle = page.getByTestId("vm-autostart-toggle");
   await expect(toggle).toBeEnabled();
@@ -923,6 +945,7 @@ test("可写模式切换虚拟机开机自启动", async ({ page }) => {
   await expect(toggle).toHaveAttribute("aria-checked", "true");
 
   await page.reload();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-autostart-toggle")).toHaveAttribute("aria-checked", "true");
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
@@ -1074,9 +1097,11 @@ test("可写模式管理虚拟机模板并用模板创建虚拟机", async ({ pa
 
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "e2e-template-vm", exact: true })).toBeVisible();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
   await expect(page.getByTestId("vm-cloud-init")).toHaveText("已配置");
+  await openVMTab(page, "advanced");
   await page.getByTestId("vm-delete-button").click();
   const vmDialog = page.getByRole("alertdialog");
   await vmDialog.getByLabel("输入虚拟机名称确认").fill("e2e-template-vm");
@@ -1105,6 +1130,7 @@ test("可写模式管理定时快照策略并立即执行", async ({ page }) => 
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "snapshots");
   await expect(page.getByTestId("vm-snapshot-policy-card")).toBeVisible();
   await expect(page.getByTestId("vm-snapshot-policy-total")).toHaveText("0 个策略");
   await expect(page.getByTestId("vm-snapshot-policy-empty")).toContainText("暂无快照策略");
@@ -1172,6 +1198,7 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-legacy-01", exact: true }).click();
+  await openVMTab(page, "advanced");
   await page.getByLabel("XML 类型").selectOption("config");
   const xml = page.getByTestId("vm-xml-content");
   await expect(xml).toContainText("<vcpu>2</vcpu>");
@@ -1191,6 +1218,7 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   await expect(page.getByTestId("vm-xml-edit-notice")).toContainText("持久配置 XML 已保存");
   await expect(page.getByTestId("vm-xml-content")).toContainText("<vcpu>3</vcpu>");
   await page.reload();
+  await openVMTab(page, "advanced");
   await page.getByLabel("XML 类型").selectOption("config");
   await expect(page.getByTestId("vm-xml-content")).toContainText("<vcpu>3</vcpu>");
 
@@ -1338,6 +1366,7 @@ test("可写模式调整运行中虚拟机的 CPU 和内存并写入审计", asy
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "config");
 
   await expect(page.getByTestId("vm-resources-card")).toBeVisible();
   await expect(page.getByTestId("vm-resources-form")).toBeVisible();
@@ -1349,10 +1378,11 @@ test("可写模式调整运行中虚拟机的 CPU 和内存并写入审计", asy
   await page.getByTestId("vm-resources-save").click();
 
   await expect(page.getByTestId("vm-resources-notice")).toContainText("CPU 与内存已更新为 10 vCPU / 18 GiB");
-  await expect(page.getByTestId("vm-detail-vcpus")).toHaveText("10");
-  await expect(page.getByTestId("vm-detail-memory")).toHaveText("18 GiB");
   await expect(page.getByTestId("vm-resources-current-vcpus")).toHaveText("10");
   await expect(page.getByTestId("vm-resources-current-memory")).toHaveText("18 GiB");
+  await openVMTab(page, "overview");
+  await expect(page.getByTestId("vm-detail-vcpus")).toHaveText("10");
+  await expect(page.getByTestId("vm-detail-memory")).toHaveText("18 GiB");
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
   await page.getByTestId("audit-action-filter").selectOption("vm.resources.update");
@@ -1367,6 +1397,7 @@ test("可写模式扩容 qcow2 磁盘并写入审计", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "demo-db-01", exact: true }).click();
+  await openVMTab(page, "config");
 
   await expect(page.getByTestId("vm-disks-card")).toBeVisible();
   await expect(page.getByTestId("vm-disk-capacity-vda")).toHaveText("80 GiB");
@@ -1397,6 +1428,7 @@ test("管理员固定并回滚域 XML 版本且记录审计", async ({ page }) =
   await login(page);
   await page.goto("/vms/44444444-4444-4444-8444-444444444444");
   await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
+  await openVMTab(page, "advanced");
 
   await page.getByTestId("vm-config-versions-open").click();
   const dialog = page.getByTestId("vm-config-versions-dialog");
@@ -1528,8 +1560,10 @@ test("模板绑定镜像并从镜像全量克隆创建虚拟机", async ({ page 
 
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "e2e-image-vm", exact: true })).toBeVisible();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-disk-source")).toHaveText("/var/lib/libvirt/images/e2e-image-vm-disk.qcow2");
 
+  await openVMTab(page, "advanced");
   await page.getByTestId("vm-delete-button").click();
   const vmDialog = page.getByRole("alertdialog");
   await vmDialog.getByLabel("输入虚拟机名称确认").fill("e2e-image-vm");
@@ -1558,8 +1592,10 @@ test("同存储池 qcow2 镜像可创建链接克隆虚拟机", async ({ page })
 
   await expect(page).toHaveURL(/\/vms\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "e2e-linked-vm", exact: true })).toBeVisible();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-disk-source")).toHaveText("/var/lib/libvirt/images/e2e-linked-vm-disk.qcow2");
 
+  await openVMTab(page, "advanced");
   await page.getByTestId("vm-delete-button").click();
   const dialog = page.getByRole("alertdialog");
   await dialog.getByLabel("输入虚拟机名称确认").fill("e2e-linked-vm");
@@ -1615,6 +1651,7 @@ test("可写模式导入 QCOW2 磁盘并保留来源卷", async ({ page }) => {
 
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "e2e-import-01", exact: true }).click();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-import-01-disk.qcow2");
 
   await page.getByRole("link", { name: "存储", exact: true }).click();
@@ -1654,6 +1691,7 @@ test("可写模式使用 ISO 安装介质导入并创建空白系统盘", async 
 
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
   await page.getByRole("link", { name: "e2e-iso-import-01", exact: true }).click();
+  await openVMTab(page, "config");
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-iso-import-01-disk.qcow2");
   await expect(page.getByTestId("vm-disk-source").nth(1)).toContainText("debian-13-netinst.iso");
 });
