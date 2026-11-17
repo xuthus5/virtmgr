@@ -19,6 +19,12 @@ func main() {
 	args := os.Args[1:]
 	if len(args) > 0 {
 		switch args[0] {
+		case "reset-password":
+			if err := runResetPassword(args[1:]); err != nil {
+				fmt.Fprintln(os.Stderr, "reset password:", err)
+				os.Exit(1)
+			}
+			return
 		case "version", "--version", "-v":
 			fmt.Printf("virtmgr %s (%s, %s)\n", version.Version, version.Commit, version.Date)
 			return
@@ -66,5 +72,6 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   virtmgr [--config /etc/virtmgr/server.yaml]  Start the VirtMgr console
+  virtmgr reset-password --username <name>     Reset a local account password from the host
   virtmgr version                             Print version information`)
 }

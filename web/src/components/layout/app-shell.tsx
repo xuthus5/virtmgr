@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, Layers3, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, KeyRound, Layers3, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
 import { ApiError, api, unauthorizedEvent } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -202,6 +202,11 @@ export function AppShell() {
             <span className="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{user.username.slice(0, 1).toUpperCase()}</span>
             <span className="max-w-28 truncate text-sm">{user.username}</span>
           </div>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/account" aria-label="账号安全" title="账号安全" data-testid="account-security-link">
+              <KeyRound className="h-4 w-4" /><span className="hidden md:inline">账号安全</span>
+            </Link>
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => void logout()} aria-label="退出登录">
             <LogOut className="h-4 w-4" /><span className="hidden sm:inline">退出登录</span>
           </Button>

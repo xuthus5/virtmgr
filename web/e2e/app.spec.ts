@@ -24,6 +24,29 @@ test("匿名访问重定向到登录页", async ({ page }) => {
   await expect(page).toHaveTitle("登录 · VirtMgr");
 });
 
+test("登录页提供忘记密码入口和本地恢复说明", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByRole("link", { name: "忘记密码？", exact: true }).click();
+  await expect(page).toHaveURL(/\/forgot-password$/);
+  await expect(page.getByRole("heading", { name: "找回本地账号密码", exact: true })).toBeVisible();
+  await expect(page.getByText("virtmgr reset-password", { exact: false })).toBeVisible();
+  await expect(page.getByText("密码不会写入审计日志", { exact: false })).toBeVisible();
+  await page.getByRole("link", { name: "返回登录", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("顶部账号安全入口可直接打开修改密码", async ({ page }) => {
+  await login(page);
+  const accountLink = page.getByTestId("account-security-link");
+  await expect(accountLink).toBeVisible();
+  await accountLink.click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByRole("heading", { name: "账号安全", exact: true })).toBeVisible();
+  await expect(page.getByTestId("change-password-card")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "修改我的密码", exact: true })).toBeVisible();
+  await expect(page.getByTestId("account-security-page")).toContainText("admin");
+});
+
 test("本地管理员登录后展示 libvirt 总览", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("main").getByText("virtmgr-demo", { exact: true })).toBeVisible();

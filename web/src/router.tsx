@@ -5,6 +5,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuditPage } from "@/features/audit/audit-page";
 import { BackupsPage } from "@/features/backups/backups-page";
 import { LoginPage } from "@/features/auth/login-page";
+import { ForgotPasswordPage } from "@/features/auth/forgot-password-page";
+import { AccountSecurityPage } from "@/features/account/account-security-page";
 import { NetworksPage } from "@/features/networks/networks-page";
 import { HostPage } from "@/features/host/host-page";
 import { ImagesPage } from "@/features/images/images-page";
@@ -52,6 +54,7 @@ const rootRoute = createRootRoute({
 });
 
 const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: LoginPage });
+const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: "/forgot-password", component: ForgotPasswordPage });
 const appRoute = createRoute({ getParentRoute: () => rootRoute, id: "app", component: AppShell });
 const overviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
 const vmsRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms", component: VMsPage });
@@ -75,6 +78,7 @@ const tasksRoute = createRoute({ getParentRoute: () => appRoute, path: "/tasks",
 const eventsRoute = createRoute({ getParentRoute: () => appRoute, path: "/events", component: EventsPage });
 const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit", component: AuditPage });
 const usersRoute = createRoute({ getParentRoute: () => appRoute, path: "/users", component: UsersPage });
+const accountRoute = createRoute({ getParentRoute: () => appRoute, path: "/account", component: AccountSecurityPage });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsPage });
 const vmDetailRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -105,8 +109,9 @@ const vncConsoleRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
   loginRoute,
+  forgotPasswordRoute,
   vncConsoleRoute,
-  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmImportRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, settingsRoute]),
+  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmImportRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, accountRoute, settingsRoute]),
 ]);
 
 export const router = createRouter({

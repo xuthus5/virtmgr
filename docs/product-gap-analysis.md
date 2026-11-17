@@ -124,7 +124,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 | `SH-02` | 支持上传 QCOW2/RAW 系统盘及 ISO 并从已有卷导入虚拟机；ISO 模式创建空白系统盘和只读光驱 | GAP-02 | S-M | 高 | 复用存储卷复制/创建、创建域、异步任务、审计和配置版本路径；不做 OVA/OVF 与格式转换 | 已实现 |
 | `SH-03` | 虚拟机详情增加磁盘 IOPS/吞吐和分网卡网络速率 | GAP-21 | S-M | 中高 | 复用现有 libvirt domain stats 和指标展示组件 | 已实现 |
 | `SH-04` | 审计导出 JSON/CSV，并增加时间范围、目标 ID 过滤 | GAP-18 | S | 中 | 现有审计查询、分页和前端筛选可直接扩展 | 已实现 |
-| `SH-05` | 自助修改密码、管理员重置密码、查看并撤销其他会话 | GAP-17 | S-M | 中高 | `users`、`sessions` 和 Argon2id 已存在，主要补 API 和 UI | 已实现 |
+| `SH-05` | 自助修改密码、管理员重置密码、查看并撤销其他会话；单机宿主机 CLI 密码恢复 | GAP-17 | S-M | 中高 | `users`、`sessions` 和 Argon2id 已存在；恢复命令复用 SQLite 与审计 | 已实现 |
 | `SH-06` | VirtMgr 数据库在线备份/导出 | GAP-19 | S-M | 中高 | SQLite `VACUUM INTO`、管理员权限和审计 | 已实现 |
 | `SH-07` | 增加 Prometheus 文本格式 `/metrics` 端点 | GAP-23 | S-M | 中 | 宿主机指标转换为 Prometheus 文本格式 | 已实现 |
 | `SH-08` | 任务进度 SSE 和失败任务重试 | GAP-24 | S-M | 中 | 任务 SSE 快照和失败备份重试 | 已实现 |

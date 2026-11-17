@@ -1645,3 +1645,31 @@ test("可写模式使用 ISO 安装介质导入并创建空白系统盘", async 
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-iso-import-01-disk.qcow2");
   await expect(page.getByTestId("vm-disk-source").nth(1)).toContainText("debian-13-netinst.iso");
 });
+
+test("非管理员也可从顶部进入账号安全", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "用户管理", exact: true }).click();
+  await page.getByTestId("user-create-toggle").click();
+  await page.getByLabel("用户名", { exact: true }).fill("account-viewer");
+  await page.getByLabel("初始密码", { exact: true }).fill("viewer-secret-123");
+  await page.getByTestId("user-create-form").getByLabel("角色").selectOption("viewer");
+  await page.getByTestId("user-create-submit").click();
+  await expect(page.getByTestId("user-action-success")).toContainText("account-viewer");
+
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await loginAs(page, "account-viewer", "viewer-secret-123");
+  await expect(page.getByRole("link", { name: "用户管理", exact: true })).toHaveCount(0);
+  await page.getByTestId("account-security-link").click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByTestId("change-password-card")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "修改我的密码", exact: true })).toBeVisible();
+
+  await page.getByLabel("当前密码", { exact: true }).fill("viewer-secret-123");
+  await page.getByLabel("新密码", { exact: true }).fill("viewer-secret-456");
+  await page.getByLabel("确认新密码", { exact: true }).fill("viewer-secret-456");
+  await page.getByTestId("change-password-submit").click();
+  await expect(page.getByText("密码已更新，其他设备上的登录会话已撤销。", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await loginAs(page, "account-viewer", "viewer-secret-456");
+});

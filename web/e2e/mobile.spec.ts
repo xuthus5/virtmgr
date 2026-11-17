@@ -74,6 +74,26 @@ test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", a
   await expect(page.getByTestId("network-leases-br-prod")).toBeDisabled();
 });
 
+test("移动端账号安全入口可访问且无横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  const accountLink = page.getByTestId("account-security-link");
+  await expect(accountLink).toBeVisible();
+  await accountLink.click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByRole("heading", { name: "账号安全", exact: true })).toBeVisible();
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+});
+
 test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await login(page);

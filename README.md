@@ -289,7 +289,15 @@ Users can also create scoped Bearer API tokens from Settings. A `read` token is 
 
 The global read-only mode blocks all mutating infrastructure operations regardless of role. Read-only inventory, domain XML viewing, configuration export, and metric/event queries remain available.
 
-Administrators can create users, change roles, disable accounts, reset other users' passwords, inspect and revoke login sessions, filter and export the audit log by time or target, and change the persisted read-only setting from the web UI. Every local account can also verify its current password and change its own password; the current session is kept while other sessions are revoked.
+Administrators can create users, change roles, disable accounts, reset other users' passwords, inspect and revoke login sessions, filter and export the audit log by time or target, and change the persisted read-only setting from the web UI. Every local account can also open **Account security** from the top bar, verify its current password, and change it; the current session is kept while other sessions are revoked.
+
+The login page includes a **Forgot password?** entry. Single-host VirtMgr does not depend on email, so password recovery is performed locally by an account that can access the database file:
+
+```bash
+sudo -u virtmgr /usr/local/bin/virtmgr reset-password --username admin --config /etc/virtmgr/server.yaml
+```
+
+The command prompts for the new password with hidden input, revokes every session for that account, and records an audit event without password contents. Docker deployments should run the equivalent command inside the container.
 
 ## Safety and operational behavior
 

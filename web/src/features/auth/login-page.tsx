@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { LogIn, Server, ShieldCheck } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,10 @@ export function LoginPage() {
                 <Input id="username" name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required autoFocus />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">密码</Label>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="password">密码</Label>
+                  <Link to="/forgot-password" className="text-xs font-medium text-primary underline-offset-4 hover:underline">忘记密码？</Link>
+                </div>
                 <Input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
               </div>
               {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</p> : null}
