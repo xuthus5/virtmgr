@@ -95,6 +95,7 @@ function capabilityBadges(info: GuestAgentInfo) {
     ["SSH Key", info.capabilities.sshKeys],
     ["进程管理", info.capabilities.processes],
     ["登录用户", info.capabilities.users],
+    ["在线扩容", info.capabilities.filesystemResize],
     ["时区/路由", info.capabilities.timezone || info.capabilities.networkRoutes],
   ] as const;
   return capabilities.map(([label, enabled]) => (

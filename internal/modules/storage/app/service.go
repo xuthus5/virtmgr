@@ -130,6 +130,7 @@ var (
 	maxVolumeBytes         = uint64(16 << 40)
 	maxUploadBytes         = uint64(256 << 30)
 	volumeConvertTimeout   = 4 * time.Hour
+	volumeConvertFinalize  = 30 * time.Second
 )
 
 func New(repository Repository, audit AuditRecorder, readOnly bool, options ...Option) *Service {
@@ -538,19 +539,21 @@ func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeComman
 	go func() {
 		defer cancel()
 		result, convertErr := converter.ConvertStorageVolume(jobContext, command.Spec)
+		finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertFinalize)
+		defer finalizeCancel()
 		if convertErr != nil {
-			_ = s.recordMutationAudit(jobContext, command.Request, "storage.volume.convert", targetID, "failure", detail, convertErr)
-			_ = s.tasks.Fail(jobContext, task.ID, 100, "存储卷转换失败", convertErr)
+			_ = s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.convert", targetID, "failure", detail, convertErr)
+			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "存储卷转换失败", convertErr)
 			return
 		}
 		detail["targetPath"] = result.Path
 		detail["targetCapacityBytes"] = result.CapacityBytes
 		detail["targetAllocationBytes"] = result.AllocationBytes
-		if auditErr := s.recordMutationAudit(jobContext, command.Request, "storage.volume.convert", targetID, "success", detail, nil); auditErr != nil {
-			_ = s.tasks.Fail(jobContext, task.ID, 100, "存储卷转换完成但审计写入失败", auditErr)
+		if auditErr := s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.convert", targetID, "success", detail, nil); auditErr != nil {
+			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "存储卷转换完成但审计写入失败", auditErr)
 			return
 		}
-		_ = s.tasks.Succeed(jobContext, task.ID, fmt.Sprintf("存储卷已转换为 %s", command.Spec.TargetFormat))
+		_ = s.tasks.Succeed(finalizeContext, task.ID, fmt.Sprintf("存储卷已转换为 %s", command.Spec.TargetFormat))
 	}()
 	return task, nil
 }

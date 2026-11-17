@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"virtmgr/internal/domain"
 
@@ -33,7 +34,19 @@ var (
 	guestDevicePathPattern  = regexp.MustCompile(`^/dev/[A-Za-z0-9._/-]+$`)
 	guestDeviceNamePattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	guestServiceUnitPattern = regexp.MustCompile(`^[A-Za-z0-9@_.:-]{1,128}\.service$`)
+	errGuestCommandTimeout  = errors.New("guest command timed out")
 )
+
+type guestCommandTimeoutError struct {
+	path    string
+	timeout time.Duration
+}
+
+func (e *guestCommandTimeoutError) Error() string {
+	return fmt.Sprintf("guest command %s timed out after %s", e.path, e.timeout)
+}
+
+func (e *guestCommandTimeoutError) Unwrap() error { return errGuestCommandTimeout }
 
 type guestFileOpenResponse struct {
 	Return int `json:"return"`
@@ -272,6 +285,12 @@ func (c *Client) changeGuestAgentAuthorizedKeys(ctx context.Context, uuid string
 	if !domain.ValidGuestAgentUsername(spec.Username) || len(spec.Keys) == 0 || len(spec.Keys) > 16 {
 		return domain.ErrInvalidInput
 	}
+	for index := range spec.Keys {
+		spec.Keys[index] = strings.TrimSpace(spec.Keys[index])
+		if _, valid := domain.ParseSSHAuthorizedKey(spec.Keys[index]); !valid {
+			return domain.ErrInvalidInput
+		}
+	}
 	if _, err := c.requireGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool {
 		return capabilities.SSHKeys
 	}); err != nil {
@@ -300,7 +319,7 @@ func (c *Client) ListGuestAgentProcesses(ctx context.Context, uuid string) ([]do
 	var output string
 	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
 		var execErr error
-		output, execErr = runFirstGuestCommand(dom, []guestExecCommand{
+		output, execErr = runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/bin/ps", args: []string{"-eo", "pid=,ppid=,user=,stat=,comm=,args="}},
 			{path: "/usr/bin/ps", args: []string{"-eo", "pid=,ppid=,user=,stat=,comm=,args="}},
 		})
@@ -329,7 +348,7 @@ func (c *Client) ListGuestAgentServices(ctx context.Context, uuid string) ([]dom
 	var output string
 	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
 		var execErr error
-		output, execErr = runFirstGuestCommand(dom, []guestExecCommand{
+		output, execErr = runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/bin/systemctl", args: []string{"list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain"}},
 			{path: "/usr/bin/systemctl", args: []string{"list-units", "--type=service", "--all", "--no-legend", "--no-pager", "--plain"}},
 		})
@@ -361,7 +380,7 @@ func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (dom
 		SystemErrors: []string{}, OOMEvents: []string{}, Recommendations: []string{}, CommandErrors: []string{},
 	}
 	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
-		failedOutput, failedErr := runFirstGuestCommand(dom, []guestExecCommand{
+		failedOutput, failedErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/bin/systemctl", args: []string{"list-units", "--type=service", "--state=failed", "--no-legend", "--no-pager", "--plain"}},
 			{path: "/usr/bin/systemctl", args: []string{"list-units", "--type=service", "--state=failed", "--no-legend", "--no-pager", "--plain"}},
 		})
@@ -374,7 +393,7 @@ func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (dom
 			}
 		}
 
-		kernelOutput, kernelErr := runFirstGuestCommand(dom, []guestExecCommand{
+		kernelOutput, kernelErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/usr/bin/journalctl", args: []string{"-k", "-b", "-p", "warning", "--no-pager", "-n", "80", "-o", "short-iso"}},
 			{path: "/bin/journalctl", args: []string{"-k", "-b", "-p", "warning", "--no-pager", "-n", "80", "-o", "short-iso"}},
 		})
@@ -384,7 +403,7 @@ func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (dom
 			result.KernelWarnings = boundedDiagnosticLines(kernelOutput, guestAgentDiagnosticLines)
 		}
 
-		systemOutput, systemErr := runFirstGuestCommand(dom, []guestExecCommand{
+		systemOutput, systemErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/usr/bin/journalctl", args: []string{"-b", "-p", "err", "--no-pager", "-n", "80", "-o", "short-iso"}},
 			{path: "/bin/journalctl", args: []string{"-b", "-p", "err", "--no-pager", "-n", "80", "-o", "short-iso"}},
 		})
@@ -409,7 +428,7 @@ func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (dom
 			if !guestServiceUnitPattern.MatchString(service.Unit) {
 				continue
 			}
-			logOutput, logErr := runFirstGuestCommand(dom, []guestExecCommand{
+			logOutput, logErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 				{path: "/usr/bin/journalctl", args: []string{"-u", service.Unit, "-b", "--no-pager", "-n", "30", "-o", "short-iso"}},
 				{path: "/bin/journalctl", args: []string{"-u", service.Unit, "-b", "--no-pager", "-n", "30", "-o", "short-iso"}},
 			})
@@ -573,7 +592,7 @@ func (c *Client) SignalGuestAgentProcess(ctx context.Context, uuid string, spec 
 	}
 	pid := strconv.FormatInt(spec.PID, 10)
 	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
-		_, execErr := runFirstGuestCommand(dom, []guestExecCommand{
+		_, execErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/bin/kill", args: []string{signalFlag, pid}},
 			{path: "/usr/bin/kill", args: []string{signalFlag, pid}},
 		})
@@ -692,16 +711,22 @@ type guestExecCommand struct {
 	args []string
 }
 
-func runFirstGuestCommand(dom *libvirt.Domain, commands []guestExecCommand) (string, error) {
-	return runFirstGuestCommandWithTimeout(context.Background(), dom, guestAgentExecTimeout, commands)
+func runFirstGuestCommand(ctx context.Context, dom *libvirt.Domain, commands []guestExecCommand) (string, error) {
+	return runFirstGuestCommandWithTimeout(ctx, dom, guestAgentExecTimeout, commands)
 }
 
 func runFirstGuestCommandWithTimeout(ctx context.Context, dom *libvirt.Domain, timeout time.Duration, commands []guestExecCommand) (string, error) {
 	var failures []error
 	for _, command := range commands {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		output, err := runGuestCommand(ctx, dom, timeout, command.path, command.args)
 		if err == nil {
 			return output, nil
+		}
+		if errors.Is(err, errGuestCommandTimeout) {
+			return "", err
 		}
 		failures = append(failures, err)
 	}
@@ -709,6 +734,9 @@ func runFirstGuestCommandWithTimeout(ctx context.Context, dom *libvirt.Domain, t
 }
 
 func runGuestCommand(ctx context.Context, dom *libvirt.Domain, timeout time.Duration, path string, args []string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var started guestExecStartResponse
 	if err := guestAgentCall(dom, "guest-exec", map[string]any{
 		"path": path, "arg": args, "capture-output": true,
@@ -720,19 +748,30 @@ func runGuestCommand(ctx context.Context, dom *libvirt.Domain, timeout time.Dura
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if err := ctx.Err(); err != nil {
-			return "", err
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			terminateGuestCommand(dom, started.Return.PID)
+			return "", ctx.Err()
+		case <-timer.C:
 		}
-		time.Sleep(100 * time.Millisecond)
 		var status guestExecStatusResponse
 		if err := guestAgentCall(dom, "guest-exec-status", map[string]any{"pid": started.Return.PID}, guestAgentProbeTimeoutSeconds, &status); err != nil {
+			terminateGuestCommand(dom, started.Return.PID)
 			return "", err
 		}
 		if !status.Return.Exited {
 			continue
 		}
-		stdout, _ := base64.StdEncoding.DecodeString(status.Return.OutData)
-		stderr, _ := base64.StdEncoding.DecodeString(status.Return.ErrData)
+		stdout, err := decodeGuestExecOutput("stdout", status.Return.OutData)
+		if err != nil {
+			return "", err
+		}
+		stderr, err := decodeGuestExecOutput("stderr", status.Return.ErrData)
+		if err != nil {
+			return "", err
+		}
 		if status.Return.ExitCode != 0 {
 			message := strings.TrimSpace(string(stderr))
 			if message == "" {
@@ -745,7 +784,32 @@ func runGuestCommand(ctx context.Context, dom *libvirt.Domain, timeout time.Dura
 		}
 		return string(stdout), nil
 	}
-	return "", fmt.Errorf("guest command %s timed out", path)
+	terminateGuestCommand(dom, started.Return.PID)
+	return "", &guestCommandTimeoutError{path: path, timeout: timeout}
+}
+
+func decodeGuestExecOutput(stream, encoded string) ([]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode guest command %s: %w", stream, err)
+	}
+	return decoded, nil
+}
+
+func terminateGuestCommand(dom *libvirt.Domain, pid int64) {
+	if dom == nil || pid <= 0 {
+		return
+	}
+	pidText := strconv.FormatInt(pid, 10)
+	for _, path := range []string{"/bin/kill", "/usr/bin/kill"} {
+		var started guestExecStartResponse
+		err := guestAgentCall(dom, "guest-exec", map[string]any{
+			"path": path, "arg": []string{"-KILL", pidText}, "capture-output": true,
+		}, guestAgentProbeTimeoutSeconds, &started)
+		if err == nil && started.Return.PID > 0 {
+			return
+		}
+	}
 }
 
 func boundedDiagnosticLines(output string, limit int) []string {
@@ -756,9 +820,7 @@ func boundedDiagnosticLines(output string, limit int) []string {
 		if line == "" {
 			continue
 		}
-		if len(line) > 2048 {
-			line = line[:2048]
-		}
+		line, _ = truncateGuestText(line, 2048)
 		result = append(result, line)
 		if len(result) >= limit {
 			break
@@ -771,11 +833,19 @@ func boundedDiagnosticLines(output string, limit int) []string {
 }
 
 func truncateGuestDiagnostic(output string) (string, bool) {
-	output = strings.TrimSpace(strings.ToValidUTF8(output, "�"))
-	if len(output) <= guestAgentDiagnosticBytes {
-		return output, false
+	return truncateGuestText(output, guestAgentDiagnosticBytes)
+}
+
+func truncateGuestText(value string, limit int) (string, bool) {
+	value = strings.TrimSpace(strings.ToValidUTF8(value, "�"))
+	if len(value) <= limit {
+		return value, false
 	}
-	return output[:guestAgentDiagnosticBytes], true
+	truncated := value[:limit]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return strings.TrimSpace(truncated), true
 }
 
 func guestDiagnosticRecommendations(result domain.GuestAgentDiagnostics) []string {

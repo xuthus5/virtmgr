@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -380,17 +382,21 @@ func (s *Service) changeSSHKeys(ctx context.Context, command SSHKeyChangeCommand
 		step = "添加客户机 SSH 公钥"
 		successStep = "客户机 SSH 公钥已添加"
 	}
-	detail := map[string]any{
-		"username": command.Spec.Username, "keyCount": len(command.Spec.Keys),
-		"fingerprints": sshKeyFingerprints(command.Spec.Keys),
-	}
 	if command.UUID == "" || !domain.ValidGuestAgentUsername(command.Spec.Username) || len(command.Spec.Keys) == 0 || len(command.Spec.Keys) > maxGuestAgentSSHKeyCount {
 		return domain.Task{}, domain.ErrInvalidInput
 	}
+	keys := make([]string, 0, len(command.Spec.Keys))
 	for _, key := range command.Spec.Keys {
-		if strings.TrimSpace(key) == "" || len(key) > 16<<10 || strings.ContainsRune(key, '\x00') {
+		key = strings.TrimSpace(key)
+		if _, valid := domain.ParseSSHAuthorizedKey(key); !valid {
 			return domain.Task{}, domain.ErrInvalidInput
 		}
+		keys = append(keys, key)
+	}
+	command.Spec.Keys = keys
+	detail := map[string]any{
+		"username": command.Spec.Username, "keyCount": len(command.Spec.Keys),
+		"fingerprints": sshKeyFingerprints(command.Spec.Keys),
 	}
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.Task{}, s.recordFailure(ctx, command.Request, action, command.UUID, detail, domain.ErrForbidden)
@@ -417,6 +423,9 @@ func (s *Service) ListProcesses(ctx context.Context, command ProcessCommand) ([]
 	processes, err := s.backend.ListGuestAgentProcesses(ctx, command.UUID)
 	if err != nil {
 		return nil, s.recordFailure(ctx, command.Request, "vm.guest_agent.processes.list", command.UUID, nil, err)
+	}
+	if err := s.recordAudit(ctx, command.Request, "vm.guest_agent.processes.list", command.UUID, "success", map[string]any{"count": len(processes)}, nil); err != nil {
+		return nil, fmt.Errorf("record guest agent processes audit: %w", err)
 	}
 	return processes, nil
 }
@@ -559,6 +568,9 @@ func (s *Service) ListUsers(ctx context.Context, command ProcessCommand) ([]doma
 	users, err := s.backend.ListGuestAgentUsers(ctx, command.UUID)
 	if err != nil {
 		return nil, s.recordFailure(ctx, command.Request, "vm.guest_agent.users.list", command.UUID, nil, err)
+	}
+	if err := s.recordAudit(ctx, command.Request, "vm.guest_agent.users.list", command.UUID, "success", map[string]any{"count": len(users)}, nil); err != nil {
+		return nil, fmt.Errorf("record guest agent users audit: %w", err)
 	}
 	return users, nil
 }
@@ -833,8 +845,12 @@ func validFilePath(path string) bool {
 func sshKeyFingerprints(keys []string) []string {
 	fingerprints := make([]string, 0, len(keys))
 	for _, key := range keys {
-		sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-		fingerprints = append(fingerprints, "SHA256:"+hex.EncodeToString(sum[:]))
+		parsed, ok := domain.ParseSSHAuthorizedKey(key)
+		if !ok {
+			fingerprints = append(fingerprints, "invalid")
+			continue
+		}
+		fingerprints = append(fingerprints, ssh.FingerprintSHA256(parsed))
 	}
 	sort.Strings(fingerprints)
 	return fingerprints

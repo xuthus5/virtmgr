@@ -2,9 +2,12 @@ package libvirtbackend
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"virtmgr/internal/domain"
 )
@@ -87,6 +90,29 @@ func TestGuestAgentOperationGuards(t *testing.T) {
 	code, hint := guestAgentDiagnosticFromError(errors.New("permission denied by guest policy"))
 	if code != "permission_denied" || hint == "" {
 		t.Fatalf("diagnostic = %s %s", code, hint)
+	}
+}
+
+func TestGuestCommandOutputDecodingAndDiagnosticTruncation(t *testing.T) {
+	output, err := decodeGuestExecOutput("stdout", base64.StdEncoding.EncodeToString([]byte("hello")))
+	if err != nil || string(output) != "hello" {
+		t.Fatalf("decodeGuestExecOutput() = %q, %v", output, err)
+	}
+	if _, err := decodeGuestExecOutput("stderr", "not-base64"); err == nil || !strings.Contains(err.Error(), "stderr") {
+		t.Fatalf("invalid stderr decode error = %v", err)
+	}
+	if err := (&guestCommandTimeoutError{path: "/bin/ps", timeout: time.Second}); !errors.Is(err, errGuestCommandTimeout) {
+		t.Fatalf("timeout error does not match sentinel: %v", err)
+	}
+
+	text := strings.Repeat("a", guestAgentDiagnosticBytes-1) + "界"
+	truncated, wasTruncated := truncateGuestDiagnostic(text)
+	if !wasTruncated || len(truncated) > guestAgentDiagnosticBytes || !utf8.ValidString(truncated) {
+		t.Fatalf("truncated diagnostic bytes=%d valid=%v truncated=%v", len(truncated), utf8.ValidString(truncated), wasTruncated)
+	}
+	lines := boundedDiagnosticLines(strings.Repeat("a", 2047)+"界", 1)
+	if len(lines) != 1 || !utf8.ValidString(lines[0]) {
+		t.Fatalf("bounded diagnostic lines = %+v", lines)
 	}
 }
 

@@ -188,7 +188,7 @@ func TestGuestAgentHighRiskControlsAPI(t *testing.T) {
 	var keys domain.GuestAgentAuthorizedKeys
 	getJSON("/api/v1/vms/"+uuid+"/guest-agent/ssh-keys?username=root", &keys)
 	expectOK("ssh add", requestJSON(http.MethodPost, "/api/v1/vms/"+uuid+"/guest-agent/ssh-keys/add", domain.GuestAgentSSHKeySpec{
-		Username: "root", Keys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyOnly test@example"},
+		Username: "root", Keys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKEGfxgOZ+kZ0+mU5xjE7YG4sYjrtzUb0zDgKeugeg9Z test@example"},
 	}))
 	var processes struct {
 		Items []domain.GuestAgentProcess `json:"items"`

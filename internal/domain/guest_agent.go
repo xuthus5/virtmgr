@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 var guestAgentUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_.@\\-]{1,128}$`)
@@ -267,6 +269,18 @@ type GuestAgentCloudInit struct {
 
 func ValidGuestAgentUsername(value string) bool {
 	return guestAgentUsernamePattern.MatchString(strings.TrimSpace(value))
+}
+
+func ParseSSHAuthorizedKey(value string) (ssh.PublicKey, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 16<<10 || strings.ContainsRune(value, '\x00') {
+		return nil, false
+	}
+	key, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(value))
+	if err != nil || key == nil || strings.TrimSpace(string(rest)) != "" {
+		return nil, false
+	}
+	return key, true
 }
 
 type GuestAgentPolicy struct {

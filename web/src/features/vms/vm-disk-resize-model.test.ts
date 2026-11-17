@@ -3,6 +3,8 @@ import type { Disk, VM } from "@/api/types";
 import {
   defaultDiskCapacityGiB,
   validateDiskCapacity,
+  vmDiskDetachDisabledReason,
+  vmDiskQoSDisabledReason,
   vmDiskResizeDisabledReason,
 } from "@/features/vms/vm-disk-resize-model";
 
@@ -60,5 +62,17 @@ describe("VM disk resize model", () => {
     expect(validateDiskCapacity(disk, "0").error).toContain("至少");
     expect(validateDiskCapacity(disk, "100.1234").error).toContain("数字");
     expect(validateDiskCapacity(disk, "1048577").error).toContain("1 PiB");
+  });
+
+  it("keeps QoS and detach capability checks independent from capacity discovery", () => {
+    const unknownCapacity = { ...disk, capacityBytes: 0 };
+    expect(vmDiskResizeDisabledReason("operator", false, vm, unknownCapacity)).toContain("当前容量");
+    expect(vmDiskQoSDisabledReason("operator", false, vm, unknownCapacity)).toBe("");
+    expect(vmDiskDetachDisabledReason("operator", false, vm, unknownCapacity)).toBe("");
+    expect(vmDiskQoSDisabledReason("viewer", false, vm, disk)).toContain("没有虚拟机操作权限");
+    expect(vmDiskQoSDisabledReason("operator", true, vm, disk)).toContain("只读模式");
+    expect(vmDiskQoSDisabledReason("operator", false, vm, { ...disk, readOnly: true })).toContain("只读磁盘");
+    expect(vmDiskQoSDisabledReason("operator", false, vm, { ...disk, target: "" })).toContain("磁盘目标");
+    expect(vmDiskDetachDisabledReason("operator", false, vm, { ...disk, source: "" })).toContain("数据源");
   });
 });

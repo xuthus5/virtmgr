@@ -22,6 +22,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   defaultDiskCapacityGiB,
   validateDiskCapacity,
+  vmDiskDetachDisabledReason,
+  vmDiskQoSDisabledReason,
   vmDiskResizeDisabledReason,
 } from "@/features/vms/vm-disk-resize-model";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
@@ -255,7 +257,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
             </TableHeader>
             <TableBody>
               {vm.disks.map((disk, index) => {
-                const disabledReason = vmDiskResizeDisabledReason(role, readOnly, vm, disk);
+                const resizeDisabledReason = vmDiskResizeDisabledReason(role, readOnly, vm, disk);
+                const qosDisabledReason = vmDiskQoSDisabledReason(role, readOnly, vm, disk);
+                const detachDisabledReason = vmDiskDetachDisabledReason(role, readOnly, vm, disk);
                 const installerISO = disk.device === "cdrom" && /\.iso$/i.test(disk.source || "") && !/-cidata\.iso$/i.test(disk.source || "");
                 const ejectDisabledReason = readOnly
                   ? "系统当前处于只读模式"
@@ -306,8 +310,8 @@ export function VMDisksCard({ vm, role, readOnly }: {
                             variant="outline"
                             size="sm"
                             data-testid={`vm-disk-resize-${disk.target}`}
-                            disabled={Boolean(disabledReason) || mutation.isPending}
-                            title={disabledReason || `扩容磁盘 ${disk.target}`}
+                            disabled={Boolean(resizeDisabledReason) || mutation.isPending}
+                            title={resizeDisabledReason || `扩容磁盘 ${disk.target}`}
                             onClick={() => openResize(disk)}
                           >
                             <Maximize2 className="h-3.5 w-3.5" />扩容
@@ -316,8 +320,8 @@ export function VMDisksCard({ vm, role, readOnly }: {
                             variant={disk.qos ? "outline" : "ghost"}
                             size="sm"
                             data-testid={`vm-disk-qos-${disk.target}`}
-                            disabled={Boolean(disabledReason) || qosMutation.isPending}
-                            title={disabledReason || `配置磁盘 ${disk.target} 的吞吐与 IOPS 限制`}
+                            disabled={Boolean(qosDisabledReason) || qosMutation.isPending}
+                            title={qosDisabledReason || `配置磁盘 ${disk.target} 的吞吐与 IOPS 限制`}
                             onClick={() => openQoS(disk)}
                           >
                             <Gauge className="h-3.5 w-3.5" />限速
@@ -326,8 +330,8 @@ export function VMDisksCard({ vm, role, readOnly }: {
                             variant="ghost"
                             size="icon-sm"
                             data-testid={`vm-disk-detach-${disk.target}`}
-                            disabled={Boolean(disabledReason) || detachMutation.isPending || disk.target === rootTarget}
-                            title={disk.target === rootTarget ? "不能移除主系统磁盘" : disabledReason || "移除磁盘"}
+                            disabled={Boolean(detachDisabledReason) || detachMutation.isPending || disk.target === rootTarget}
+                            title={disk.target === rootTarget ? "不能移除主系统磁盘" : detachDisabledReason || "移除磁盘"}
                             aria-label={`移除磁盘 ${disk.target}`}
                             onClick={() => { setNotice(null); setDetachTarget(disk.target); }}
                           >

@@ -43,12 +43,12 @@ func (c *Client) GetGuestAgentCloudInit(ctx context.Context, uuid string) (domai
 
 	var result domain.GuestAgentCloudInit
 	err = c.withGuestAgentDomain(ctx, uuid, func(dom *libvirt.Domain) error {
-		statusOutput, statusErr := runFirstGuestCommand(dom, []guestExecCommand{
+		statusOutput, statusErr := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/usr/bin/cloud-init", args: []string{"status", "--long", "--format", "json"}},
 			{path: "/usr/sbin/cloud-init", args: []string{"status", "--long", "--format", "json"}},
 		})
 		if statusErr != nil {
-			statusOutput, statusErr = runFirstGuestCommand(dom, []guestExecCommand{
+			statusOutput, statusErr = runFirstGuestCommand(ctx, dom, []guestExecCommand{
 				{path: "/usr/bin/cloud-init", args: []string{"status", "--long"}},
 				{path: "/usr/sbin/cloud-init", args: []string{"status", "--long"}},
 			})
@@ -63,7 +63,7 @@ func (c *Client) GetGuestAgentCloudInit(ctx context.Context, uuid string) (domai
 			result.Installed = true
 			result.CheckedAt = time.Now().UTC()
 		}
-		logText, logPath := readGuestCloudInitLog(dom)
+		logText, logPath := readGuestCloudInitLog(ctx, dom)
 		if logText != "" {
 			result.LogPath = logPath
 			if len(logText) > guestCloudInitLogBytes {
@@ -80,9 +80,9 @@ func (c *Client) GetGuestAgentCloudInit(ctx context.Context, uuid string) (domai
 	return result, nil
 }
 
-func readGuestCloudInitLog(dom *libvirt.Domain) (string, string) {
+func readGuestCloudInitLog(ctx context.Context, dom *libvirt.Domain) (string, string) {
 	for _, path := range []string{"/var/log/cloud-init-output.log", "/var/log/cloud-init.log"} {
-		output, err := runFirstGuestCommand(dom, []guestExecCommand{
+		output, err := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 			{path: "/usr/bin/tail", args: []string{"-c", fmt.Sprintf("%d", guestCloudInitLogBytes), path}},
 			{path: "/bin/tail", args: []string{"-c", fmt.Sprintf("%d", guestCloudInitLogBytes), path}},
 		})
@@ -90,7 +90,7 @@ func readGuestCloudInitLog(dom *libvirt.Domain) (string, string) {
 			return output, path
 		}
 	}
-	output, err := runFirstGuestCommand(dom, []guestExecCommand{
+	output, err := runFirstGuestCommand(ctx, dom, []guestExecCommand{
 		{path: "/usr/bin/journalctl", args: []string{"-u", "cloud-init", "--no-pager", "-n", "200", "-o", "short-iso"}},
 		{path: "/bin/journalctl", args: []string{"-u", "cloud-init", "--no-pager", "-n", "200", "-o", "short-iso"}},
 	})

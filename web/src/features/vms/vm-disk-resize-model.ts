@@ -17,6 +17,29 @@ export function vmDiskResizeDisabledReason(role: Role | undefined, readOnly: boo
   return "";
 }
 
+export function vmDiskQoSDisabledReason(role: Role | undefined, readOnly: boolean, vm: VM, disk: Disk) {
+  if (disk.device !== "disk") return "仅支持数据磁盘限速";
+  if (readOnly) return "系统当前处于只读模式";
+  if (role !== "operator" && role !== "admin") return "当前账号没有虚拟机操作权限";
+  if (!vm.persistent) return "临时域不能持久化磁盘限速";
+  if (vm.state === "shutting-down" || vm.state === "unknown") return "当前状态不允许调整磁盘限速";
+  if (disk.readOnly) return "只读磁盘不能限速";
+  if (!disk.target) return "无法识别磁盘目标，暂时不能配置限速";
+  return "";
+}
+
+export function vmDiskDetachDisabledReason(role: Role | undefined, readOnly: boolean, vm: VM, disk: Disk) {
+  if (disk.device !== "disk") return "只支持移除数据磁盘";
+  if (readOnly) return "系统当前处于只读模式";
+  if (role !== "operator" && role !== "admin") return "当前账号没有虚拟机操作权限";
+  if (!vm.persistent) return "临时虚拟机不能移除磁盘";
+  if (vm.state === "shutting-down" || vm.state === "unknown") return "当前状态不允许移除磁盘";
+  if (disk.readOnly) return "只读磁盘不能移除";
+  if (!disk.source) return "磁盘没有可识别的数据源";
+  if (!disk.target) return "无法识别磁盘目标，暂时不能移除磁盘";
+  return "";
+}
+
 export function defaultDiskCapacityGiB(disk: Disk) {
   return Math.max(Math.ceil(disk.capacityBytes / bytesPerGiB) + 10, 1);
 }

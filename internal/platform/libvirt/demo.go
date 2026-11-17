@@ -56,7 +56,7 @@ func NewDemo(sinks ...EventSink) *DemoBackend {
 			"/etc/os-release": []byte("PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\nVERSION_ID=\"24.04\"\n"),
 		},
 		guestSSHKeys: map[string][]string{
-			"root": {"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoVirtMgrGuestAgentKeyOnly demo@virtmgr"},
+			"root": {"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKEGfxgOZ+kZ0+mU5xjE7YG4sYjrtzUb0zDgKeugeg9Z demo@virtmgr"},
 		},
 		guestProcesses: []domain.GuestAgentProcess{
 			{PID: 1, PPID: 0, User: "root", State: "Ss", Command: "systemd", Args: "/sbin/init"},

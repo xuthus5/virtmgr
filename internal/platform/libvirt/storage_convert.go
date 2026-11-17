@@ -26,12 +26,15 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 		(spec.SourcePool == spec.TargetPool && spec.SourceVolume == spec.TargetName) {
 		return domain.StorageVolume{}, domain.ErrInvalidInput
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.ensureConnectionLocked(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return domain.StorageVolume{}, err
 	}
-	sourcePool, err := c.conn.LookupStoragePoolByName(spec.SourcePool)
+	conn, err := libvirt.NewConnect(c.uri)
+	if err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("connect libvirt %s for storage conversion: %w", c.uri, err)
+	}
+	defer func() { _, _ = conn.Close() }()
+	sourcePool, err := conn.LookupStoragePoolByName(spec.SourcePool)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
 			return domain.StorageVolume{}, domain.ErrNotFound
@@ -72,14 +75,14 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 	if len(parsed.BackingStore) > 0 {
 		return domain.StorageVolume{}, fmt.Errorf("%w: linked-clone source volumes must be flattened before conversion", domain.ErrActionNotAllowed)
 	}
-	children, err := c.storageVolumesUsingBackingLocked(source.Path)
+	children, err := storageVolumesUsingBacking(conn, source.Path)
 	if err != nil {
 		return domain.StorageVolume{}, err
 	}
 	if len(children) > 0 {
 		return domain.StorageVolume{}, fmt.Errorf("%w: source volume is a backing store for %s", domain.ErrVolumeInUse, strings.Join(children, ", "))
 	}
-	attached, err := c.domainsActivelyUsingVolumeLocked(source.Path, spec.SourceVolume)
+	attached, err := domainsActivelyUsingVolume(conn, source.Path, spec.SourceVolume)
 	if err != nil {
 		return domain.StorageVolume{}, err
 	}
@@ -87,7 +90,7 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 		return domain.StorageVolume{}, fmt.Errorf("%w: source volume is attached to running VM %s", domain.ErrVolumeInUse, strings.Join(attached, ", "))
 	}
 
-	targetPool, err := c.conn.LookupStoragePoolByName(spec.TargetPool)
+	targetPool, err := conn.LookupStoragePoolByName(spec.TargetPool)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
 			return domain.StorageVolume{}, domain.ErrNotFound
@@ -109,6 +112,9 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 		return domain.StorageVolume{}, fmt.Errorf("check target storage volume %s: %w", spec.TargetName, lookupErr)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return domain.StorageVolume{}, err
+	}
 	targetVolume, err := targetPool.StorageVolCreateXMLFrom(buildCloneVolumeXML(spec.TargetName, source.CapacityBytes, spec.TargetFormat), sourceVolume, 0)
 	if err != nil {
 		if errors.Is(err, libvirt.ERR_STORAGE_VOL_EXIST) {
@@ -123,12 +129,18 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 		}
 		_ = targetVolume.Free()
 	}()
+	if err := ctx.Err(); err != nil {
+		return domain.StorageVolume{}, err
+	}
 	result, err := storageVolumeFromLibvirt(targetVolume)
 	if err != nil {
 		return domain.StorageVolume{}, err
 	}
 	if result.Format != spec.TargetFormat {
 		return domain.StorageVolume{}, fmt.Errorf("libvirt created target volume %s as %s instead of requested %s", spec.TargetName, result.Format, spec.TargetFormat)
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.StorageVolume{}, err
 	}
 	committed = true
 	if err := targetPool.Refresh(0); err == nil {
@@ -142,8 +154,8 @@ func (c *Client) ConvertStorageVolume(ctx context.Context, spec domain.StorageVo
 	return result, nil
 }
 
-func (c *Client) domainsActivelyUsingVolumeLocked(volumePath, volumeName string) ([]string, error) {
-	domains, err := c.conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE | libvirt.CONNECT_LIST_DOMAINS_INACTIVE)
+func domainsActivelyUsingVolume(conn *libvirt.Connect, volumePath, volumeName string) ([]string, error) {
+	domains, err := conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE | libvirt.CONNECT_LIST_DOMAINS_INACTIVE)
 	if err != nil {
 		return nil, fmt.Errorf("list libvirt domains before storage conversion: %w", err)
 	}

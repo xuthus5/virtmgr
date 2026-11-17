@@ -30,6 +30,7 @@ type convertTaskRecorder struct {
 	starts    []string
 	succeeded []string
 	failed    []string
+	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
 }
@@ -46,6 +47,21 @@ func (r *convertTaskRecorder) Start(_ context.Context, kind, targetKind, targetI
 }
 
 func (r *convertTaskRecorder) Progress(context.Context, string, int, string) error { return nil }
+
+func (r *convertTaskRecorder) RegisterCancel(_ string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cancel = cancel
+}
+
+func (r *convertTaskRecorder) triggerCancel() {
+	r.mu.Lock()
+	cancel := r.cancel
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
 
 func (r *convertTaskRecorder) Succeed(_ context.Context, id, step string) error {
 	r.mu.Lock()
@@ -80,6 +96,26 @@ func waitConvertTask(t *testing.T, recorder *convertTaskRecorder) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for conversion task")
 	}
+}
+
+type contextCheckingAuditRecorder struct {
+	mu         sync.Mutex
+	events     []domain.AuditEvent
+	contextErr []error
+}
+
+func (r *contextCheckingAuditRecorder) RecordAudit(ctx context.Context, event domain.AuditEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+	r.contextErr = append(r.contextErr, ctx.Err())
+	return nil
+}
+
+func (r *contextCheckingAuditRecorder) snapshot() ([]domain.AuditEvent, []error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]domain.AuditEvent(nil), r.events...), append([]error(nil), r.contextErr...)
 }
 
 func successfulConvertRepository() *convertRepository {
@@ -146,6 +182,38 @@ func TestConvertVolumeMarksTaskAndAuditFailed(t *testing.T) {
 	}
 	if len(audit.events) != 1 || audit.events[0].Result != "failure" {
 		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestConvertVolumeFinalizesAuditAfterJobCancellation(t *testing.T) {
+	repository := successfulConvertRepository()
+	audit := &contextCheckingAuditRecorder{}
+	tasks := newConvertTaskRecorder()
+	repository.convert = func(ctx context.Context, _ domain.StorageVolumeConvertSpec) (domain.StorageVolume, error) {
+		tasks.triggerCancel()
+		return domain.StorageVolume{}, ctx.Err()
+	}
+	service := New(repository, audit, false, WithTaskRecorder(tasks))
+	if _, err := service.ConvertVolume(context.Background(), ConvertVolumeCommand{
+		Pool: "default", Name: "source.qcow2",
+		Spec:    domain.StorageVolumeConvertSpec{TargetPool: "default", TargetName: "source.raw", TargetFormat: "raw"},
+		Request: MutationContext{Session: operatorSession()},
+	}); err != nil {
+		t.Fatalf("ConvertVolume() error = %v", err)
+	}
+	waitConvertTask(t, tasks)
+	events, contextErrs := audit.snapshot()
+	if len(events) != 1 || events[0].Result != "failure" || events[0].Detail["error"] != context.Canceled.Error() {
+		t.Fatalf("audit events = %+v", events)
+	}
+	for _, err := range contextErrs {
+		if err != nil {
+			t.Fatalf("final audit used canceled context: %v", err)
+		}
+	}
+	_, succeeded, failed := tasks.snapshot()
+	if len(succeeded) != 0 || len(failed) != 1 {
+		t.Fatalf("succeeded=%+v failed=%+v", succeeded, failed)
 	}
 }
 

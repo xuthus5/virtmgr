@@ -453,9 +453,13 @@ func (c *Client) DeleteStorageVolume(ctx context.Context, poolName, volumeName s
 }
 
 func (c *Client) storageVolumesUsingBackingLocked(backingPath string) ([]string, error) {
-	pools, err := c.conn.ListAllStoragePools(libvirt.CONNECT_LIST_STORAGE_POOLS_ACTIVE)
+	return storageVolumesUsingBacking(c.conn, backingPath)
+}
+
+func storageVolumesUsingBacking(conn *libvirt.Connect, backingPath string) ([]string, error) {
+	pools, err := conn.ListAllStoragePools(libvirt.CONNECT_LIST_STORAGE_POOLS_ACTIVE)
 	if err != nil {
-		return nil, fmt.Errorf("list active storage pools before volume delete: %w", err)
+		return nil, fmt.Errorf("list active storage pools before inspecting volume backing: %w", err)
 	}
 	defer func() {
 		for i := range pools {
@@ -468,22 +472,22 @@ func (c *Client) storageVolumesUsingBackingLocked(backingPath string) ([]string,
 		pool := &pools[i]
 		poolName, nameErr := pool.GetName()
 		if nameErr != nil {
-			return nil, fmt.Errorf("read storage pool name before volume delete: %w", nameErr)
+			return nil, fmt.Errorf("read storage pool name before inspecting volume backing: %w", nameErr)
 		}
 		volumes, listErr := pool.ListAllStorageVolumes(0)
 		if listErr != nil {
-			return nil, fmt.Errorf("list storage volumes in %s before volume delete: %w", poolName, listErr)
+			return nil, fmt.Errorf("list storage volumes in %s before inspecting volume backing: %w", poolName, listErr)
 		}
 		for index := range volumes {
 			xmlText, xmlErr := volumes[index].GetXMLDesc(0)
 			volumeName, volumeNameErr := volumes[index].GetName()
 			_ = volumes[index].Free()
 			if xmlErr != nil || volumeNameErr != nil {
-				return nil, fmt.Errorf("inspect storage volume in %s before volume delete: %w", poolName, errors.Join(xmlErr, volumeNameErr))
+				return nil, fmt.Errorf("inspect storage volume in %s before inspecting volume backing: %w", poolName, errors.Join(xmlErr, volumeNameErr))
 			}
 			var parsed storageVolumeXML
 			if err := xml.Unmarshal([]byte(xmlText), &parsed); err != nil {
-				return nil, fmt.Errorf("decode storage volume %s in %s before volume delete: %w", volumeName, poolName, err)
+				return nil, fmt.Errorf("decode storage volume %s in %s before inspecting volume backing: %w", volumeName, poolName, err)
 			}
 			for _, backing := range parsed.BackingStore {
 				if filepath.Clean(strings.TrimSpace(backing.Path)) == target {

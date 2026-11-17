@@ -9,6 +9,8 @@ import (
 	"virtmgr/internal/domain"
 )
 
+const testSSHAuthorizedKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKEGfxgOZ+kZ0+mU5xjE7YG4sYjrtzUb0zDgKeugeg9Z review@example"
+
 type fakeBackend struct {
 	info        domain.GuestAgentInfo
 	actionSpec  domain.GuestAgentActionSpec
@@ -257,7 +259,7 @@ func TestGuestAgentSensitiveOperationsAuditWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := service.AddSSHKeys(context.Background(), SSHKeyChangeCommand{
-		UUID: "vm-1", Spec: domain.GuestAgentSSHKeySpec{Username: "alice", Keys: []string{"ssh-ed25519 AAAASECRET"}}, Request: request,
+		UUID: "vm-1", Spec: domain.GuestAgentSSHKeySpec{Username: "alice", Keys: []string{testSSHAuthorizedKey}}, Request: request,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +278,7 @@ func TestGuestAgentSensitiveOperationsAuditWithoutSecrets(t *testing.T) {
 			if !ok || key == "fingerprints" {
 				continue
 			}
-			if text == "super-secret" || text == "ssh-ed25519 AAAASECRET" || text == encoded || text == "aGVsbG8=" {
+			if text == "super-secret" || text == testSSHAuthorizedKey || text == encoded || text == "aGVsbG8=" {
 				t.Fatalf("audit leaked secret in %s: %+v", key, event.Detail)
 			}
 		}
@@ -297,8 +299,55 @@ func TestGuestAgentFileAndProcessGuards(t *testing.T) {
 	}
 	viewer := operatorRequest()
 	viewer.Session.User.Role = domain.RoleViewer
-	if _, err := service.AddSSHKeys(context.Background(), SSHKeyChangeCommand{UUID: "vm-1", Spec: domain.GuestAgentSSHKeySpec{Username: "alice", Keys: []string{"ssh-ed25519 AAAA"}}, Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
+	if _, err := service.AddSSHKeys(context.Background(), SSHKeyChangeCommand{UUID: "vm-1", Spec: domain.GuestAgentSSHKeySpec{Username: "alice", Keys: []string{testSSHAuthorizedKey}}, Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("viewer ssh error = %v", err)
+	}
+}
+
+func TestGuestAgentSSHKeysRequireValidAuthorizedKeys(t *testing.T) {
+	backend := &fakeBackend{}
+	tasks := &fakeTasks{}
+	service := New(backend, &fakeAudit{}, false, WithTaskRecorder(tasks))
+	for _, key := range []string{"", "ssh-ed25519 not-base64", "ssh-rsa AAAA incomplete", "ssh-ed25519 AAAAextra\nssh-ed25519 AAAAsecond"} {
+		if _, err := service.AddSSHKeys(context.Background(), SSHKeyChangeCommand{
+			UUID: "vm-1", Spec: domain.GuestAgentSSHKeySpec{Username: "alice", Keys: []string{key}}, Request: operatorRequest(),
+		}); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("invalid key %q error = %v", key, err)
+		}
+	}
+	if tasks.started != 0 || backend.sshAdd.Keys != nil {
+		t.Fatalf("invalid keys reached backend: tasks=%+v spec=%+v", tasks, backend.sshAdd)
+	}
+}
+
+func TestGuestAgentListOperationsAuditCounts(t *testing.T) {
+	backend := &fakeBackend{
+		processes: []domain.GuestAgentProcess{{PID: 1, Command: "systemd"}, {PID: 42, Command: "sshd"}},
+		users:     []domain.GuestAgentUser{{Username: "alice"}},
+	}
+	audit := &fakeAudit{}
+	service := New(backend, audit, false)
+	if _, err := service.ListProcesses(context.Background(), ProcessCommand{UUID: "vm-1", Request: operatorRequest()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ListServices(context.Background(), ProcessCommand{UUID: "vm-1", Request: operatorRequest()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ListUsers(context.Background(), ProcessCommand{UUID: "vm-1", Request: operatorRequest()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(audit.events) != 3 {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+	want := map[string]int{
+		"vm.guest_agent.processes.list": 2,
+		"vm.guest_agent.services.list":  1,
+		"vm.guest_agent.users.list":     1,
+	}
+	for _, event := range audit.events {
+		if event.Result != "success" || event.Detail["count"] != want[event.Action] {
+			t.Fatalf("audit event = %+v", event)
+		}
 	}
 }
 

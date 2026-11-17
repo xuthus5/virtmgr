@@ -532,6 +532,7 @@ test("虚拟机列表可进入详情页并展示硬件信息", async ({ page }) 
   await expect(page.getByTestId("guest-agent-state")).toHaveText("已连接");
   await expect(page.getByTestId("guest-agent-hostname")).toHaveText("demo-db-01");
   await expect(page.getByTestId("guest-agent-capabilities")).toContainText("静默快照");
+  await expect(page.getByTestId("guest-agent-capabilities")).toContainText("在线扩容");
   await expect(page.getByTestId("guest-agent-action-shutdown")).toBeDisabled();
 
   await openVMTab(page, "config");
