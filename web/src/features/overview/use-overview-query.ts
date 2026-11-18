@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const overviewQueryKey = ["overview"] as const;
+export const overviewQueryKey = queryKeys.overview;
 
 export function useOverviewQuery(enabled = true) {
   return useQuery({

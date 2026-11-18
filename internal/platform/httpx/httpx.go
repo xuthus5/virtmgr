@@ -7,6 +7,7 @@ import (
 	"net"
 	stdhttp "net/http"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"virtmgr/internal/domain"
@@ -92,8 +93,8 @@ func trustedPeer(remoteAddr string, trustedProxies []netip.Prefix) bool {
 func forwardedClientIP(r *stdhttp.Request, trustedProxies []netip.Prefix) (netip.Addr, bool) {
 	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
 		hops := strings.Split(forwarded, ",")
-		for index := len(hops) - 1; index >= 0; index-- {
-			address, err := netip.ParseAddr(strings.TrimSpace(hops[index]))
+		for index, hop := range slices.Backward(hops) {
+			address, err := netip.ParseAddr(strings.TrimSpace(hop))
 			if err != nil {
 				return netip.Addr{}, false
 			}

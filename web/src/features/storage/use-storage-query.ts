@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const storagePoolsQueryKey = ["storage", "pools"] as const;
+export const storagePoolsQueryKey = queryKeys.storage.pools;
 
 export function useStoragePoolsQuery(enabled = true) {
   return useQuery({
@@ -14,7 +15,7 @@ export function useStoragePoolsQuery(enabled = true) {
 
 export function useStorageVolumesQuery(pool: string) {
   return useQuery({
-    queryKey: ["storage", "volumes", pool],
+    queryKey: queryKeys.storage.volumes(pool),
     queryFn: () => api.storageVolumes(pool),
     staleTime: 15_000,
     refetchOnMount: "always",

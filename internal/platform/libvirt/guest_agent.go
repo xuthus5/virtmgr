@@ -1,6 +1,7 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -8,7 +9,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -424,14 +425,17 @@ func parseGuestRoutes(raw string) ([]domain.GuestAgentRoute, error) {
 			Interface: strings.TrimSpace(route.Interface), Family: family, Metric: route.Metric,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Family != result[j].Family {
-			return result[i].Family == "ipv4"
+	slices.SortFunc(result, func(left, right domain.GuestAgentRoute) int {
+		if left.Family != right.Family {
+			if left.Family == "ipv4" {
+				return -1
+			}
+			if right.Family == "ipv4" {
+				return 1
+			}
+			return cmp.Compare(left.Family, right.Family)
 		}
-		if result[i].Destination != result[j].Destination {
-			return result[i].Destination < result[j].Destination
-		}
-		return result[i].Interface < result[j].Interface
+		return cmp.Or(cmp.Compare(left.Destination, right.Destination), cmp.Compare(left.Interface, right.Interface))
 	})
 	return result, nil
 }
@@ -485,7 +489,6 @@ func parseGuestAgentNetworkInterfaces(raw string) ([]domain.GuestAgentNetworkInt
 			MAC:       strings.TrimSpace(networkInterface.MAC),
 			Addresses: []domain.GuestAgentIPAddress{},
 		}
-		seen := make(map[string]struct{})
 		for _, address := range networkInterface.IPAddresses {
 			value := strings.TrimSpace(address.Address)
 			if zone := strings.LastIndexByte(value, '%'); zone >= 0 {
@@ -496,10 +499,11 @@ func parseGuestAgentNetworkInterfaces(raw string) ([]domain.GuestAgentNetworkInt
 				continue
 			}
 			normalized := ip.String()
-			if _, ok := seen[normalized]; ok {
+			if slices.ContainsFunc(item.Addresses, func(existing domain.GuestAgentIPAddress) bool {
+				return existing.Address == normalized
+			}) {
 				continue
 			}
-			seen[normalized] = struct{}{}
 			family := "ipv6"
 			if ip.To4() != nil {
 				family = "ipv4"
@@ -509,15 +513,23 @@ func parseGuestAgentNetworkInterfaces(raw string) ([]domain.GuestAgentNetworkInt
 		if len(item.Addresses) == 0 {
 			continue
 		}
-		sort.Slice(item.Addresses, func(i, j int) bool {
-			if item.Addresses[i].Family != item.Addresses[j].Family {
-				return item.Addresses[i].Family == "ipv4"
+		slices.SortFunc(item.Addresses, func(left, right domain.GuestAgentIPAddress) int {
+			if left.Family != right.Family {
+				if left.Family == "ipv4" {
+					return -1
+				}
+				if right.Family == "ipv4" {
+					return 1
+				}
+				return cmp.Compare(left.Family, right.Family)
 			}
-			return item.Addresses[i].Address < item.Addresses[j].Address
+			return cmp.Compare(left.Address, right.Address)
 		})
 		result = append(result, item)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	slices.SortFunc(result, func(left, right domain.GuestAgentNetworkInterface) int {
+		return cmp.Compare(left.Name, right.Name)
+	})
 	return result, nil
 }
 
@@ -543,7 +555,9 @@ func parseGuestAgentFilesystems(raw string) ([]domain.GuestAgentFilesystem, erro
 			FreeBytes:  freeBytes,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].MountPoint < result[j].MountPoint })
+	slices.SortFunc(result, func(left, right domain.GuestAgentFilesystem) int {
+		return cmp.Compare(left.MountPoint, right.MountPoint)
+	})
 	return result, nil
 }
 

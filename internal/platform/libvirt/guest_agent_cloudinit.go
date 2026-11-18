@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,7 +121,7 @@ func parseGuestCloudInitStatus(raw string) domain.GuestAgentCloudInit {
 	}
 
 	recoverable := false
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line == "." {
 			continue
@@ -186,13 +187,8 @@ func decodeCloudInitRecoverableErrors(raw json.RawMessage) []string {
 	}
 	var grouped map[string][]string
 	if json.Unmarshal(raw, &grouped) == nil {
-		keys := make([]string, 0, len(grouped))
-		for key := range grouped {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
 		values = make([]string, 0)
-		for _, key := range keys {
+		for _, key := range slices.Sorted(maps.Keys(grouped)) {
 			for _, item := range grouped[key] {
 				item = strings.TrimSpace(item)
 				if item != "" {
@@ -204,11 +200,7 @@ func decodeCloudInitRecoverableErrors(raw json.RawMessage) []string {
 	}
 	var single map[string]string
 	if json.Unmarshal(raw, &single) == nil {
-		keys := make([]string, 0, len(single))
-		for key := range single {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
+		keys := slices.Sorted(maps.Keys(single))
 		values = make([]string, 0, len(keys))
 		for _, key := range keys {
 			if item := strings.TrimSpace(single[key]); item != "" {
@@ -220,10 +212,7 @@ func decodeCloudInitRecoverableErrors(raw json.RawMessage) []string {
 }
 
 func boundedCloudInitErrors(values []string) []string {
-	capacity := len(values)
-	if capacity > guestCloudInitMaxErrs {
-		capacity = guestCloudInitMaxErrs
-	}
+	capacity := min(len(values), guestCloudInitMaxErrs)
 	result := make([]string, 0, capacity)
 	for _, value := range values {
 		value = strings.TrimSpace(strings.ToValidUTF8(value, "�"))

@@ -19,6 +19,7 @@ import { useSessionQuery } from "@/features/auth/use-session";
 import { StoragePoolsCard } from "@/features/storage/storage-pools-card";
 import { storagePoolsQueryKey, useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes, percent } from "@/lib/utils";
 
 type CreateFormState = {
@@ -87,7 +88,7 @@ export function StoragePage() {
       setCreateError("");
       setCreateOpen(false);
       setCreateForm(initialCreateForm);
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", variables.pool] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(variables.pool) });
       void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     },
     onError: (cause) => {
@@ -103,7 +104,7 @@ export function StoragePage() {
       setUploadError("");
       setUploadOpen(false);
       setUploadFile(null);
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", variables.pool] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(variables.pool) });
       void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     },
     onError: (cause) => {
@@ -119,7 +120,7 @@ export function StoragePage() {
       setDeleteTarget(null);
       setDeleteName("");
       setDeleteError("");
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", variables.pool] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(variables.pool) });
       void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     },
     onError: (cause) => {
@@ -150,8 +151,8 @@ export function StoragePage() {
     if (convertTaskQuery.data.status === "succeeded") {
       setSuccessMessage(`存储卷 ${convertTarget.name} 已转换为 ${convertTaskQuery.data.step.replace(/^存储卷已转换为\s*/, "")}。`);
       setSuccessTestId("storage-convert-success");
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", selected.name] });
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", convertPool] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(selected.name) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(convertPool) });
       void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
     } else if (convertTaskQuery.data.status === "failed") {
       setConvertError(convertTaskQuery.data.error || "存储卷转换任务失败。");

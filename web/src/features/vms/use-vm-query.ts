@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { VMXMLFormat } from "@/api/types";
+import { queryKeys } from "@/lib/query-keys";
 
-export const vmQueryKey = (uuid: string) => ["vm", uuid] as const;
-export const vmMetricsQueryKey = (uuid: string) => ["vm", uuid, "metrics"] as const;
+export const vmQueryKey = (uuid: string) => queryKeys.vm(uuid).root;
+export const vmMetricsQueryKey = (uuid: string) => queryKeys.vm(uuid).metrics;
 
 export function useVMQuery(uuid: string) {
   return useQuery({
@@ -23,7 +24,7 @@ export function useVMMetricsQuery(uuid: string) {
   });
 }
 
-export const vmXMLQueryKey = (uuid: string, format: VMXMLFormat) => ["vm", uuid, "xml", format] as const;
+export const vmXMLQueryKey = (uuid: string, format: VMXMLFormat) => queryKeys.vm(uuid).xml(format);
 
 export function useVMXMLQuery(uuid: string, format: VMXMLFormat) {
   return useQuery({
@@ -33,7 +34,7 @@ export function useVMXMLQuery(uuid: string, format: VMXMLFormat) {
   });
 }
 
-export const vmSnapshotsQueryKey = (uuid: string) => ["vm", uuid, "snapshots"] as const;
+export const vmSnapshotsQueryKey = (uuid: string) => queryKeys.vm(uuid).snapshots;
 
 export function useVMSnapshotsQuery(uuid: string) {
   return useQuery({
@@ -43,7 +44,7 @@ export function useVMSnapshotsQuery(uuid: string) {
   });
 }
 
-export const snapshotPoliciesQueryKey = (uuid: string) => ["vm", uuid, "snapshot-policies"] as const;
+export const snapshotPoliciesQueryKey = (uuid: string) => queryKeys.vm(uuid).snapshotPolicies;
 
 export function useSnapshotPoliciesQuery(uuid: string) {
   return useQuery({

@@ -1,13 +1,14 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -146,8 +147,8 @@ func (s *Service) ListPools(ctx context.Context) (domain.StoragePoolList, error)
 	if err != nil {
 		return domain.StoragePoolList{}, err
 	}
-	sort.Slice(pools, func(i, j int) bool {
-		return strings.ToLower(pools[i].Name) < strings.ToLower(pools[j].Name)
+	slices.SortFunc(pools, func(left, right domain.StoragePool) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	return domain.StoragePoolList{Items: pools, Total: len(pools)}, nil
 }
@@ -247,8 +248,8 @@ func (s *Service) ListVolumes(ctx context.Context, poolName string) (domain.Stor
 	for index := range volumes {
 		volumes[index].UsedBy = storageVolumeUsage(volumes[index], vms)
 	}
-	sort.Slice(volumes, func(i, j int) bool {
-		return strings.ToLower(volumes[i].Name) < strings.ToLower(volumes[j].Name)
+	slices.SortFunc(volumes, func(left, right domain.StorageVolume) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	return domain.StorageVolumeList{Pool: poolName, Items: volumes, Total: len(volumes)}, nil
 }

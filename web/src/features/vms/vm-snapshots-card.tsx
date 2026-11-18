@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useVMSnapshotsQuery, vmQueryKey, vmSnapshotsQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 
 const snapshotTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -84,7 +85,7 @@ export function VMSnapshotsCard({ uuid, canMutate, disabledReason }: {
       setActionError("");
       invalidateSnapshots();
       void queryClient.invalidateQueries({ queryKey: vmQueryKey(uuid) });
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
     },
     onError: (cause) => {

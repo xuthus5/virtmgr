@@ -37,8 +37,8 @@ export function AppShell() {
   const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -62,13 +62,8 @@ export function AppShell() {
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1024px)");
     const update = () => setIsDesktop(media.matches);
-    update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
-  }, []);
-
-  useEffect(() => {
-    setSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
   }, []);
 
   useEffect(() => {

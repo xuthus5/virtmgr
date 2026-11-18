@@ -16,6 +16,7 @@ import {
   validateVMResources,
 } from "@/features/vms/vm-resources-model";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 export function VMResourcesCard({ vm, canMutate, disabledReason }: {
@@ -55,10 +56,10 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     mutationFn: (input: { vcpus: number; memoryMiB: number }) => api.updateVMResources(vm.uuid, input),
     onSuccess: (updated) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "metrics"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).metrics });
       setNotice({ tone: "success", text: `CPU 与内存已更新为 ${updated.vcpus} vCPU / ${formatBytes(updated.memoryBytes)}。` });
     },
     onError: (error) => {
@@ -86,10 +87,10 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
 
   function applyUpdatedVM(updated: VM) {
     queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-    void queryClient.invalidateQueries({ queryKey: ["vms"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
-    void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
     resetAdvancedForm(updated);
   }
 

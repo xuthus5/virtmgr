@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const vmConfigVersionsQueryKey = (uuid: string) => ["vm", uuid, "config-versions"] as const;
-export const vmConfigVersionQueryKey = (uuid: string, versionNo: number) =>
-  ["vm", uuid, "config-versions", versionNo] as const;
+export const vmConfigVersionsQueryKey = (uuid: string) => queryKeys.vm(uuid).configVersions;
+export const vmConfigVersionQueryKey = (uuid: string, versionNo: number) => queryKeys.vm(uuid).configVersion(versionNo);
 
 export function useVMConfigVersionsQuery(uuid: string) {
   return useQuery({

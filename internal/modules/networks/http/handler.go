@@ -186,7 +186,8 @@ func (h *Handler) ImportDHCPHosts(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	}
 	request := mutationContext(r, session)
 	name := chi.URLParam(r, "name")
-	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
 	var result domain.NetworkDHCPHostImportResult
 	var err error
 	switch contentType {

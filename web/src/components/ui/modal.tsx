@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { trapTabFocus } from "@/lib/focus-trap";
 import { cn } from "@/lib/utils";
 
 export function Modal({ open, onClose, title, description, children, footer, className, testId }: {
@@ -16,6 +17,7 @@ export function Modal({ open, onClose, title, description, children, footer, cla
   const titleID = useId();
   const descriptionID = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -24,6 +26,7 @@ export function Modal({ open, onClose, title, description, children, footer, cla
 
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     closeRef.current?.focus();
@@ -31,12 +34,15 @@ export function Modal({ open, onClose, title, description, children, footer, cla
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();
+        return;
       }
+      trapTabFocus(event, dialogRef.current);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
   }, [open]);
 
@@ -44,6 +50,7 @@ export function Modal({ open, onClose, title, description, children, footer, cla
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleID}

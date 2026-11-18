@@ -198,15 +198,15 @@ func parseHostNetworkCounters(reader io.Reader) (uint64, uint64) {
 	var txBytes uint64
 	for scanner.Scan() {
 		line := scanner.Text()
-		colon := strings.IndexByte(line, ':')
-		if colon < 0 {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
-		name := strings.TrimSpace(line[:colon])
+		name := strings.TrimSpace(before)
 		if !countHostInterface(name) {
 			continue
 		}
-		fields := strings.Fields(strings.TrimSpace(line[colon+1:]))
+		fields := strings.Fields(strings.TrimSpace(after))
 		if len(fields) < 9 {
 			continue
 		}

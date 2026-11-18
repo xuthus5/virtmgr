@@ -33,6 +33,7 @@ import {
   configVersionSourceLabel,
   shortConfigVersionSHA,
 } from "@/features/vms/vm-config-version-model";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 const XMLCodeEditor = lazy(() =>
@@ -123,8 +124,8 @@ export function VMConfigVersionsDialog({ uuid, vmName, open, onOpenChange, curre
       queryClient.setQueryData(vmXMLQueryKey(uuid, "config"), { uuid, name: vmName, format: "config", xml: result.xml });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: vmConfigVersionsQueryKey(uuid) }),
-        queryClient.invalidateQueries({ queryKey: ["vm", uuid] }),
-        queryClient.invalidateQueries({ queryKey: ["vms"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.vm(uuid).root }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.vms.root }),
         queryClient.invalidateQueries({ queryKey: overviewQueryKey }),
       ]);
       setSelectedVersion(result.versionNo);

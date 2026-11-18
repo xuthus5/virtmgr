@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,12 +55,7 @@ func AllowedVMActions(state VMState) []VMAction {
 }
 
 func ContainsVMAction(actions []VMAction, action VMAction) bool {
-	for _, candidate := range actions {
-		if candidate == action {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(actions, action)
 }
 
 func CanOperateVMs(role Role) bool {

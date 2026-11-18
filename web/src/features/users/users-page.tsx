@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ChangePasswordCard } from "@/features/account/change-password-card";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { useUsersQuery, usersQueryKey } from "@/features/users/use-users-query";
+import { queryKeys } from "@/lib/query-keys";
 
 type CreateFormState = {
   username: string;
@@ -248,7 +249,7 @@ function UserSecurityModal({ user, readOnly, currentUserID, onClose, onNotice }:
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const sessionsQuery = useQuery({
-    queryKey: ["user-sessions", user?.id],
+    queryKey: queryKeys.userSessions(user?.id),
     queryFn: () => api.userSessions(user!.id),
     enabled: Boolean(user),
   });

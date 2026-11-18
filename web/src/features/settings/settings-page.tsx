@@ -20,6 +20,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { sessionQueryKey, useSessionQuery } from "@/features/auth/use-session";
 import { APITokensCard } from "@/features/settings/api-tokens-card";
 import { settingsQueryKey, useSettingsQuery } from "@/features/settings/use-settings-query";
+import { queryKeys } from "@/lib/query-keys";
 
 export function SettingsPage() {
   const session = useSessionQuery();
@@ -28,7 +29,7 @@ export function SettingsPage() {
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [retentionDays, setRetentionDays] = useState(30);
-  const systemQuery = useQuery({ queryKey: ["system", "info"], queryFn: api.systemInfo, staleTime: 60_000 });
+  const systemQuery = useQuery({ queryKey: queryKeys.systemInfo, queryFn: api.systemInfo, staleTime: 60_000 });
 
   useEffect(() => {
     if (settings.data?.auditRetentionDays) setRetentionDays(settings.data.auditRetentionDays);
@@ -39,10 +40,10 @@ export function SettingsPage() {
     onSuccess: (result) => {
       queryClient.setQueryData(settingsQueryKey, result);
       queryClient.setQueryData(sessionQueryKey, (current: typeof session.data) => current ? { ...current, readOnly: result.readOnly } : current);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
-      void queryClient.invalidateQueries({ queryKey: ["storage"] });
-      void queryClient.invalidateQueries({ queryKey: ["networks"] });
-      void queryClient.invalidateQueries({ queryKey: ["users"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.users });
       setNotice({ tone: "success", text: result.readOnly ? "只读模式已启用，所有写操作现已阻止。" : "只读模式已关闭，Operator 和 Admin 可以执行写操作。" });
       setConfirmWrite(false);
     },

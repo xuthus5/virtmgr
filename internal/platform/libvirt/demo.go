@@ -708,7 +708,7 @@ func (d *DemoBackend) CloneVM(_ context.Context, uuid string, spec domain.VMClon
 		}
 		d.volumes[poolName] = append(d.volumes[poolName], volume)
 		disk.Source = volume.Path
-		reportCloneProgress(progress, 30+index*40/maxInt(1, len(clone.Disks)), "正在复制 "+targetName)
+		reportCloneProgress(progress, 30+index*40/max(1, len(clone.Disks)), "正在复制 "+targetName)
 	}
 	for index := range clone.Interfaces {
 		clone.Interfaces[index].MAC = demoMAC(len(d.vms) + index + 1)
@@ -815,7 +815,7 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 		if err := ctx.Err(); err != nil {
 			return domain.VMBackup{}, err
 		}
-		reportBackupProgress(progress, 10+index*60/maxInt(1, len(artifacts)), fmt.Sprintf("正在复制磁盘 %d/%d", index+1, len(artifacts)))
+		reportBackupProgress(progress, 10+index*60/max(1, len(artifacts)), fmt.Sprintf("正在复制磁盘 %d/%d", index+1, len(artifacts)))
 		d.volumes[spec.TargetPool] = append(d.volumes[spec.TargetPool], domain.StorageVolume{
 			Name: artifact.name, Path: filepath.Join(targetPool.TargetPath, artifact.name), Type: "file",
 			Format: artifact.format, CapacityBytes: artifact.capacityBytes, AllocationBytes: artifact.allocation,
@@ -1002,7 +1002,7 @@ func (d *DemoBackend) RestoreVMBackup(ctx context.Context, backup domain.Backup,
 	replaced := make(map[string]string, len(sourceDisks))
 	created := make([]string, 0, len(sourceDisks))
 	for index, disk := range manifest.Disks {
-		reportBackupProgress(progress, 10+index*60/maxInt(1, len(manifest.Disks)), fmt.Sprintf("正在恢复演示磁盘 %d/%d", index+1, len(manifest.Disks)))
+		reportBackupProgress(progress, 10+index*60/max(1, len(manifest.Disks)), fmt.Sprintf("正在恢复演示磁盘 %d/%d", index+1, len(manifest.Disks)))
 		sourceVolume, found := d.demoVolumeLocked(backup.TargetPool, disk.BackupVolume)
 		if !found {
 			d.removeDemoVolumesLocked(spec.TargetPool, created)

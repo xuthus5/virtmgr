@@ -25,6 +25,7 @@ import { useSessionQuery } from "@/features/auth/use-session";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useVMsQuery } from "@/features/vms/use-vms-query";
 import { useVMListPreferences } from "@/features/vms/vm-list-preferences";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 const states: Array<{ value: "" | VMState; label: string }> = [
@@ -95,7 +96,7 @@ export function VMsPage() {
         failures,
       });
       setSelected(new Set());
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
     },
     onError: (error) => {

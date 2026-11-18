@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -307,7 +308,7 @@ func AttachVMISOXML(text, isoPath string) (VMISOAttachResult, error) {
 }
 
 func nextVMXMLCDROMTarget(used map[string]bool) string {
-	for index := 0; index < 26; index++ {
+	for index := range 26 {
 		target := fmt.Sprintf("sd%c", 'a'+index)
 		if !used[target] {
 			return target
@@ -497,12 +498,7 @@ func childrenByName(children []*vmXMLNode, name string) []*vmXMLNode {
 }
 
 func containsVMXMLNode(nodes []*vmXMLNode, target *vmXMLNode) bool {
-	for _, node := range nodes {
-		if node == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(nodes, target)
 }
 
 func removeVMXMLChildren(children []*vmXMLNode, remove func(*vmXMLNode) bool) []*vmXMLNode {

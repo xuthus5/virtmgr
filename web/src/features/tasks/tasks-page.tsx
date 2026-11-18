@@ -13,6 +13,7 @@ import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { useTasksQuery } from "@/features/tasks/use-tasks-query";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const pageSize = 20;
@@ -157,7 +158,7 @@ export function TasksPage() {
     source.addEventListener("open", () => setStreamConnected(true));
     source.addEventListener("tasks", () => {
       setStreamConnected(true);
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
     });
     source.addEventListener("error", () => setStreamConnected(false));
     return () => source.close();
@@ -168,7 +169,7 @@ export function TasksPage() {
     onSuccess: (task) => {
       setRetryingID("");
       setNotice({ tone: "success", text: `已创建重试任务 ${task.id}。` });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
     },
     onError: (cause, task) => {
       setRetryingID("");
@@ -182,7 +183,7 @@ export function TasksPage() {
       setCancellingID("");
       setCancelTarget(null);
       setNotice({ tone: "success", text: `已请求取消任务 ${task.id}；执行中的 libvirt 操作会在下一个安全检查点停止。` });
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
     },
     onError: (cause, task) => {
       setCancellingID("");

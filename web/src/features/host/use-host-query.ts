@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const hostQueryKey = ["host"] as const;
-export const hostMetricsQueryKey = ["host", "metrics"] as const;
+export const hostQueryKey = queryKeys.host.detail;
+export const hostMetricsQueryKey = queryKeys.host.metrics;
 
 export function useHostQuery() {
   return useQuery({

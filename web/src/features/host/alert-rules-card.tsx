@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSessionQuery } from "@/features/auth/use-session";
+import { queryKeys } from "@/lib/query-keys";
 
 const metricLabels: Record<AlertMetric, string> = {
   host_cpu_percent: "宿主机 CPU 使用率",
@@ -42,7 +43,7 @@ function formFromRule(rule: AlertRule): AlertRuleInput {
 export function AlertRulesCard() {
   const session = useSessionQuery();
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ["alert-rules"], queryFn: api.alertRules, staleTime: 15_000 });
+  const query = useQuery({ queryKey: queryKeys.alertRules, queryFn: api.alertRules, staleTime: 15_000 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [form, setForm] = useState<AlertRuleInput>(initialForm);
@@ -59,7 +60,7 @@ export function AlertRulesCard() {
   }, [editing, open]);
 
   function refresh() {
-    void queryClient.invalidateQueries({ queryKey: ["alert-rules"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.alertRules });
   }
 
   const saveMutation = useMutation({

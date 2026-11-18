@@ -1,11 +1,12 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -94,9 +95,7 @@ func (c *Client) populateGuestInfoBatch(ctx context.Context, vms []domain.VM) {
 			workers.Wait()
 			return
 		}
-		workers.Add(1)
-		go func(index int) {
-			defer workers.Done()
+		workers.Go(func() {
 			defer func() { <-semaphore }()
 			if ctx.Err() != nil {
 				return
@@ -107,7 +106,7 @@ func (c *Client) populateGuestInfoBatch(ctx context.Context, vms []domain.VM) {
 			}
 			defer func() { _ = dom.Free() }()
 			populateGuestInfo(dom, &vms[index])
-		}(index)
+		})
 	}
 	workers.Wait()
 }
@@ -172,15 +171,18 @@ func parseGuestIPAddresses(raw string) ([]string, error) {
 			result = append(result, normalized)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool {
-		left := net.ParseIP(result[i])
-		right := net.ParseIP(result[j])
-		leftV4 := left != nil && left.To4() != nil
-		rightV4 := right != nil && right.To4() != nil
+	slices.SortFunc(result, func(left, right string) int {
+		leftIP := net.ParseIP(left)
+		rightIP := net.ParseIP(right)
+		leftV4 := leftIP != nil && leftIP.To4() != nil
+		rightV4 := rightIP != nil && rightIP.To4() != nil
 		if leftV4 != rightV4 {
-			return leftV4
+			if leftV4 {
+				return -1
+			}
+			return 1
 		}
-		return result[i] < result[j]
+		return cmp.Compare(left, right)
 	})
 	return result, nil
 }

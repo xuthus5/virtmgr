@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const networksQueryKey = ["networks"] as const;
-export const hostBridgesQueryKey = ["networks", "bridges"] as const;
+export const networksQueryKey = queryKeys.networks.list;
+export const hostBridgesQueryKey = queryKeys.networks.bridges;
 
 export function useNetworksQuery(enabled = true) {
   return useQuery({

@@ -2,12 +2,13 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,8 +110,8 @@ func (s *Service) List(ctx context.Context) (domain.VirtualNetworkList, error) {
 	if err != nil {
 		return domain.VirtualNetworkList{}, err
 	}
-	sort.Slice(networks, func(i, j int) bool {
-		return strings.ToLower(networks[i].Name) < strings.ToLower(networks[j].Name)
+	slices.SortFunc(networks, func(left, right domain.VirtualNetwork) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	return domain.VirtualNetworkList{Items: networks, Total: len(networks)}, nil
 }
@@ -123,8 +124,8 @@ func (s *Service) ListHostBridges(ctx context.Context) (domain.HostBridgeList, e
 	if bridges == nil {
 		bridges = []domain.HostBridge{}
 	}
-	sort.Slice(bridges, func(i, j int) bool {
-		return strings.ToLower(bridges[i].Name) < strings.ToLower(bridges[j].Name)
+	slices.SortFunc(bridges, func(left, right domain.HostBridge) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	return domain.HostBridgeList{Items: bridges, Total: len(bridges)}, nil
 }
@@ -141,18 +142,18 @@ func (s *Service) ListLeases(ctx context.Context, networkName string) (domain.DH
 	if leases == nil {
 		leases = []domain.DHCPLease{}
 	}
-	sort.SliceStable(leases, func(i, j int) bool {
-		left := net.ParseIP(leases[i].IPAddress)
-		right := net.ParseIP(leases[j].IPAddress)
-		if left != nil && right != nil {
-			if order := bytes.Compare(left.To16(), right.To16()); order != 0 {
-				return order < 0
+	slices.SortStableFunc(leases, func(left, right domain.DHCPLease) int {
+		leftIP := net.ParseIP(left.IPAddress)
+		rightIP := net.ParseIP(right.IPAddress)
+		if leftIP != nil && rightIP != nil {
+			if order := bytes.Compare(leftIP.To16(), rightIP.To16()); order != 0 {
+				return order
 			}
 		}
-		if leases[i].IPAddress != leases[j].IPAddress {
-			return leases[i].IPAddress < leases[j].IPAddress
-		}
-		return strings.ToLower(leases[i].Hostname) < strings.ToLower(leases[j].Hostname)
+		return cmp.Or(
+			cmp.Compare(left.IPAddress, right.IPAddress),
+			cmp.Compare(strings.ToLower(left.Hostname), strings.ToLower(right.Hostname)),
+		)
 	})
 	return domain.DHCPLeaseList{Network: networkName, Items: leases, Total: len(leases)}, nil
 }

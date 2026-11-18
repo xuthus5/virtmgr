@@ -22,6 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 
 export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
   vm: VM;
@@ -48,9 +49,9 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
 
   function invalidate(updated: VM) {
     queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-    void queryClient.invalidateQueries({ queryKey: ["vms"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
   }
 
   const attachMutation = useMutation({
@@ -76,7 +77,7 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
     mutationFn: ({ mac, input }: { mac: string; input: VMNetworkQoSInput }) => api.updateVMNetworkQoS(vm.uuid, mac, input),
     onSuccess: (updated, variables) => {
       invalidate(updated);
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
       setQosInterface(null);
       setNotice({ tone: "success", text: `网卡 ${variables.mac} 的带宽限制已更新。` });
     },

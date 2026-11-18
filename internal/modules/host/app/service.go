@@ -1,9 +1,10 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"virtmgr/internal/domain"
@@ -58,11 +59,11 @@ func (s *Service) Devices(ctx context.Context) (domain.HostDeviceList, error) {
 	if err != nil {
 		return domain.HostDeviceList{}, err
 	}
-	sort.Slice(devices, func(i, j int) bool {
-		if devices[i].Type != devices[j].Type {
-			return devices[i].Type < devices[j].Type
-		}
-		return strings.ToLower(devices[i].Name) < strings.ToLower(devices[j].Name)
+	slices.SortFunc(devices, func(left, right domain.HostDevice) int {
+		return cmp.Or(
+			cmp.Compare(left.Type, right.Type),
+			cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name)),
+		)
 	})
 	return domain.HostDeviceList{Items: devices, Total: len(devices)}, nil
 }
@@ -85,9 +86,15 @@ func (s *Service) Get(ctx context.Context) (domain.HostDetails, error) {
 		return domain.HostDetails{}, err
 	}
 
-	sort.Slice(vms, func(i, j int) bool { return strings.ToLower(vms[i].Name) < strings.ToLower(vms[j].Name) })
-	sort.Slice(pools, func(i, j int) bool { return strings.ToLower(pools[i].Name) < strings.ToLower(pools[j].Name) })
-	sort.Slice(networks, func(i, j int) bool { return strings.ToLower(networks[i].Name) < strings.ToLower(networks[j].Name) })
+	slices.SortFunc(vms, func(left, right domain.VM) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
+	})
+	slices.SortFunc(pools, func(left, right domain.StoragePool) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
+	})
+	slices.SortFunc(networks, func(left, right domain.VirtualNetwork) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
+	})
 
 	details := domain.HostDetails{Host: host, VMs: vms, StoragePools: pools, Networks: networks, Counts: domain.VMCounts{Total: len(vms)}}
 	for _, vm := range vms {

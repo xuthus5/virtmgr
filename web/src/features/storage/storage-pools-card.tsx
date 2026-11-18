@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { storagePoolsQueryKey } from "@/features/storage/use-storage-query";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 type CreatePoolFormState = {
@@ -88,7 +89,7 @@ export function StoragePoolsCard({
 
   async function refreshPoolViews(name?: string) {
     await queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
-    if (name) await queryClient.invalidateQueries({ queryKey: ["storage", "volumes", name] });
+    if (name) await queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(name) });
   }
 
   const createMutation = useMutation({

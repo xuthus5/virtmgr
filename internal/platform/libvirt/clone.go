@@ -87,7 +87,7 @@ func (c *Client) CloneVM(ctx context.Context, uuid string, spec domain.VMCloneSp
 
 	for index, disk := range disks {
 		step := fmt.Sprintf("正在复制磁盘 %d/%d", index+1, len(disks))
-		reportCloneProgress(progress, 10+index*65/maxInt(1, len(disks)), step)
+		reportCloneProgress(progress, 10+index*65/max(1, len(disks)), step)
 		if err := ctx.Err(); err != nil {
 			return domain.VM{}, err
 		}
@@ -250,10 +250,7 @@ func cloneVolumeName(domainName string, index int, sourceName, format string) st
 	suffix := fmt.Sprintf("-%d%s", index+1, extension)
 	prefix := domainName
 	if len(prefix)+len(suffix) > 127 {
-		keep := 127 - len(suffix)
-		if keep < 1 {
-			keep = 1
-		}
+		keep := max(127-len(suffix), 1)
 		prefix = prefix[:keep]
 	}
 	return prefix + suffix
@@ -393,11 +390,4 @@ func reportCloneProgress(progress VMCloneProgress, percent int, step string) {
 	if progress != nil {
 		progress(percent, step)
 	}
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }

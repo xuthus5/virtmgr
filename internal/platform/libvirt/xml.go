@@ -1,9 +1,10 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"encoding/xml"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -346,7 +347,9 @@ func bootDevicesFromXML(disks []domainDiskXML, interfaces []domainInterfaceXML) 
 	for _, networkInterface := range interfaces {
 		appendDevice(networkInterface.Boot.Order, domain.VMBootDeviceNetwork)
 	}
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].order < ordered[j].order })
+	slices.SortStableFunc(ordered, func(left, right bootDeviceOrder) int {
+		return cmp.Compare(left.order, right.order)
+	})
 	result := make([]domain.VMBootDevice, 0, len(ordered))
 	for _, item := range ordered {
 		result = append(result, item.device)

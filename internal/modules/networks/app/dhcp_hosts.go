@@ -2,11 +2,12 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/csv"
 	"fmt"
 	"net"
-	"sort"
+	"slices"
 	"strings"
 
 	"virtmgr/internal/domain"
@@ -115,8 +116,8 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 	for _, host := range accepted {
 		next, err := s.repository.AddNetworkDHCPHost(ctx, command.Name, host)
 		if err != nil {
-			for index := len(imported) - 1; index >= 0; index-- {
-				_, _ = s.repository.DeleteNetworkDHCPHost(ctx, command.Name, imported[index])
+			for _, importedHost := range slices.Backward(imported) {
+				_, _ = s.repository.DeleteNetworkDHCPHost(ctx, command.Name, importedHost)
 			}
 			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("import DHCP host %s: %w", host.MAC, err)
 		}
@@ -180,15 +181,15 @@ func encodeNetworkDHCPHostsCSV(network domain.VirtualNetwork) ([]byte, error) {
 	for _, address := range network.Addresses {
 		hosts = append(hosts, address.Hosts...)
 	}
-	sort.SliceStable(hosts, func(left, right int) bool {
-		leftIP := net.ParseIP(hosts[left].IP)
-		rightIP := net.ParseIP(hosts[right].IP)
+	slices.SortStableFunc(hosts, func(left, right domain.NetworkDHCPHost) int {
+		leftIP := net.ParseIP(left.IP)
+		rightIP := net.ParseIP(right.IP)
 		if leftIP != nil && rightIP != nil {
 			if order := bytes.Compare(leftIP.To16(), rightIP.To16()); order != 0 {
-				return order < 0
+				return order
 			}
 		}
-		return hosts[left].IP < hosts[right].IP
+		return cmp.Compare(left.IP, right.IP)
 	})
 	var output bytes.Buffer
 	writer := csv.NewWriter(&output)

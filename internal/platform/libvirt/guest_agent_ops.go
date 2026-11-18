@@ -1,6 +1,7 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,7 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -131,13 +132,10 @@ func (c *Client) ReadGuestAgentFile(ctx context.Context, uuid string, spec domai
 				return fmt.Errorf("seek guest file %s: %w", spec.Path, err)
 			}
 		}
-		data := make([]byte, 0)
+		data := make([]byte, 0, min(spec.MaxBytes, uint64(guestAgentFileChunkBytes)))
 		remaining := spec.MaxBytes
 		for remaining > 0 {
-			chunkSize := remaining
-			if chunkSize > guestAgentFileChunkBytes {
-				chunkSize = guestAgentFileChunkBytes
-			}
+			chunkSize := min(remaining, guestAgentFileChunkBytes)
 			var response guestFileReadResponse
 			if err := guestAgentCall(dom, "guest-file-read", map[string]any{
 				"handle": handle, "count": chunkSize,
@@ -197,10 +195,7 @@ func (c *Client) WriteGuestAgentFile(ctx context.Context, uuid string, spec doma
 		}
 		defer guestAgentCloseFile(dom, handle)
 		for offset := 0; offset < len(data); offset += guestAgentFileChunkBytes {
-			end := offset + guestAgentFileChunkBytes
-			if end > len(data) {
-				end = len(data)
-			}
+			end := min(offset+guestAgentFileChunkBytes, len(data))
 			chunk := data[offset:end]
 			var response guestFileWriteResponse
 			if err := guestAgentCall(dom, "guest-file-write", map[string]any{
@@ -412,15 +407,19 @@ func (c *Client) GetGuestAgentDiagnostics(ctx context.Context, uuid string) (dom
 		} else {
 			result.SystemErrors = boundedDiagnosticLines(systemOutput, guestAgentDiagnosticLines)
 		}
-		for _, line := range append(append([]string{}, result.KernelWarnings...), result.SystemErrors...) {
-			lower := strings.ToLower(line)
-			if strings.Contains(lower, "out of memory") || strings.Contains(lower, "oom-kill") || strings.Contains(lower, "invoked oom-killer") {
-				result.OOMEvents = append(result.OOMEvents, line)
-				if len(result.OOMEvents) >= 20 {
-					break
+		collectOOMEvents := func(lines []string) {
+			for _, line := range lines {
+				lower := strings.ToLower(line)
+				if strings.Contains(lower, "out of memory") || strings.Contains(lower, "oom-kill") || strings.Contains(lower, "invoked oom-killer") {
+					result.OOMEvents = append(result.OOMEvents, line)
+					if len(result.OOMEvents) >= 20 {
+						return
+					}
 				}
 			}
 		}
+		collectOOMEvents(result.KernelWarnings)
+		collectOOMEvents(result.SystemErrors)
 		for index, service := range result.FailedServices {
 			if index >= 5 {
 				break
@@ -630,11 +629,8 @@ func (c *Client) ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain
 	if err != nil {
 		return nil, mapGuestAgentOperationError(uuid, "list-users", err)
 	}
-	sort.Slice(users, func(i, j int) bool {
-		if users[i].LoginTime != users[j].LoginTime {
-			return users[i].LoginTime > users[j].LoginTime
-		}
-		return users[i].Username < users[j].Username
+	slices.SortFunc(users, func(left, right domain.GuestAgentUser) int {
+		return cmp.Or(cmp.Compare(right.LoginTime, left.LoginTime), cmp.Compare(left.Username, right.Username))
 	})
 	return users, nil
 }
@@ -747,14 +743,14 @@ func runGuestCommand(ctx context.Context, dom *libvirt.Domain, timeout time.Dura
 		return "", errors.New("guest command did not return a pid")
 	}
 	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for time.Now().Before(deadline) {
-		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			terminateGuestCommand(dom, started.Return.PID)
 			return "", ctx.Err()
-		case <-timer.C:
+		case <-ticker.C:
 		}
 		var status guestExecStatusResponse
 		if err := guestAgentCall(dom, "guest-exec-status", map[string]any{"pid": started.Return.PID}, guestAgentProbeTimeoutSeconds, &status); err != nil {
@@ -813,21 +809,19 @@ func terminateGuestCommand(dom *libvirt.Domain, pid int64) {
 }
 
 func boundedDiagnosticLines(output string, limit int) []string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if limit <= 0 {
+		return []string{}
+	}
 	result := make([]string, 0, limit)
-	for _, line := range lines {
-		line = strings.TrimSpace(strings.ToValidUTF8(line, "�"))
+	for line := range strings.SplitSeq(output, "\n") {
+		line, _ = truncateGuestText(line, 2048)
 		if line == "" {
 			continue
 		}
-		line, _ = truncateGuestText(line, 2048)
 		result = append(result, line)
 		if len(result) >= limit {
 			break
 		}
-	}
-	if result == nil {
-		return []string{}
 	}
 	return result
 }
@@ -870,7 +864,7 @@ func guestDiagnosticRecommendations(result domain.GuestAgentDiagnostics) []strin
 
 func parseGuestProcesses(output string) []domain.GuestAgentProcess {
 	result := make([]domain.GuestAgentProcess, 0)
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 5 {
 			continue
@@ -888,13 +882,15 @@ func parseGuestProcesses(output string) []domain.GuestAgentProcess {
 			PID: pid, PPID: ppid, User: fields[2], State: fields[3], Command: fields[4], Args: args,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].PID < result[j].PID })
+	slices.SortFunc(result, func(left, right domain.GuestAgentProcess) int {
+		return cmp.Compare(left.PID, right.PID)
+	})
 	return result
 }
 
 func parseGuestServices(output string) []domain.GuestAgentService {
 	result := make([]domain.GuestAgentService, 0)
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 4 {
 			continue
@@ -911,7 +907,9 @@ func parseGuestServices(output string) []domain.GuestAgentService {
 			Unit: unit, Load: load, Active: active, Sub: sub, Description: description,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Unit < result[j].Unit })
+	slices.SortFunc(result, func(left, right domain.GuestAgentService) int {
+		return cmp.Compare(left.Unit, right.Unit)
+	})
 	return result
 }
 

@@ -45,6 +45,7 @@ import { guestAgentQueryKey, useGuestAgentQuery } from "@/features/guest-agent/u
 import { guestAgentActionUnavailableReason, guestAgentCanAddChannel } from "@/features/guest-agent/guest-agent-model";
 import { GuestAgentControls } from "@/features/guest-agent/guest-agent-controls";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 import { cn, formatBytes, percent } from "@/lib/utils";
 
 const stateMeta: Record<GuestAgentState, { label: string; variant: "success" | "warning" | "destructive" | "secondary" }> = {
@@ -135,7 +136,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
       setNotice({ tone: "success", text: `已提交“${actionMeta[input.action].label}”请求。` });
       void queryClient.invalidateQueries({ queryKey: guestAgentQueryKey(vm.uuid) });
       void queryClient.invalidateQueries({ queryKey: vmQueryKey(vm.uuid) });
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     },
     onError: (cause) => {
       setConfirmAction(null);
@@ -149,7 +150,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
       setNotice({ tone: "success", text: "已补充 QEMU Guest Agent 通道，启动虚拟机后即可探测代理。" });
       void queryClient.invalidateQueries({ queryKey: guestAgentQueryKey(vm.uuid) });
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     },
     onError: (cause) => {
       setNotice({ tone: "error", text: cause instanceof ApiError ? cause.message : "补充 Guest Agent 通道失败。" });
@@ -182,7 +183,7 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
   const state = info ? stateMeta[info.state] : null;
   const canAddChannel = guestAgentCanAddChannel(vm.state);
   const diagnosticsQuery = useQuery({
-    queryKey: ["vm", vm.uuid, "guest-agent", "diagnostics"],
+    queryKey: queryKeys.vm(vm.uuid).guestAgentDiagnostics,
     queryFn: () => api.guestAgentDiagnostics(vm.uuid),
     enabled: diagnosticsOpen && info?.state === "connected" && info.capabilities.processes,
     staleTime: 0,

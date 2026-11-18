@@ -1,10 +1,11 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"context"
 	"encoding/xml"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,11 +99,8 @@ func (c *Client) ListHostDevices(ctx context.Context) ([]domain.HostDevice, erro
 	if len(result) == 0 && lastErr != nil {
 		return nil, fmt.Errorf("list host devices: %w", lastErr)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Type != result[j].Type {
-			return result[i].Type < result[j].Type
-		}
-		return result[i].Name < result[j].Name
+	slices.SortFunc(result, func(left, right domain.HostDevice) int {
+		return cmp.Or(cmp.Compare(left.Type, right.Type), cmp.Compare(left.Name, right.Name))
 	})
 	return result, nil
 }

@@ -26,6 +26,7 @@ import {
   passthroughDeviceName,
   passthroughTypeLabels,
 } from "@/features/vms/vm-passthrough-model";
+import { queryKeys } from "@/lib/query-keys";
 
 export function VMPassthroughCard({ vm, canMutate, disabledReason }: {
   vm: VM;
@@ -42,9 +43,9 @@ export function VMPassthroughCard({ vm, canMutate, disabledReason }: {
 
   function invalidateAfterMutation(updated: VM) {
     queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-    void queryClient.invalidateQueries({ queryKey: ["vms"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
     void queryClient.invalidateQueries({ queryKey: hostDevicesQueryKey });
   }
 

@@ -30,6 +30,7 @@ import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { formatBytes } from "@/lib/utils";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
+import { queryKeys } from "@/lib/query-keys";
 
 export function VMDisksCard({ vm, role, readOnly }: {
   vm: VM;
@@ -88,9 +89,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: (input: { target: string; capacityBytes: number }) => api.resizeVMDisk(vm.uuid, input.target, { capacityBytes: input.capacityBytes }),
     onSuccess: (updated, input) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
       setSelected(null);
       setFormError("");
       setNotice({ tone: "success", text: `${input.target} 已扩容至 ${formatBytes(input.capacityBytes)}。请在客户机内继续扩展分区和文件系统。` });
@@ -104,9 +105,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: () => api.attachVMDisk(vm.uuid, { pool: selectedPool, volume: selectedVolume, bus: bus as "virtio" | "sata" | "scsi", ...(target.trim() ? { target: target.trim() } : {}) }),
     onSuccess: (updated) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
       setAttachOpen(false);
       setVolume("");
       setTarget("");
@@ -120,9 +121,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: () => api.attachVMISO(vm.uuid, { pool: selectedISOPool, volume: selectedISOVolume }),
     onSuccess: (updated) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
       setIsoOpen(false);
       setIsoVolume("");
       setIsoError("");
@@ -135,9 +136,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: (diskTarget: string) => api.detachVMDisk(vm.uuid, diskTarget),
     onSuccess: (updated, diskTarget) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
       setDetachTarget(null);
       setNotice({ tone: "success", text: `磁盘 ${diskTarget} 已移除。` });
     },
@@ -148,10 +149,10 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: () => api.ejectVMISO(vm.uuid),
     onSuccess: (updated) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
       setEjectTarget(null);
       setNotice({ tone: "success", text: "安装 ISO 已弹出，主磁盘已设为第一启动设备。" });
     },
@@ -165,9 +166,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
     mutationFn: ({ target, input }: { target: string; input: VMDiskQoSInput }) => api.updateVMDiskQoS(vm.uuid, target, input),
     onSuccess: (updated, variables) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "xml"] });
-      void queryClient.invalidateQueries({ queryKey: ["vm", vm.uuid, "config-versions"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
       setQosDisk(null);
       setNotice({ tone: "success", text: `${variables.target} 的磁盘 I/O 限制已更新。` });
     },

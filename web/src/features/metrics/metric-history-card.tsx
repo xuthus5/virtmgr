@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatRate } from "@/features/metrics/metric-history";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 type RangeHours = 1 | 24 | 168;
@@ -25,7 +26,7 @@ export function MetricHistoryCard({ scope, targetId, title, description, testId 
 }) {
   const [hours, setHours] = useState<RangeHours>(24);
   const query = useQuery({
-    queryKey: ["metrics", "history", scope, targetId, hours],
+    queryKey: queryKeys.metricsHistory(scope, targetId, hours),
     queryFn: () => {
       const to = new Date();
       const from = new Date(to.getTime() - hours * 60 * 60 * 1000);

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 
 function tagText(tags?: string[]) {
   return (tags ?? []).join(", ");
@@ -43,7 +44,7 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
     }),
     onSuccess: (metadata) => {
       queryClient.setQueryData<VM>(vmQueryKey(vm.uuid), (current) => current ? { ...current, metadata } : current);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       setEditing(false);
       setError("");
       setNotice("标签与备注已保存。");

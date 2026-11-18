@@ -20,6 +20,7 @@ import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage
 import { templateVMCreateDefaults } from "@/features/templates/template-form";
 import { useTemplatesQuery } from "@/features/templates/use-templates-query";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 type FormState = {
@@ -145,7 +146,7 @@ export function VMCreatePage() {
     mutationFn: (input: VMCreateInput) => api.createVM(input),
     onSuccess: (vm) => {
       queryClient.setQueryData(vmQueryKey(vm.uuid), vm);
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
       void navigate({ to: "/vms/$uuid", params: { uuid: vm.uuid } });
     },

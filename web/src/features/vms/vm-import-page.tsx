@@ -14,6 +14,7 @@ import { useSessionQuery } from "@/features/auth/use-session";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 import { buildVMImportInput, importDiskCapacityError, importFilenameError, importVolumeFormat, isSupportedImportVolume, vmImportTargetDiskName, type VMImportFormValues } from "@/features/vms/vm-import-model";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 const initialForm: VMImportFormValues = {
@@ -90,7 +91,7 @@ export function VMImportPage() {
       setForm((current) => ({ ...current, sourcePool: current.targetPool, sourceVolume: volume.name }));
       setSourceMode("existing");
       setUploadFile(null);
-      void queryClient.invalidateQueries({ queryKey: ["storage", "volumes", form.targetPool] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumes(form.targetPool) });
     },
     onError: (cause) => {
       setNotice("");
@@ -103,8 +104,8 @@ export function VMImportPage() {
     onSuccess: (result) => {
       setError("");
       setTask(result);
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      void queryClient.invalidateQueries({ queryKey: ["vms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
     },
     onError: (cause) => {
       setTask(null);

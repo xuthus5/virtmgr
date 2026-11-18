@@ -1,12 +1,13 @@
 package libvirtbackend
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"net"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -90,14 +91,14 @@ func (d *DemoBackend) GetGuestAgentInfo(_ context.Context, uuid string, _ bool) 
 		info.Filesystems = append(info.Filesystems, domain.GuestAgentFilesystem{
 			Device: disk.Source, MountPoint: "/", Type: "ext4",
 			TotalBytes: disk.CapacityBytes, UsedBytes: disk.AllocationBytes,
-			FreeBytes: disk.CapacityBytes - minUint64(disk.AllocationBytes, disk.CapacityBytes),
+			FreeBytes: disk.CapacityBytes - min(disk.AllocationBytes, disk.CapacityBytes),
 		})
 	}
 	return info, nil
 }
 
-func (d *DemoBackend) PerformGuestAgentAction(_ context.Context, uuid string, spec domain.GuestAgentActionSpec) error {
-	info, err := d.GetGuestAgentInfo(context.Background(), uuid, true)
+func (d *DemoBackend) PerformGuestAgentAction(ctx context.Context, uuid string, spec domain.GuestAgentActionSpec) error {
+	info, err := d.GetGuestAgentInfo(ctx, uuid, true)
 	if err != nil {
 		return err
 	}
@@ -156,13 +157,6 @@ func (d *DemoBackend) EnsureGuestAgentChannel(_ context.Context, uuid string) (d
 	d.vms[uuid] = vm
 	d.publish("domain.updated", "info", "vm", uuid, vm.Name, "已为虚拟机补充 QEMU Guest Agent 通道")
 	return cloneVM(vm), nil
-}
-
-func minUint64(left, right uint64) uint64 {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 func (d *DemoBackend) ReadGuestAgentFile(ctx context.Context, uuid string, spec domain.GuestAgentFileReadSpec) (domain.GuestAgentFileContent, error) {
@@ -383,7 +377,9 @@ func (d *DemoBackend) ListGuestAgentUsers(ctx context.Context, uuid string) ([]d
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	users := append([]domain.GuestAgentUser(nil), d.guestUsers...)
-	sort.Slice(users, func(i, j int) bool { return users[i].LoginTime > users[j].LoginTime })
+	slices.SortFunc(users, func(left, right domain.GuestAgentUser) int {
+		return cmp.Compare(right.LoginTime, left.LoginTime)
+	})
 	return users, nil
 }
 

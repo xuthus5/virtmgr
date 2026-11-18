@@ -42,19 +42,19 @@ export function initializeTheme() {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<Preference>(() => readPreference());
-  const theme = useMemo(() => resolveTheme(preference), [preference]);
+  const [systemPreference, setSystemPreference] = useState<Theme>(() => systemTheme());
+  const theme = preference === "system" ? systemPreference : preference;
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
   useEffect(() => {
-    if (preference !== "system") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const listener = () => applyTheme(resolveTheme("system"));
+    const listener = () => setSystemPreference(media.matches ? "dark" : "light");
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
-  }, [preference]);
+  }, []);
 
   const value = useMemo<ThemeContextValue>(() => ({
     theme,

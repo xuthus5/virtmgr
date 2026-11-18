@@ -1,11 +1,12 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -356,11 +357,8 @@ func (s *Service) cleanupRetention(ctx context.Context, policy domain.SnapshotPo
 			managed = append(managed, snapshot)
 		}
 	}
-	sort.Slice(managed, func(i, j int) bool {
-		if managed[i].CreatedAt != managed[j].CreatedAt {
-			return managed[i].CreatedAt > managed[j].CreatedAt
-		}
-		return managed[i].Name > managed[j].Name
+	slices.SortFunc(managed, func(left, right domain.VMSnapshot) int {
+		return cmp.Or(cmp.Compare(right.CreatedAt, left.CreatedAt), cmp.Compare(right.Name, left.Name))
 	})
 	if len(managed) <= policy.Retention {
 		return nil, nil

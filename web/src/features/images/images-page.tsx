@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSessionQuery } from "@/features/auth/use-session";
 import { imagesQueryKey, useImagesQuery } from "@/features/images/use-images-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
+import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -118,7 +119,7 @@ export function ImagesPage() {
       setUploadFile(null);
       setFormOpen(false);
       void queryClient.invalidateQueries({ queryKey: imagesQueryKey });
-      void queryClient.invalidateQueries({ queryKey: ["storage"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.root });
     },
     onError: (cause) => setNotice({ tone: "error", text: imageError(cause, "上传镜像失败，请稍后重试。") }),
   });

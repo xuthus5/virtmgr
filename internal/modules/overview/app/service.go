@@ -1,8 +1,9 @@
 package app
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"virtmgr/internal/domain"
@@ -30,8 +31,8 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 	if err != nil {
 		return domain.Overview{}, err
 	}
-	sort.Slice(vms, func(i, j int) bool {
-		return strings.ToLower(vms[i].Name) < strings.ToLower(vms[j].Name)
+	slices.SortFunc(vms, func(left, right domain.VM) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	counts := domain.VMCounts{Total: len(vms)}
 	var allocatedVCPUs uint64

@@ -190,7 +190,7 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 			return domain.VMBackup{}, err
 		}
 		step := fmt.Sprintf("正在复制磁盘 %d/%d", index+1, len(artifacts))
-		reportBackupProgress(progress, 10+index*60/maxInt(1, len(artifacts)), step)
+		reportBackupProgress(progress, 10+index*60/max(1, len(artifacts)), step)
 		targetVolume, err := targetPool.StorageVolCreateXMLFrom(buildStorageVolumeXML(domain.StorageVolumeCreateSpec{
 			Name: artifact.name, Format: artifact.format, CapacityBytes: artifact.capacityBytes,
 		}, storagePoolDefinitionXML{}), sourceVolumes[index], 0)
@@ -427,7 +427,7 @@ func (c *Client) RestoreVMBackup(ctx context.Context, backup domain.Backup, spec
 		if err := ctx.Err(); err != nil {
 			return domain.VM{}, err
 		}
-		reportBackupProgress(progress, 10+index*65/maxInt(1, len(payload.manifest.Disks)), fmt.Sprintf("正在恢复磁盘 %d/%d", index+1, len(payload.manifest.Disks)))
+		reportBackupProgress(progress, 10+index*65/max(1, len(payload.manifest.Disks)), fmt.Sprintf("正在恢复磁盘 %d/%d", index+1, len(payload.manifest.Disks)))
 		sourceVolume, err := sourcePool.LookupStorageVolByName(manifestDisk.BackupVolume)
 		if err != nil {
 			if errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
@@ -782,10 +782,7 @@ func backupVolumeName(prefix, suffix string) string {
 	if len(prefix)+len(suffix) <= 127 {
 		return prefix + suffix
 	}
-	keep := 127 - len(suffix)
-	if keep < 1 {
-		keep = 1
-	}
+	keep := max(127-len(suffix), 1)
 	return prefix[:keep] + suffix
 }
 

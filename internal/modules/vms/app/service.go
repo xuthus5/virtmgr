@@ -1,13 +1,14 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -398,8 +399,8 @@ func (s *Service) List(ctx context.Context, query domain.ListQuery) (domain.VMSu
 		}
 		filtered = append(filtered, vm)
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
+	slices.SortFunc(filtered, func(left, right domain.VM) int {
+		return cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 	})
 	return domain.VMSummaryList{Items: filtered, Total: len(filtered)}, nil
 }
@@ -1238,11 +1239,11 @@ func (s *Service) ListSnapshots(ctx context.Context, uuid string) (domain.VMSnap
 			}
 		}
 	}
-	sort.Slice(snapshots, func(i, j int) bool {
-		if snapshots[i].CreatedAt != snapshots[j].CreatedAt {
-			return snapshots[i].CreatedAt > snapshots[j].CreatedAt
-		}
-		return strings.ToLower(snapshots[i].Name) < strings.ToLower(snapshots[j].Name)
+	slices.SortFunc(snapshots, func(left, right domain.VMSnapshot) int {
+		return cmp.Or(
+			cmp.Compare(right.CreatedAt, left.CreatedAt),
+			cmp.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name)),
+		)
 	})
 	return domain.VMSnapshotList{Items: snapshots, Total: len(snapshots)}, nil
 }

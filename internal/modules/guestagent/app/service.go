@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -852,7 +852,7 @@ func sshKeyFingerprints(keys []string) []string {
 		}
 		fingerprints = append(fingerprints, ssh.FingerprintSHA256(parsed))
 	}
-	sort.Strings(fingerprints)
+	slices.Sort(fingerprints)
 	return fingerprints
 }
 

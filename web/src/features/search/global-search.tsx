@@ -11,6 +11,8 @@ import { buildGlobalSearchItems, type GlobalSearchItem } from "@/features/search
 import { useStoragePoolsQuery } from "@/features/storage/use-storage-query";
 import { templatesQueryKey } from "@/features/templates/use-templates-query";
 import { useVMsQuery } from "@/features/vms/use-vms-query";
+import { trapTabFocus } from "@/lib/focus-trap";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 function ResultIcon({ kind }: { kind: GlobalSearchItem["kind"] }) {
@@ -27,28 +29,33 @@ function ResultIcon({ kind }: { kind: GlobalSearchItem["kind"] }) {
 export function GlobalSearch({ role }: { role: Role }) {
   const navigate = useNavigate();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const deferredQuery = useDeferredValue(query);
-  const vmsQuery = useVMsQuery("", "", open);
-  const networksQuery = useNetworksQuery(open);
-  const poolsQuery = useStoragePoolsQuery(open);
-  const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
+  const searchActive = open && deferredQuery.trim().length > 0;
+  const vmsQuery = useVMsQuery("", "", searchActive);
+  const networksQuery = useNetworksQuery(searchActive);
+  const poolsQuery = useStoragePoolsQuery(searchActive);
+  const activePools = useMemo(
+    () => (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active"),
+    [poolsQuery.data],
+  );
   const volumeQueries = useQueries({
     queries: activePools.map((pool) => ({
-      queryKey: ["storage", "volumes", pool.name],
+      queryKey: queryKeys.storage.volumes(pool.name),
       queryFn: () => api.storageVolumes(pool.name),
       staleTime: 15_000,
-      enabled: open,
+      enabled: searchActive,
     })),
   });
   const storageVolumes = useMemo(() => volumeQueries.flatMap((query, index) =>
     (query.data?.items ?? []).map((volume) => ({ ...volume, pool: activePools[index]?.name ?? "" })),
   ), [volumeQueries, activePools]);
-  const imagesQuery = useQuery({ queryKey: imagesQueryKey, queryFn: api.images, staleTime: 15_000, enabled: open });
-  const templatesQuery = useQuery({ queryKey: templatesQueryKey, queryFn: api.templates, staleTime: 15_000, enabled: open });
-  const tasksQuery = useQuery({ queryKey: ["tasks", { page: 1, pageSize: 50 }], queryFn: () => api.tasks({ page: 1, pageSize: 50 }), staleTime: 5_000, enabled: open });
+  const imagesQuery = useQuery({ queryKey: imagesQueryKey, queryFn: api.images, staleTime: 15_000, enabled: searchActive });
+  const templatesQuery = useQuery({ queryKey: templatesQueryKey, queryFn: api.templates, staleTime: 15_000, enabled: searchActive });
+  const tasksQuery = useQuery({ queryKey: queryKeys.tasks.list({ page: 1, pageSize: 50 }), queryFn: () => api.tasks({ page: 1, pageSize: 50 }), staleTime: 5_000, enabled: searchActive });
 
   const results = useMemo(() => buildGlobalSearchItems(deferredQuery, role, {
     vms: vmsQuery.data?.items,
@@ -60,8 +67,8 @@ export function GlobalSearch({ role }: { role: Role }) {
     tasks: tasksQuery.data?.items,
   }), [deferredQuery, role, vmsQuery.data, networksQuery.data, poolsQuery.data, storageVolumes, imagesQuery.data, templatesQuery.data, tasksQuery.data]);
 
-  const loading = open && (vmsQuery.isLoading || networksQuery.isLoading || poolsQuery.isLoading || volumeQueries.some((query) => query.isLoading) || imagesQuery.isLoading || templatesQuery.isLoading || tasksQuery.isLoading);
-  const sourceError = vmsQuery.isError || networksQuery.isError || poolsQuery.isError || volumeQueries.some((query) => query.isError) || imagesQuery.isError || templatesQuery.isError || tasksQuery.isError;
+  const loading = searchActive && (vmsQuery.isLoading || networksQuery.isLoading || poolsQuery.isLoading || volumeQueries.some((query) => query.isLoading) || imagesQuery.isLoading || templatesQuery.isLoading || tasksQuery.isLoading);
+  const sourceError = searchActive && (vmsQuery.isError || networksQuery.isError || poolsQuery.isError || volumeQueries.some((query) => query.isError) || imagesQuery.isError || templatesQuery.isError || tasksQuery.isError);
 
   useEffect(() => {
     function onShortcut(event: globalThis.KeyboardEvent) {
@@ -103,6 +110,10 @@ export function GlobalSearch({ role }: { role: Role }) {
   }
 
   function onDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Tab") {
+      trapTabFocus(event.nativeEvent, dialogRef.current);
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       close();
@@ -148,6 +159,7 @@ export function GlobalSearch({ role }: { role: Role }) {
           onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}
         >
           <div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label="全局搜索"

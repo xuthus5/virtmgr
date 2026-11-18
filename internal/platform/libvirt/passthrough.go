@@ -220,8 +220,8 @@ func passthroughFromHostDevXML(mode, deviceType string, source domainHostDevSour
 
 func passthroughDeviceFromName(name string) (domain.PassthroughDevice, error) {
 	name = strings.TrimSpace(name)
-	if strings.HasPrefix(name, "pci_") {
-		parts := strings.Split(strings.TrimPrefix(name, "pci_"), "_")
+	if after, ok := strings.CutPrefix(name, "pci_"); ok {
+		parts := strings.Split(after, "_")
 		if len(parts) != 4 {
 			return domain.PassthroughDevice{}, errors.Join(domain.ErrInvalidInput, errors.New("invalid PCI host device name"))
 		}
@@ -236,8 +236,8 @@ func passthroughDeviceFromName(name string) (domain.PassthroughDevice, error) {
 			Name: name, Type: "pci", Address: host + ":" + bus + ":" + slot + "." + function,
 		}, nil
 	}
-	if strings.HasPrefix(name, "usb_device_") {
-		parts := strings.Split(strings.TrimPrefix(name, "usb_device_"), "_")
+	if after, ok := strings.CutPrefix(name, "usb_device_"); ok {
+		parts := strings.Split(after, "_")
 		if len(parts) != 2 && len(parts) != 4 {
 			return domain.PassthroughDevice{}, errors.Join(domain.ErrInvalidInput, errors.New("invalid USB host device name"))
 		}

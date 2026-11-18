@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const usersQueryKey = ["users"] as const;
+export const usersQueryKey = queryKeys.users;
 
 export function useUsersQuery(enabled: boolean) {
   return useQuery({

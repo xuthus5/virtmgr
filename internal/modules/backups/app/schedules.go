@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -328,16 +328,16 @@ func (s *Service) cleanupRetention(ctx context.Context, schedule domain.BackupSc
 			managed = append(managed, item)
 		}
 	}
-	sort.Slice(managed, func(i, j int) bool {
-		left := managed[i].CreatedAt
-		if managed[i].CompletedAt != nil {
-			left = *managed[i].CompletedAt
+	slices.SortFunc(managed, func(left, right domain.Backup) int {
+		leftTime := left.CreatedAt
+		if left.CompletedAt != nil {
+			leftTime = *left.CompletedAt
 		}
-		right := managed[j].CreatedAt
-		if managed[j].CompletedAt != nil {
-			right = *managed[j].CompletedAt
+		rightTime := right.CreatedAt
+		if right.CompletedAt != nil {
+			rightTime = *right.CompletedAt
 		}
-		return left.After(right)
+		return rightTime.Compare(leftTime)
 	})
 	now := s.now().UTC()
 	deleted := make([]string, 0)

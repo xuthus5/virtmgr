@@ -1,25 +1,7 @@
-import { Link, Outlet, createRootRoute, createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-router";
+import { Link, Outlet, createRootRoute, createRoute, createRouter, lazyRouteComponent, type ErrorComponentProps } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/app-shell";
-import { AuditPage } from "@/features/audit/audit-page";
-import { BackupsPage } from "@/features/backups/backups-page";
-import { LoginPage } from "@/features/auth/login-page";
-import { ForgotPasswordPage } from "@/features/auth/forgot-password-page";
-import { AccountSecurityPage } from "@/features/account/account-security-page";
-import { NetworksPage } from "@/features/networks/networks-page";
-import { HostPage } from "@/features/host/host-page";
-import { ImagesPage } from "@/features/images/images-page";
-import { EventsPage } from "@/features/events/events-page";
-import { OverviewPage } from "@/features/overview/overview-page";
-import { StoragePage } from "@/features/storage/storage-page";
-import { SettingsPage } from "@/features/settings/settings-page";
-import { TasksPage } from "@/features/tasks/tasks-page";
-import { TemplatesPage } from "@/features/templates/templates-page";
-import { VMCreatePage } from "@/features/vms/vm-create-page";
-import { VMImportPage } from "@/features/vms/vm-import-page";
-import { VMsPage } from "@/features/vms/vms-page";
-import { UsersPage } from "@/features/users/users-page";
 
 function RootComponent() {
   return <Outlet />;
@@ -36,8 +18,40 @@ function RoutePendingComponent() {
   );
 }
 
+function RouteErrorComponent({ error }: ErrorComponentProps) {
+  const message = error instanceof Error && error.message ? error.message : "页面资源加载失败";
+  return (
+    <div className="grid min-h-64 place-items-center px-6 py-12" role="alert">
+      <div className="w-full max-w-lg rounded-xl border border-destructive/30 bg-card p-6 shadow-panel">
+        <h1 className="text-lg font-semibold">页面暂时无法加载</h1>
+        <p className="mt-2 text-sm text-muted-foreground">可能是页面资源更新或网络中断。重新加载后可获取最新资源。</p>
+        <p className="mt-3 break-words rounded-md bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">{message}</p>
+        <Button className="mt-5" onClick={() => window.location.reload()}>重新加载</Button>
+      </div>
+    </div>
+  );
+}
+
 const LazyVNCConsolePage = lazyRouteComponent(() => import("@/features/console/vnc-console-page"), "VNCConsolePage");
 const LazyVMDetailPage = lazyRouteComponent(() => import("@/features/vms/vm-detail-page"), "VMDetailPage");
+const LazyLoginPage = lazyRouteComponent(() => import("@/features/auth/login-page"), "LoginPage");
+const LazyForgotPasswordPage = lazyRouteComponent(() => import("@/features/auth/forgot-password-page"), "ForgotPasswordPage");
+const LazyOverviewPage = lazyRouteComponent(() => import("@/features/overview/overview-page"), "OverviewPage");
+const LazyVMsPage = lazyRouteComponent(() => import("@/features/vms/vms-page"), "VMsPage");
+const LazyBackupsPage = lazyRouteComponent(() => import("@/features/backups/backups-page"), "BackupsPage");
+const LazyVMCreatePage = lazyRouteComponent(() => import("@/features/vms/vm-create-page"), "VMCreatePage");
+const LazyVMImportPage = lazyRouteComponent(() => import("@/features/vms/vm-import-page"), "VMImportPage");
+const LazyTemplatesPage = lazyRouteComponent(() => import("@/features/templates/templates-page"), "TemplatesPage");
+const LazyImagesPage = lazyRouteComponent(() => import("@/features/images/images-page"), "ImagesPage");
+const LazyStoragePage = lazyRouteComponent(() => import("@/features/storage/storage-page"), "StoragePage");
+const LazyNetworksPage = lazyRouteComponent(() => import("@/features/networks/networks-page"), "NetworksPage");
+const LazyHostPage = lazyRouteComponent(() => import("@/features/host/host-page"), "HostPage");
+const LazyTasksPage = lazyRouteComponent(() => import("@/features/tasks/tasks-page"), "TasksPage");
+const LazyEventsPage = lazyRouteComponent(() => import("@/features/events/events-page"), "EventsPage");
+const LazyAuditPage = lazyRouteComponent(() => import("@/features/audit/audit-page"), "AuditPage");
+const LazyUsersPage = lazyRouteComponent(() => import("@/features/users/users-page"), "UsersPage");
+const LazyAccountSecurityPage = lazyRouteComponent(() => import("@/features/account/account-security-page"), "AccountSecurityPage");
+const LazySettingsPage = lazyRouteComponent(() => import("@/features/settings/settings-page"), "SettingsPage");
 
 const rootRoute = createRootRoute({
   component: RootComponent,
@@ -53,12 +67,12 @@ const rootRoute = createRootRoute({
   ),
 });
 
-const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: LoginPage });
-const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: "/forgot-password", component: ForgotPasswordPage });
+const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: LazyLoginPage });
+const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: "/forgot-password", component: LazyForgotPasswordPage });
 const appRoute = createRoute({ getParentRoute: () => rootRoute, id: "app", component: AppShell });
-const overviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
-const vmsRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms", component: VMsPage });
-const backupsRoute = createRoute({ getParentRoute: () => appRoute, path: "/backups", component: BackupsPage });
+const overviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: LazyOverviewPage });
+const vmsRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms", component: LazyVMsPage });
+const backupsRoute = createRoute({ getParentRoute: () => appRoute, path: "/backups", component: LazyBackupsPage });
 const vmCreateRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/vms/new",
@@ -66,20 +80,20 @@ const vmCreateRoute = createRoute({
     const template = Number(search.template);
     return Number.isInteger(template) && template > 0 ? { template } : {};
   },
-  component: VMCreatePage,
+  component: LazyVMCreatePage,
 });
-const vmImportRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms/import", component: VMImportPage });
-const templatesRoute = createRoute({ getParentRoute: () => appRoute, path: "/templates", component: TemplatesPage });
-const imagesRoute = createRoute({ getParentRoute: () => appRoute, path: "/images", component: ImagesPage });
-const storageRoute = createRoute({ getParentRoute: () => appRoute, path: "/storage", component: StoragePage });
-const networksRoute = createRoute({ getParentRoute: () => appRoute, path: "/networks", component: NetworksPage });
-const hostRoute = createRoute({ getParentRoute: () => appRoute, path: "/host", component: HostPage });
-const tasksRoute = createRoute({ getParentRoute: () => appRoute, path: "/tasks", component: TasksPage });
-const eventsRoute = createRoute({ getParentRoute: () => appRoute, path: "/events", component: EventsPage });
-const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit", component: AuditPage });
-const usersRoute = createRoute({ getParentRoute: () => appRoute, path: "/users", component: UsersPage });
-const accountRoute = createRoute({ getParentRoute: () => appRoute, path: "/account", component: AccountSecurityPage });
-const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: SettingsPage });
+const vmImportRoute = createRoute({ getParentRoute: () => appRoute, path: "/vms/import", component: LazyVMImportPage });
+const templatesRoute = createRoute({ getParentRoute: () => appRoute, path: "/templates", component: LazyTemplatesPage });
+const imagesRoute = createRoute({ getParentRoute: () => appRoute, path: "/images", component: LazyImagesPage });
+const storageRoute = createRoute({ getParentRoute: () => appRoute, path: "/storage", component: LazyStoragePage });
+const networksRoute = createRoute({ getParentRoute: () => appRoute, path: "/networks", component: LazyNetworksPage });
+const hostRoute = createRoute({ getParentRoute: () => appRoute, path: "/host", component: LazyHostPage });
+const tasksRoute = createRoute({ getParentRoute: () => appRoute, path: "/tasks", component: LazyTasksPage });
+const eventsRoute = createRoute({ getParentRoute: () => appRoute, path: "/events", component: LazyEventsPage });
+const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit", component: LazyAuditPage });
+const usersRoute = createRoute({ getParentRoute: () => appRoute, path: "/users", component: LazyUsersPage });
+const accountRoute = createRoute({ getParentRoute: () => appRoute, path: "/account", component: LazyAccountSecurityPage });
+const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: LazySettingsPage });
 const vmDetailRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/vms/$uuid",
@@ -118,6 +132,7 @@ export const router = createRouter({
   routeTree,
   defaultPreload: "intent",
   defaultPendingComponent: RoutePendingComponent,
+  defaultErrorComponent: RouteErrorComponent,
   defaultPendingMs: 120,
   defaultPendingMinMs: 240,
 });

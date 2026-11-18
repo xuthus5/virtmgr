@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -293,13 +294,11 @@ func insertXMLChildBefore(parent, child *networkXMLNode, names ...string) {
 		if !ok {
 			continue
 		}
-		for _, name := range names {
-			if start.Name.Local == name {
-				parent.Children = append(parent.Children, nil)
-				copy(parent.Children[index+1:], parent.Children[index:])
-				parent.Children[index] = child
-				return
-			}
+		if slices.Contains(names, start.Name.Local) {
+			parent.Children = append(parent.Children, nil)
+			copy(parent.Children[index+1:], parent.Children[index:])
+			parent.Children[index] = child
+			return
 		}
 	}
 	parent.Children = append(parent.Children, child)

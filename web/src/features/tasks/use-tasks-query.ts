@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { TaskFilters } from "@/api/types";
+import { queryKeys } from "@/lib/query-keys";
 
 export function useTasksQuery(filters: TaskFilters) {
   return useQuery({
-    queryKey: ["tasks", filters],
+    queryKey: queryKeys.tasks.list(filters),
     queryFn: () => api.tasks(filters),
     staleTime: 2_000,
     refetchInterval: 5_000,
@@ -13,7 +14,7 @@ export function useTasksQuery(filters: TaskFilters) {
 
 export function useTaskQuery(id: string | null) {
   return useQuery({
-    queryKey: ["task", id],
+    queryKey: queryKeys.tasks.detail(id),
     queryFn: () => api.task(id as string),
     enabled: Boolean(id),
     staleTime: 0,

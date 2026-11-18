@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { storagePoolsQueryKey, useStoragePoolsQuery } from "@/features/storage/use-storage-query";
 import { canBackupVM, defaultVMBackupName, validateVMBackupDraft } from "@/features/vms/vm-backup-model";
+import { queryKeys } from "@/lib/query-keys";
 
 const taskStatusLabel = {
   queued: "排队中",
@@ -53,9 +54,9 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
       setNotice({ tone: "error", text: `备份失败：${taskQuery.data?.error || taskQuery.data?.step || "请稍后重试"}` });
     }
     void queryClient.invalidateQueries({ queryKey: storagePoolsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ["storage", "volumes"] });
-    void queryClient.invalidateQueries({ queryKey: ["backups"] });
-    void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.storage.volumesRoot });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.backups.root });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
   }, [queryClient, taskQuery.data?.error, taskQuery.data?.status, taskQuery.data?.step, vmName]);
 
   const mutation = useMutation({
@@ -65,7 +66,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
       setOpen(false);
       setFormError("");
       setNotice(null);
-      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.root });
     },
     onError: (cause) => {
       setFormError(cause instanceof ApiError ? cause.message : "创建备份任务失败，请稍后重试。");

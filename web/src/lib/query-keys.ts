@@ -1,0 +1,64 @@
+import type { AuditEventFilters, BackupFilters, TaskFilters, VMXMLFormat } from "@/api/types";
+
+export const queryKeys = {
+  session: ["session"] as const,
+  overview: ["overview"] as const,
+  settings: ["settings"] as const,
+  systemInfo: ["system", "info"] as const,
+  users: ["users"] as const,
+  userSessions: (userId?: number) => ["user-sessions", userId] as const,
+  apiTokens: ["api-tokens"] as const,
+  alertRules: ["alert-rules"] as const,
+  auditEvents: (filters: AuditEventFilters) => ["audit-events", filters] as const,
+  images: ["images"] as const,
+  templates: ["templates"] as const,
+  storage: {
+    root: ["storage"] as const,
+    pools: ["storage", "pools"] as const,
+    volumes: (pool: string) => ["storage", "volumes", pool] as const,
+    volumesRoot: ["storage", "volumes"] as const,
+  },
+  networks: {
+    root: ["networks"] as const,
+    list: ["networks"] as const,
+    bridges: ["networks", "bridges"] as const,
+    leases: (name: string | null) => ["networks", name, "leases"] as const,
+  },
+  host: {
+    root: ["host"] as const,
+    detail: ["host"] as const,
+    metrics: ["host", "metrics"] as const,
+    devices: ["host", "devices"] as const,
+  },
+  vms: {
+    root: ["vms"] as const,
+    list: (query: string, state: string, tag = "", owner = "") => ["vms", query, state, tag, owner] as const,
+  },
+  vm: (uuid: string) => ({
+    root: ["vm", uuid] as const,
+    metrics: ["vm", uuid, "metrics"] as const,
+    xmlRoot: ["vm", uuid, "xml"] as const,
+    xml: (format: VMXMLFormat) => ["vm", uuid, "xml", format] as const,
+    snapshots: ["vm", uuid, "snapshots"] as const,
+    snapshotPolicies: ["vm", uuid, "snapshot-policies"] as const,
+    guestAgent: ["vm", uuid, "guest-agent"] as const,
+    guestAgentDiagnostics: ["vm", uuid, "guest-agent", "diagnostics"] as const,
+    configVersions: ["vm", uuid, "config-versions"] as const,
+    configVersion: (versionNo: number) => ["vm", uuid, "config-versions", versionNo] as const,
+  }),
+  tasks: {
+    root: ["tasks"] as const,
+    list: (filters: TaskFilters) => ["tasks", filters] as const,
+    detail: (id: string | null) => ["task", id] as const,
+  },
+  backups: {
+    root: ["backups"] as const,
+    list: (filters: BackupFilters) => ["backups", filters] as const,
+    detail: (id: string | null) => ["backups", "detail", id] as const,
+    summary: (vmUuid = "") => ["backups", "summary", vmUuid] as const,
+    repositories: ["backups", "repositories"] as const,
+    schedules: (vmUuid = "") => ["backups", "schedules", vmUuid] as const,
+  },
+  metricsHistory: (scope: string, targetId: string, hours: number) =>
+    ["metrics", "history", scope, targetId, hours] as const,
+};

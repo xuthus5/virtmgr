@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { queryKeys } from "@/lib/query-keys";
 
-export const networkLeasesQueryKey = (name: string | null) => ["networks", name, "leases"] as const;
+export const networkLeasesQueryKey = queryKeys.networks.leases;
 
 export function useNetworkLeasesQuery(name: string | null) {
   return useQuery({

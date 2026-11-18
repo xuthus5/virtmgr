@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,7 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +102,9 @@ func loadMigrations() ([]migration, error) {
 			sql:      string(body),
 		})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].version < items[j].version })
+	slices.SortFunc(items, func(left, right migration) int {
+		return cmp.Compare(left.version, right.version)
+	})
 	for i := 1; i < len(items); i++ {
 		if items[i-1].version == items[i].version {
 			return nil, fmt.Errorf("duplicate migration version %d", items[i].version)
