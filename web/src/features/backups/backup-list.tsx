@@ -38,6 +38,9 @@ export function BackupDetail({ backup }: { backup: Backup }) {
       <Detail label="格式" value={backup.formatVersion} mono />
       <Detail label="存储库" value={`${backup.repositoryName || "-"} / ${backup.targetPool}`} />
       <Detail label="总大小" value={formatBytes(backup.totalBytes)} />
+      <Detail label="备份模式" value={backup.online ? `在线${backup.quiesced ? " · Agent 静默" : ""}` : "冷备份"} />
+      <Detail label="一致性" value={backup.consistent ? "磁盘快照一致性" : "离线静态副本"} />
+      <Detail label="vTPM" value={backup.containsTpm ? (backup.tpmStateSaved ? "设备与状态已保存" : "仅保存配置，状态未保存") : "未使用"} />
       <Detail label="创建人" value={backup.createdBy} />
       <Detail label="创建时间" value={formatTime(backup.createdAt)} />
       <Detail label="完成时间" value={formatTime(backup.completedAt)} />

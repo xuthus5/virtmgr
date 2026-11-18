@@ -1,6 +1,7 @@
 package libvirtbackend
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,6 +68,47 @@ func TestBuildDomainXMLUEFI(t *testing.T) {
 			}
 			if details.Firmware != domain.VMFirmwareUEFI || details.SecureBoot != test.secureBoot || details.Machine != "q35" {
 				t.Fatalf("firmware details = %+v", details)
+			}
+		})
+	}
+}
+
+func TestBuildDomainXMLArchitectureAndMachine(t *testing.T) {
+	text := buildDomainXML(domain.VMCreateSpec{
+		Name: "arm-01", Architecture: "aarch64", Machine: "virt-9.2",
+		VCPUs: 2, MemoryMiB: 2048, DiskPath: "/var/lib/libvirt/images/arm-01.qcow2", DiskFormat: "qcow2", Network: "default",
+	})
+	if !strings.Contains(text, "<type arch='aarch64' machine='virt-9.2'>hvm</type>") {
+		t.Fatalf("architecture or machine missing: %s", text)
+	}
+}
+
+func TestBuildDomainXMLVirtualTPM(t *testing.T) {
+	tests := []struct {
+		name         string
+		architecture string
+		wantModel    string
+	}{
+		{name: "x86 crb", architecture: "x86_64", wantModel: "tpm-crb"},
+		{name: "arm tis", architecture: "aarch64", wantModel: "tpm-tis"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			text := buildDomainXML(domain.VMCreateSpec{
+				Name: "secure-tpm", Architecture: test.architecture,
+				VCPUs: 2, MemoryMiB: 2048, DiskPath: "/var/lib/libvirt/images/secure-tpm.qcow2", DiskFormat: "qcow2",
+				Network: "default", Firmware: domain.VMFirmwareUEFI, TPM: true,
+			})
+			fragment := fmt.Sprintf("<tpm model='%s'><backend type='emulator' version='2.0'/></tpm>", test.wantModel)
+			if !strings.Contains(text, fragment) {
+				t.Fatalf("XML missing %q: %s", fragment, text)
+			}
+			details, err := parseDomainXML(text)
+			if err != nil {
+				t.Fatalf("parseDomainXML() error = %v", err)
+			}
+			if !details.TPM {
+				t.Fatalf("TPM was not parsed from domain XML: %+v", details)
 			}
 		})
 	}

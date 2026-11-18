@@ -14,7 +14,8 @@ import (
 const backupColumns = `b.id, b.vm_uuid, b.vm_name, b.repository_id, COALESCE(r.name, ''), b.target_pool,
 	b.name, b.status, b.format_version, b.manifest_volume, b.config_volume, b.config_bytes,
 	b.total_bytes, b.disk_count, b.pinned, b.verify_status, b.verified_at, b.verify_message,
-	b.error, b.created_by, b.created_at, b.completed_at`
+	b.error, b.created_by, b.created_at, b.completed_at, b.online, b.quiesced,
+	b.consistent, b.contains_tpm, b.tpm_state_saved`
 
 func (s *Store) ListBackupRepositories(ctx context.Context) ([]domain.BackupRepository, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -279,12 +280,14 @@ func (s *Store) CreateBackup(ctx context.Context, item domain.Backup) (domain.Ba
 		INSERT INTO backups(
 			id, vm_uuid, vm_name, repository_id, target_pool, name, status, format_version,
 			manifest_volume, config_volume, config_bytes, total_bytes, disk_count, pinned,
-			verify_status, verified_at, verify_message, error, created_by, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			verify_status, verified_at, verify_message, error, created_by, created_at, completed_at,
+			online, quiesced, consistent, contains_tpm, tpm_state_saved
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.ID, item.VMUUID, item.VMName, item.RepositoryID, item.TargetPool, item.Name, string(item.Status),
 		item.FormatVersion, item.ManifestVolume, item.ConfigVolume, item.ConfigBytes, item.TotalBytes,
 		item.DiskCount, boolInt(item.Pinned), string(item.VerifyStatus), timePtrUnix(item.VerifiedAt),
-		item.VerifyMessage, item.Error, item.CreatedBy, now.UTC().Unix(), timePtrUnix(item.CompletedAt)); err != nil {
+		item.VerifyMessage, item.Error, item.CreatedBy, now.UTC().Unix(), timePtrUnix(item.CompletedAt),
+		boolInt(item.Online), boolInt(item.Quiesced), boolInt(item.Consistent), boolInt(item.ContainsTPM), boolInt(item.TPMStateSaved)); err != nil {
 		if isUniqueConstraint(err) {
 			return domain.Backup{}, domain.ErrConflict
 		}
@@ -311,11 +314,13 @@ func (s *Store) UpdateBackup(ctx context.Context, item domain.Backup) (domain.Ba
 		UPDATE backups SET
 			status = ?, format_version = ?, manifest_volume = ?, config_volume = ?,
 			config_bytes = ?, total_bytes = ?, disk_count = ?, pinned = ?, verify_status = ?,
-			verified_at = ?, verify_message = ?, error = ?, completed_at = ?
+			verified_at = ?, verify_message = ?, error = ?, completed_at = ?, online = ?,
+			quiesced = ?, consistent = ?, contains_tpm = ?, tpm_state_saved = ?
 		WHERE id = ?`,
 		string(item.Status), item.FormatVersion, item.ManifestVolume, item.ConfigVolume, item.ConfigBytes,
 		item.TotalBytes, item.DiskCount, boolInt(item.Pinned), string(item.VerifyStatus), verifiedAt,
-		item.VerifyMessage, item.Error, completedAt, item.ID)
+		item.VerifyMessage, item.Error, completedAt, boolInt(item.Online), boolInt(item.Quiesced),
+		boolInt(item.Consistent), boolInt(item.ContainsTPM), boolInt(item.TPMStateSaved), item.ID)
 	if err != nil {
 		return domain.Backup{}, fmt.Errorf("update backup: %w", err)
 	}
@@ -598,6 +603,7 @@ func scanBackupRepository(scanner rowScanner) (domain.BackupRepository, error) {
 func scanBackup(scanner rowScanner) (domain.Backup, error) {
 	var item domain.Backup
 	var pinned int
+	var online, quiesced, consistent, containsTPM, tpmStateSaved int
 	var verifiedAt sql.NullInt64
 	var createdAt int64
 	var completedAt sql.NullInt64
@@ -606,10 +612,16 @@ func scanBackup(scanner rowScanner) (domain.Backup, error) {
 		&item.Name, &item.Status, &item.FormatVersion, &item.ManifestVolume, &item.ConfigVolume,
 		&item.ConfigBytes, &item.TotalBytes, &item.DiskCount, &pinned, &item.VerifyStatus,
 		&verifiedAt, &item.VerifyMessage, &item.Error, &item.CreatedBy, &createdAt, &completedAt,
+		&online, &quiesced, &consistent, &containsTPM, &tpmStateSaved,
 	); err != nil {
 		return domain.Backup{}, err
 	}
 	item.Pinned = pinned != 0
+	item.Online = online != 0
+	item.Quiesced = quiesced != 0
+	item.Consistent = consistent != 0
+	item.ContainsTPM = containsTPM != 0
+	item.TPMStateSaved = tpmStateSaved != 0
 	if verifiedAt.Valid {
 		value := time.Unix(verifiedAt.Int64, 0).UTC()
 		item.VerifiedAt = &value

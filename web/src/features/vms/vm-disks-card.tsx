@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Disc3, Gauge, HardDrive, LoaderCircle, Maximize2, Plus, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Disc3, Gauge, HardDrive, LoaderCircle, Maximize2, MoveRight, Plus, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { Disk, Role, VM, VMDiskQoSInput } from "@/api/types";
+import type { Disk, Role, VM, VMDiskMigrateInput, VMDiskQoSInput } from "@/api/types";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -30,6 +30,7 @@ import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { formatBytes } from "@/lib/utils";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
+import { useTaskQuery } from "@/features/tasks/use-tasks-query";
 import { queryKeys } from "@/lib/query-keys";
 
 export function VMDisksCard({ vm, role, readOnly }: {
@@ -62,6 +63,13 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const [qosReadIOPS, setQosReadIOPS] = useState("");
   const [qosWriteIOPS, setQosWriteIOPS] = useState("");
   const [qosError, setQosError] = useState("");
+  const [migrateDisk, setMigrateDisk] = useState<Disk | null>(null);
+  const [migratePool, setMigratePool] = useState("");
+  const [migrateName, setMigrateName] = useState("");
+  const [migrateFormat, setMigrateFormat] = useState<"qcow2" | "raw">("qcow2");
+  const [migrateError, setMigrateError] = useState("");
+  const [migrateTaskID, setMigrateTaskID] = useState<string | null>(null);
+  const migrateTaskQuery = useTaskQuery(migrateTaskID);
   const poolsQuery = useStoragePoolsQuery(attachOpen);
   const activePools = (poolsQuery.data?.items ?? []).filter((item) => item.state === "active");
   const selectedPool = pool || activePools[0]?.name || "";
@@ -75,6 +83,9 @@ export function VMDisksCard({ vm, role, readOnly }: {
   const isoVolumesQuery = useStorageVolumesQuery(selectedISOPool);
   const isoVolumes = (isoVolumesQuery.data?.items ?? []).filter((item) => /\.iso$/i.test(item.name) && item.path?.startsWith("/"));
   const selectedISOVolume = isoVolumes.some((item) => item.name === isoVolume) ? isoVolume : isoVolumes[0]?.name || "";
+  const migrationPoolsQuery = useStoragePoolsQuery(Boolean(migrateDisk));
+  const migrationPools = (migrationPoolsQuery.data?.items ?? []).filter((item) => item.state === "active");
+  const selectedMigratePool = migrationPools.some((item) => item.name === migratePool) ? migratePool : migrationPools[0]?.name || "";
   const isoDisabledReason = readOnly
     ? "系统当前处于只读模式"
     : !role || role === "viewer"
@@ -84,6 +95,33 @@ export function VMDisksCard({ vm, role, readOnly }: {
         : vm.state !== "shutoff" && vm.state !== "crashed"
           ? "请先关闭虚拟机再挂载 ISO"
           : "";
+  const migrateDisabledReason = readOnly
+    ? "系统当前处于只读模式"
+    : !role || role === "viewer"
+      ? "当前账号没有虚拟机操作权限"
+      : !vm.persistent
+        ? "临时虚拟机不能迁移磁盘"
+        : vm.state !== "shutoff" && vm.state !== "crashed"
+          ? "请先关闭虚拟机再迁移磁盘"
+          : "";
+
+  useEffect(() => {
+    const task = migrateTaskQuery.data;
+    if (!task || !["succeeded", "failed", "interrupted"].includes(task.status)) return;
+    setMigrateTaskID(null);
+    if (task.status === "succeeded") {
+      setMigrateDisk(null);
+      setNotice({ tone: "success", text: "磁盘已迁移并切换虚拟机引用；旧卷保留在源存储池。" });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
+      void queryClient.invalidateQueries({ queryKey: overviewQueryKey });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).xmlRoot });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.pools });
+    } else {
+      setMigrateError(task.error || "磁盘跨池迁移失败。");
+    }
+  }, [migrateTaskQuery.data, queryClient, vm.uuid]);
 
   const mutation = useMutation({
     mutationFn: (input: { target: string; capacityBytes: number }) => api.resizeVMDisk(vm.uuid, input.target, { capacityBytes: input.capacityBytes }),
@@ -175,6 +213,15 @@ export function VMDisksCard({ vm, role, readOnly }: {
     onError: (cause) => setQosError(cause instanceof ApiError ? cause.message : "更新磁盘 I/O 限制失败，请稍后重试。"),
   });
 
+  const migrateMutation = useMutation({
+    mutationFn: ({ target, input }: { target: string; input: VMDiskMigrateInput }) => api.migrateVMDisk(vm.uuid, target, input),
+    onSuccess: (task) => {
+      setMigrateError("");
+      setMigrateTaskID(task.id);
+    },
+    onError: (cause) => setMigrateError(cause instanceof ApiError ? cause.message : "提交磁盘迁移任务失败，请稍后重试。"),
+  });
+
   function openResize(disk: Disk) {
     setSelected(disk);
     setCapacityGiB(String(defaultDiskCapacityGiB(disk)));
@@ -191,6 +238,33 @@ export function VMDisksCard({ vm, role, readOnly }: {
     }
     setFormError("");
     mutation.mutate({ target: selected.target, capacityBytes: result.input.capacityBytes });
+  }
+
+  function openMigrate(disk: Disk) {
+    const format: "qcow2" | "raw" = disk.format === "raw" ? "raw" : "qcow2";
+    setMigrateDisk(disk);
+    setMigrateFormat(format);
+    setMigratePool("");
+    setMigrateName(`${vm.name}-${disk.target}-migrated.${format}`);
+    setMigrateError("");
+    setMigrateTaskID(null);
+    setNotice(null);
+  }
+
+  function submitMigrate() {
+    if (!migrateDisk || !selectedMigratePool || !migrateName.trim()) {
+      setMigrateError("请选择目标存储池并填写目标卷名称。");
+      return;
+    }
+    if (!migrateName.trim().toLowerCase().endsWith(`.${migrateFormat}`)) {
+      setMigrateError(`目标卷名称必须以 .${migrateFormat} 结尾。`);
+      return;
+    }
+    setMigrateError("");
+    migrateMutation.mutate({
+      target: migrateDisk.target,
+      input: { targetPool: selectedMigratePool, targetName: migrateName.trim(), targetFormat: migrateFormat },
+    });
   }
 
   function openQoS(disk: Disk) {
@@ -310,6 +384,16 @@ export function VMDisksCard({ vm, role, readOnly }: {
                           <Button
                             variant="outline"
                             size="sm"
+                            data-testid={`vm-disk-migrate-${disk.target}`}
+                            disabled={Boolean(migrateDisabledReason) || migrateMutation.isPending}
+                            title={migrateDisabledReason || `将磁盘 ${disk.target} 复制到其他存储池并切换虚拟机引用`}
+                            onClick={() => openMigrate(disk)}
+                          >
+                            <MoveRight className="h-3.5 w-3.5" />迁移
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             data-testid={`vm-disk-resize-${disk.target}`}
                             disabled={Boolean(resizeDisabledReason) || mutation.isPending}
                             title={resizeDisabledReason || `扩容磁盘 ${disk.target}`}
@@ -414,6 +498,51 @@ export function VMDisksCard({ vm, role, readOnly }: {
           </div>
           {qosError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{qosError}</p> : null}
           <p className="text-xs text-muted-foreground">总限制与读写限制同时存在时，由 QEMU/libvirt 按各自维度共同约束；运行中的虚拟机将同步应用。</p>
+        </div>
+      </Modal>
+
+      <Modal
+        open={migrateDisk !== null}
+        onClose={() => { if (!migrateMutation.isPending && !migrateTaskID) setMigrateDisk(null); }}
+        title={`跨池迁移磁盘 · ${migrateDisk?.target || ""}`}
+        description="仅支持关机或异常停止的持久虚拟机。系统先完整复制磁盘，再原子切换持久域引用；旧卷保留在源存储池。"
+        testId="vm-disk-migrate-modal"
+        footer={<>
+          <Button variant="ghost" disabled={migrateMutation.isPending || Boolean(migrateTaskID)} onClick={() => setMigrateDisk(null)}>取消</Button>
+          <Button data-testid="vm-disk-migrate-submit" disabled={migrateMutation.isPending || Boolean(migrateTaskID) || !selectedMigratePool || !migrateName.trim()} onClick={submitMigrate}>
+            {migrateMutation.isPending || migrateTaskID ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MoveRight className="h-4 w-4" />}
+            {migrateTaskID ? "正在迁移..." : migrateMutation.isPending ? "正在提交..." : "开始迁移"}
+          </Button>
+        </>}
+      >
+        <div className="space-y-4">
+          <div className="rounded-md border bg-muted/20 p-3 text-xs">
+            <p className="font-medium text-foreground">{migrateDisk?.source || "-"}</p>
+            <p className="mt-1 text-muted-foreground">当前格式 {migrateDisk?.format || "未知"} · {migrateDisk ? formatBytes(migrateDisk.capacityBytes) : "-"}。目标卷创建成功后，虚拟机磁盘引用会切换到新卷。</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="vm-disk-migrate-pool">目标存储池</Label>
+              <select id="vm-disk-migrate-pool" data-testid="vm-disk-migrate-pool" value={selectedMigratePool} onChange={(event) => setMigratePool(event.target.value)} disabled={Boolean(migrateTaskID)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+                {migrationPools.map((item) => <option key={item.name} value={item.name}>{item.name} · {formatBytes(item.availableBytes)} 可用</option>)}
+              </select>
+              {!migrationPools.length && !migrationPoolsQuery.isLoading ? <p className="text-xs text-destructive">没有可用活跃存储池。</p> : null}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="vm-disk-migrate-format">目标格式</Label>
+              <select id="vm-disk-migrate-format" data-testid="vm-disk-migrate-format" value={migrateFormat} onChange={(event) => { const format = event.target.value as "qcow2" | "raw"; setMigrateFormat(format); setMigrateName((current) => current.replace(/\.(qcow2|raw)$/i, `.${format}`)); }} disabled={Boolean(migrateTaskID)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+                <option value="qcow2">qcow2</option>
+                <option value="raw">raw</option>
+              </select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vm-disk-migrate-name">目标卷名称</Label>
+            <Input id="vm-disk-migrate-name" data-testid="vm-disk-migrate-name" value={migrateName} maxLength={127} onChange={(event) => setMigrateName(event.target.value)} disabled={Boolean(migrateTaskID)} />
+          </div>
+          {migrateTaskQuery.data ? <p role="status" className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">{migrateTaskQuery.data.step} · {migrateTaskQuery.data.progress}%</p> : null}
+          {migrateError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{migrateError}</p> : null}
+          <p className="text-xs text-muted-foreground">复制期间不要启动虚拟机。失败时新目标卷会被清理，持久配置保持不变；成功后旧卷不会自动删除。</p>
         </div>
       </Modal>
 

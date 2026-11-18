@@ -164,6 +164,13 @@ type domainXML struct {
 			Type   string              `xml:"type,attr"`
 			Source domainHostDevSource `xml:"source"`
 		} `xml:"hostdev"`
+		TPM []struct {
+			Model   string `xml:"model,attr"`
+			Backend struct {
+				Type    string `xml:"type,attr"`
+				Version string `xml:"version,attr"`
+			} `xml:"backend"`
+		} `xml:"tpm"`
 	} `xml:"devices"`
 }
 
@@ -183,6 +190,7 @@ type domainDetails struct {
 	SecureBoot  bool
 	CloudInit   bool
 	GuestAgent  bool
+	TPM         bool
 	Disks       []domain.Disk
 	Interfaces  []domain.NetworkInterface
 	Graphics    []domain.Graphics
@@ -217,6 +225,7 @@ func parseDomainXML(text string) (domainDetails, error) {
 		SecureBoot:  secureBoot,
 		Disks:       make([]domain.Disk, 0, len(parsed.Devices.Disks)),
 		GuestAgent:  hasGuestAgentChannelXML(text),
+		TPM:         len(parsed.Devices.TPM) > 0,
 		BootDevices: make([]domain.VMBootDevice, 0, len(parsed.OS.Boot)),
 		CPUModel:    cpuModelFromXML(parsed.CPU.Mode, parsed.CPU.Model.Value),
 		CPUSockets:  parsed.CPU.Topology.Sockets,

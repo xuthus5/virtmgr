@@ -21,6 +21,8 @@ export function CreateBackupModal({ open, onClose, repositories, vms, onCreated,
   const [vmUuid, setVMUuid] = useState("");
   const [repositoryID, setRepositoryID] = useState("");
   const [name, setName] = useState("");
+  const [online, setOnline] = useState(false);
+  const [quiesce, setQuiesce] = useState(false);
   const [error, setError] = useState("");
   const repo = repositories.find((item) => item.id === repositoryID);
 
@@ -31,6 +33,8 @@ export function CreateBackupModal({ open, onClose, repositories, vms, onCreated,
     setVMUuid(vm?.uuid ?? "");
     setName(vm ? backupName(vm.name) : "");
     setRepositoryID(repository?.id ?? "");
+    setOnline(vm?.state === "running");
+    setQuiesce(false);
     setError("");
   }, [open, repositories, vms]);
 
@@ -38,9 +42,11 @@ export function CreateBackupModal({ open, onClose, repositories, vms, onCreated,
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (mutation.isPending) return;
-    if (!vmUuid || !repo || !name.trim()) { setError("请选择关机状态的虚拟机、备份名称和存储库。"); return; }
+    if (!vmUuid || !repo || !name.trim()) { setError("请选择虚拟机、备份名称和存储库。"); return; }
+    const selectedVM = vms.find((item) => item.uuid === vmUuid);
+    if (selectedVM?.state === "running" && !online) { setError("运行中的虚拟机必须启用在线一致性备份。"); return; }
     try {
-      const task = await mutation.mutateAsync({ vmUuid, name: name.trim(), repositoryId: repo.id, targetPool: repo.poolName });
+      const task = await mutation.mutateAsync({ vmUuid, name: name.trim(), repositoryId: repo.id, targetPool: repo.poolName, online: selectedVM?.state === "running", quiesce: selectedVM?.state === "running" && quiesce });
       onCreated(task.id);
     } catch (cause) {
       setError(errorText(cause, "创建备份失败"));
@@ -48,13 +54,18 @@ export function CreateBackupModal({ open, onClose, repositories, vms, onCreated,
     }
   }
   function close() { if (!mutation.isPending) onClose(); }
-  return <Modal open={open} onClose={close} title="创建冷备份" description="仅支持已关机或异常停止的持久虚拟机；备份不包含内存状态。" testId="backup-create-modal" footer={<><Button variant="ghost" disabled={mutation.isPending} onClick={close}>取消</Button><Button form="backup-create-form" type="submit" disabled={mutation.isPending || !vms.length || !repositories.length}>{mutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}{mutation.isPending ? "正在提交" : "开始备份"}</Button></>}>
+  return <Modal open={open} onClose={close} title="创建备份" description="关机虚拟机执行冷备份；运行中虚拟机通过外部磁盘快照执行在线一致性备份。" testId="backup-create-modal" footer={<><Button variant="ghost" disabled={mutation.isPending} onClick={close}>取消</Button><Button form="backup-create-form" type="submit" disabled={mutation.isPending || !vms.length || !repositories.length}>{mutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}{mutation.isPending ? "正在提交" : "开始备份"}</Button></>}>
     <form id="backup-create-form" className="space-y-4" onSubmit={(event) => void submit(event)}>
-      <div className="space-y-2"><Label htmlFor="backup-vm">虚拟机</Label><select id="backup-vm" data-testid="backup-create-vm" value={vmUuid} onChange={(event) => { const vm = vms.find((item) => item.uuid === event.target.value); setVMUuid(event.target.value); if (vm) setName(backupName(vm.name)); }} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
-        {vms.length ? vms.map((vm) => <option key={vm.uuid} value={vm.uuid}>{vm.name} · {vm.state === "crashed" ? "异常停止" : "已关机"}</option>) : <option value="">没有可备份的关机虚拟机</option>}
-      </select><p className="text-xs text-muted-foreground">运行中的虚拟机必须先正常关机，系统不会自动强制关机。</p></div>
+      <div className="space-y-2"><Label htmlFor="backup-vm">虚拟机</Label><select id="backup-vm" data-testid="backup-create-vm" value={vmUuid} onChange={(event) => { const vm = vms.find((item) => item.uuid === event.target.value); setVMUuid(event.target.value); if (vm) setName(backupName(vm.name)); setOnline(vm?.state === "running"); if (vm?.state !== "running") setQuiesce(false); }} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+        {vms.length ? vms.map((vm) => <option key={vm.uuid} value={vm.uuid}>{vm.name} · {vm.state === "crashed" ? "异常停止" : vm.state === "running" ? "运行中" : "已关机"}</option>) : <option value="">没有可备份的虚拟机</option>}
+      </select><p className="text-xs text-muted-foreground">运行中虚拟机将使用外部磁盘快照，备份期间保持运行；备份不包含内存状态。</p></div>
       <div className="space-y-2"><Label htmlFor="backup-name">备份名称</Label><Input id="backup-name" data-testid="backup-create-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={64} /></div>
       <div className="space-y-2"><Label htmlFor="backup-repository">备份存储库</Label><select id="backup-repository" data-testid="backup-create-repository" value={repositoryID} onChange={(event) => setRepositoryID(event.target.value)} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">{repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.name} · {repository.poolName}{repository.isDefault ? " · 默认" : ""}</option>)}</select></div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="flex items-center gap-2 rounded-md border p-3 text-sm"><input type="checkbox" checked={online} onChange={(event) => setOnline(event.target.checked)} disabled={vms.find((item) => item.uuid === vmUuid)?.state !== "running"} />运行中在线备份</label>
+        <label className="flex items-center gap-2 rounded-md border p-3 text-sm"><input type="checkbox" checked={quiesce} onChange={(event) => setQuiesce(event.target.checked)} disabled={!online} />Guest Agent 静默</label>
+      </div>
+      <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-xs text-warning">静默需要客户机已安装并运行 QEMU Guest Agent；未启用时仍会取得崩溃一致性的磁盘快照。vTPM 状态不会进入备份，恢复后需使用 BitLocker 恢复密钥。</p>
       {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p> : null}
     </form>
   </Modal>;

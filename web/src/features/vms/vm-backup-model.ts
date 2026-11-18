@@ -7,7 +7,7 @@ export function canBackupVM(role: Role | undefined, readOnly: boolean, persisten
   return (role === "operator" || role === "admin")
     && !readOnly
     && persistent
-    && (state === "shutoff" || state === "crashed");
+    && (state === "shutoff" || state === "crashed" || state === "running");
 }
 
 export function defaultVMBackupName(vmName: string, now = new Date()) {

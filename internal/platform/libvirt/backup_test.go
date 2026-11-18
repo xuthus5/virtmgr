@@ -3,6 +3,7 @@ package libvirtbackend
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"virtmgr/internal/domain"
@@ -83,6 +84,40 @@ func TestDemoBackupVMRejectsUnsafeSourceAndConflicts(t *testing.T) {
 		Name: "demo-backup-01", TargetPool: "default",
 	}, nil); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("conflict error = %v", err)
+	}
+}
+
+func TestDemoOnlineBackupPreservesRunningVMAndMarksConsistency(t *testing.T) {
+	backend := NewDemo()
+	const uuid = "11111111-1111-4111-8111-111111111111"
+	result, err := backend.BackupVM(context.Background(), uuid, domain.VMBackupSpec{
+		Name: "demo-online-backup", TargetPool: "default", Online: true, Quiesce: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("online BackupVM() error = %v", err)
+	}
+	if !result.Online || !result.Quiesced || !result.Consistent || result.TPMStateSaved {
+		t.Fatalf("online backup metadata = %+v", result)
+	}
+	if _, err := backend.BackupVM(context.Background(), "44444444-4444-4444-8444-444444444444", domain.VMBackupSpec{
+		Name: "invalid-quiesce", TargetPool: "default", Quiesce: true,
+	}, nil); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("offline quiesced backup error = %v", err)
+	}
+}
+
+func TestOnlineBackupHelpers(t *testing.T) {
+	xmlText := buildOnlineOverlayVolumeXML("overlay.qcow2", 10<<30, "/var/lib/libvirt/images/base.qcow2", "qcow2")
+	for _, fragment := range []string{"<name>overlay.qcow2</name>", "<format type='qcow2'/>", "<path>/var/lib/libvirt/images/base.qcow2</path>", "unit='bytes'>10737418240</capacity>"} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("overlay XML missing %q: %s", fragment, xmlText)
+		}
+	}
+	if got := onlineBackupSnapshotName(strings.Repeat("a", 100)); len(got) != 64 {
+		t.Fatalf("snapshot name length = %d", len(got))
+	}
+	if got := onlineBackupOverlayName("backup-1", 3); got != "virtmgr-backup-backup-1-03-overlay.qcow2" {
+		t.Fatalf("overlay name = %q", got)
 	}
 }
 

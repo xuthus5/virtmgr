@@ -61,7 +61,7 @@ func ValidTaskStatus(status TaskStatus) bool {
 
 func CancellableTaskKind(kind string) bool {
 	switch kind {
-	case "vm.clone", "vm.import", "vm.backup", "vm.backup.verify", "vm.backup.restore", "vm.backup.delete", "storage.volume.upload", "storage.volume.convert":
+	case "vm.clone", "vm.import", "vm.backup", "vm.backup.verify", "vm.backup.restore", "vm.backup.delete", "vm.disk.migrate", "storage.volume.upload", "storage.volume.convert", "storage.volume.flatten":
 		return true
 	default:
 		return false

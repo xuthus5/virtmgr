@@ -48,16 +48,16 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - libvirt 只读能力：宿主机信息、虚拟机列表、详情、磁盘、网卡、VNC 图形信息和当前允许动作。
 - 物理主机页读取宿主机、存储池、虚拟网络和虚拟机分配汇总，并展示异常提醒与容量使用率。
 - 物理主机设备：`GET /host/devices` 读取 libvirt 节点设备，解析 PCI、USB、网络、块设备和 DRM 能力；主机页展示设备地址、厂商/型号、驱动和在线状态。
-- 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；固件、安全启动和硬件建模参数进入创建审计，并从运行态域 XML 回读。
+- 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、vTPM 2.0、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；vTPM 通过 libvirt domain capabilities 探测 `swtpm` emulator 支持，x86 使用 `tpm-crb`、其他架构使用 `tpm-tis`，不支持时拒绝。固件、安全启动、vTPM 和硬件建模参数进入创建审计，并从持久/运行态域 XML 回读。
 - 安装 ISO 运维：`POST /vms/{uuid}/iso/attach` 仅允许关机/异常停止的持久虚拟机从活跃存储池挂载 `.iso` 卷。系统替换已有非 cloud-init 安装光驱或新增 CD-ROM，保留 cloud-init 介质，切换为光盘优先启动，且不删除任何存储卷；`POST /vms/{uuid}/iso/eject` 移除安装光驱并恢复磁盘优先启动。成功/失败写入脱敏审计并采集配置版本。
-- 导入虚拟机：`POST /vms/import` 接收 `name`、`sourcePool`、`sourceVolume`、可选 `targetPool`、`diskCapacityBytes` 和硬件参数。来源与目标池必须活跃；QCOW2/RAW 系统盘复制为 `${name}-disk.${format}`，ISO 则保留为只读安装介质、创建 `${name}-disk.qcow2` 空白系统盘并使用光盘优先启动，默认 20 GiB、可配置 1-16384 GiB。OVA/OVF、VMDK、VHDX 和格式转换不支持。预检校验名称与目标卷冲突后创建 `vm.import` 可取消任务并定义持久域。来源卷始终保留；失败或安全检查点取消会清理新建目标卷，若域已创建则先移除新域。成功写入 `vm.import` 审计并采集 `import` 配置版本；取消不会强杀正在执行的 libvirt 操作，会在下一个检查点停止。
+- 导入虚拟机：`POST /vms/import` 接收 `name`、`sourcePool`、`sourceVolume`、可选 `targetPool`、`diskCapacityBytes`、架构/机型、UEFI/Secure Boot 和 vTPM 等硬件参数。来源与目标池必须活跃；QCOW2/RAW 系统盘复制为 `${name}-disk.${format}`，ISO 则保留为只读安装介质、创建 `${name}-disk.qcow2` 空白系统盘并使用光盘优先启动，默认 20 GiB、可配置 1-16384 GiB。OVA/OVF、VMDK、VHDX 和格式转换不支持。预检校验名称、架构、机型、固件、vTPM 能力与目标卷冲突后创建 `vm.import` 可取消任务并定义持久域。来源卷始终保留；失败或安全检查点取消会清理新建目标卷，若域已创建则先移除新域。成功写入 `vm.import` 审计并采集 `import` 配置版本；取消不会强杀正在执行的 libvirt 操作，会在下一个检查点停止。
 - Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
 - 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径、可选镜像绑定和启动策略。模板只保存镜像引用，不拥有镜像或系统盘；新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
 - 定时快照策略：SQLite `snapshot_policies` 保存间隔、保留数量和启用状态；应用内调度器每分钟执行到期策略，按 `[policy:<id>]` 描述标记创建并清理本策略快照。CRUD、立即执行、权限/只读校验和审计已实现。
 - 克隆虚拟机：仅允许关机/异常停止的持久域，通过独立 libvirt 连接复制存储卷，重写域 XML 的 name、UUID、磁盘来源、MAC、NVRAM 和 VNC 端口。默认复制到源卷所在活跃池，可指定 `targetPool`；克隆以 `vm.clone` 异步任务执行，失败回滚新建卷和域，成功/失败写入审计。
-- 虚拟机冷备份：`POST /vms/{uuid}/backups` 仅允许关机/异常停止的持久域，将 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘复制到指定活跃存储池。备份以 `vm.backup` 异步任务执行并更新真实进度；失败删除本次已创建但未完成的卷，成功/失败均写入审计，不包含内存状态。
-- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 和 `imageCloneMode`：默认 `full` 复制来源卷为独立系统盘；`linked` 仅允许同存储池 qcow2 来源，创建带 backing store 的轻量覆盖层，目标路径不得与来源相同。链接克隆的基础卷仍被其他卷引用时禁止删除。创建失败时清理已克隆磁盘和新域。存储页可将空闲 qcow2/raw 卷转换格式并复制到其他活跃池，源卷保留、虚拟机引用不自动切换；跨池链接克隆、自动展平和带引用切换的自动搬移暂不提供。
+- 虚拟机备份：`POST /vms/{uuid}/backups` 支持关机/异常停止域的冷备份和运行中域的在线一致性备份。冷备份直接复制 inactive 持久配置 XML、版本化 manifest 和可写 `file` 磁盘；在线备份在源文件池创建外部磁盘快照 overlay，复制稳定基卷后通过活动 block commit 回收 overlay，可按需请求 Guest Agent 静默。备份以 `vm.backup` 异步任务执行并更新真实进度；失败清理本次已创建产物并尽力恢复快照链，成功/失败均写入审计，不包含内存状态或 vTPM 状态。
+- 镜像库：`GET/POST /images`、`GET/DELETE /images/{id}` 和 `POST /images/{id}/refresh` 管理 qcow2/raw 镜像。界面可将 1 MiB 至 256 GiB 的文件上传到活跃存储池后自动登记，也可直接登记已有卷。登记保存真实池、卷、格式、容量、分配量和可选 OS 元数据；刷新回读容量并计算 SHA-256；移除只删除登记，底层卷始终保留，被模板引用时拒绝。创建虚拟机可传 `imageId` 和 `imageCloneMode`：默认 `full` 复制来源卷为独立系统盘；`linked` 仅允许同存储池 qcow2 来源，创建带 backing store 的轻量覆盖层，目标路径不得与来源相同。链接克隆的基础卷仍被其他卷引用时禁止删除。创建失败时清理已克隆磁盘和新域。存储页可将空闲 qcow2/raw 卷转换格式并复制到其他活跃池，也可通过 `POST /storage/pools/{pool}/volumes/{volume}/flatten` 将空闲链接克隆展平为独立 qcow2 卷；源卷保留、虚拟机引用不自动切换。跨池链接克隆仍不提供；关机域的数据盘可通过 `POST /vms/{uuid}/disks/{target}/migrate` 显式迁移到其他活跃池并原子切换持久域引用。
 - Guest Agent：新建虚拟机默认生成 `virtio-serial` controller 与 `org.qemu.guest_agent.0` channel；已有持久域可在关机/异常停止状态通过 `POST /vms/{uuid}/guest-agent/channel` 补齐。结构化状态接口区分 `not_configured`、`disconnected`、`connected`、`unresponsive` 和 `error`，返回版本、操作系统、主机名、网络接口、文件系统与能力矩阵。探测结果缓存 15 秒并合并同一虚拟机的并发请求，Agent 不可用仍返回 200 状态对象。虚拟机详情顶部提供“修改客户机密码”操作，点击后打开聚焦密码弹窗；Agent 未连接、通道未配置或未声明密码能力时弹窗解释原因和安装/连接步骤。完整 Agent 状态、能力矩阵和诊断信息位于“客户机”标签，概览页仅在已连接时显示紧凑徽标，未连接时不展开状态卡或安装说明。Agent 动作开放关机、重启、时间同步、按文件系统 TRIM、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断、Linux Cloud-init 执行诊断、启动故障诊断和非根 ext4/xfs 在线扩容；服务诊断只执行固定 `systemctl list-units` 查询且最多返回 500 项，启动故障诊断执行固定 `systemctl`/`journalctl` 查询并限制日志尾部与条数，Cloud-init 诊断只执行固定 `cloud-init status` 查询并读取固定日志路径，最多返回 32 KiB 日志尾部。在线扩容只接受直接块设备承载的非根 ext4/xfs，执行固定 `growpart` 与文件系统扩展命令，拒绝根分区、LVM、Windows 和未知设备。以上能力均不提供任意命令、服务启停或配置修改。手动静默快照要求 Agent 已连接并声明 fsfreeze 能力，否则明确拒绝。高风险变更统一生成任务并写脱敏审计；不提供通用任意命令接口。期望状态每分钟采样运行中/已配置虚拟机，连续 3 次失败与恢复发布系统事件，健康样本保留 7 天。列表页仍保留独立连接、4 并发和 2 秒预算的主机名/IP 摘要，失败不阻塞列表主流程。
 - 删除虚拟机：仅允许已关机或异常停止的域；删除域定义并保留磁盘，要求输入名称二次确认。
 - 生命周期写能力：`start`、`shutdown`、`reboot`、`reset`、`pause`、`resume`、`destroy`。
@@ -70,14 +70,14 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）、NFS `netfs` 和 LVM `logical` 创建，启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。NFS 池校验主机名、绝对导出路径和目标路径；LVM 池校验卷组与 `/dev/` 目标路径，只允许 raw 卷并拒绝文件上传。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。卷列表即使为空也返回数组而非 `null`，避免前端空池状态崩溃。
 - 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离/外部桥接网络、启停网络并删除未激活网络。外部桥接复用宿主机已有 Linux 网桥，地址和 DHCP 由上游网络提供。模式、网桥存在性、地址推导和删除约束由后端校验，写操作记录审计。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
-- 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、`vm.import`、冷备份相关任务和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆、导入或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
+- 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、`vm.import`、备份相关任务、磁盘跨池迁移和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆、导入、迁移或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
 - 控制台：Operator/Admin 可在虚拟机详情内嵌或独立窗口中打开 noVNC 与 xterm.js；后端申请一次性短时效 token，通过 WebSocket 将浏览器二进制帧桥接到 libvirt `OpenGraphicsFD` 或 console stream，并在打开时记录审计。
 - 域 XML：`GET /api/v1/vms/{uuid}/xml?format=live|config` 默认 live，使用 `DOMAIN_XML_INACTIVE` 读取 config；Admin 可通过 `PUT /api/v1/vms/{uuid}/xml` 在可写模式编辑持久配置，服务端锁定名称/UUID、拒绝 QEMU hook 命名空间，并以 `DOMAIN_DEFINE_VALIDATE` 校验后定义，审计不保存 XML 正文。
 - 虚拟机配置导出：`GET /api/v1/vms/{uuid}/export` 返回稳定版本化的 JSON 包，包含虚拟机详情、持久配置 XML、活动域 live XML、快照和磁盘/网络元数据；只读能力不受 Viewer 或全局只读模式限制，但记录 `vm.export` 审计，不包含磁盘镜像数据。
 - Playwright 使用只读和可写两套严格串行配置；可写场景只连接有状态 demo 后端，不对真实虚拟机执行写操作。
 
-P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` / `bridge` 模式，管理型网络使用 IPv4 子网且至少为 `/29`，外部桥接网络接入宿主机已有网桥；活跃网络必须先停止才能删除。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
+P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` / `bridge` 模式，管理型网络使用 IPv4 子网且至少为 `/29`，外部桥接网络接入宿主机已有网桥；活跃网络必须先停止才能删除。虚拟机创建与导入通过 libvirt capabilities/domain capabilities 探测宿主机架构、KVM 机型与 UEFI/Secure Boot，由请求可显式选择架构和机型；未指定时 x86_64/BIOS 保持兼容，ARM64 默认 `virt`。demo 后端暴露同等能力用于 UI 验证。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
 
 ## 2. 总体架构
 
@@ -421,7 +421,7 @@ type Backend interface {
 ### 2.4 状态与任务模型
 
 - VM、存储池、网络、快照状态实时来自 libvirt，不写数据库副本。
-- 创建 VM、克隆、冷备份、存储卷上传、快照回滚、批量操作等长任务落 SQLite `tasks` 表。当前已实现任务查询、状态恢复、页面轮询刷新，以及存储卷流式上传、VM 克隆和虚拟机冷备份的真实进度更新；后续长任务生产者通过同一任务模型更新进度，SSE 任务流作为增强项。
+- 创建 VM、克隆、冷备份/在线备份、磁盘跨池迁移、存储卷上传、快照回滚、批量操作等长任务落 SQLite `tasks` 表。当前已实现任务查询、状态恢复、页面轮询刷新，以及存储卷流式上传、VM 克隆、磁盘迁移和虚拟机备份的真实进度更新；后续长任务生产者通过同一任务模型更新进度，SSE 任务流作为增强项。
 - 短生命周期 libvirt 事件由事件采集器统一转换为业务事件，进入进程内事件总线，再通过 SSE 推送给前端；事件总线只保留最近 500 条，进程重启后清空。
 - 前端 TanStack Query 只缓存查询结果；收到 SSE 后按资源 key 失效，不自行推测最终状态。
 
@@ -740,7 +740,8 @@ type PassthroughDevice = {
 | `DELETE` | `/snapshot-policies/{id}` | 删除策略定义（已实现，需 CSRF；不删除已有快照） |
 | `POST` | `/snapshot-policies/{id}/run` | 立即执行策略并返回新快照（已实现，需 CSRF） |
 | `POST` | `/vms/{uuid}/clone` | 克隆关机/异常停止的持久域为异步任务，返回 `202` 和任务对象（已实现） |
-| `POST` | `/vms/{uuid}/backups` | 冷备份关机/异常停止的持久域到活跃存储池，返回 `202` 和 `vm.backup` 任务（已实现，需 CSRF） |
+| `POST` | `/vms/{uuid}/disks/{target}/migrate` | 将关机/异常停止持久域的指定可写数据盘复制到其他活跃池并切换持久域引用，返回 `202` 和 `vm.disk.migrate` 任务（已实现，需 CSRF） |
+| `POST` | `/vms/{uuid}/backups` | 冷备份关机/异常停止域，或通过外部磁盘快照在线备份运行中域，返回 `202` 和 `vm.backup` 任务（已实现，需 CSRF） |
 | `DELETE` | `/vms/{uuid}?disks=keep|delete` | 删除域和可选磁盘 |
 | `POST` | `/vms/{uuid}/console-token` | 申请一次性控制台令牌，`kind` 为 `vnc` 或 `serial` |
 | `GET` | `/vms/{uuid}/console?token=...` | 升级为 VNC WebSocket 并桥接 libvirt graphics FD |
@@ -759,7 +760,7 @@ type PassthroughDevice = {
 
 管理员 XML 编辑只接受持久域和 `config` 语义：请求体为 `{ "xml": "..." }`，上限 512 KiB，根元素必须是 `domain`，其中名称和 UUID 必须与目标虚拟机一致。服务端拒绝 `http://libvirt.org/schemas/domain/qemu/1.0` 命名空间，避免通过 `<qemu:commandline>` 等扩展注入宿主命令；随后调用 `DomainDefineXMLFlags(..., DOMAIN_DEFINE_VALIDATE)`，校验失败不更新定义。该操作需要 Admin、CSRF 和可写模式，只修改持久定义，不启动或重启域；运行中的域在下次启动时使用新定义。成功审计记录名称、状态、字节数、SHA-256 和格式版本，失败同样审计，但不保存 XML 正文。
 
-虚拟机冷备份只接受 `shutoff` 或 `crashed` 状态且持久化的域，目标必须是活跃存储池。请求体为 `{ "name": "...", "targetPool": "..." }`，备份名需满足安全文件名规则；所有可写 `file` 磁盘必须能通过 libvirt Storage Volume API 定位。产物包括 `<name>-domain.xml`（inactive 持久 XML）、`<name>-manifest.json`（`virtmgr.vm-backup/v1`，记录虚拟机身份、磁盘映射和配置 SHA-256）以及 `<name>-disk-NN.<ext>`（磁盘副本）。创建前检查目标池内全部产物名，任一冲突返回 `409 CONFLICT`；磁盘复制、配置写入或 manifest 写入失败时删除本次已创建的卷。操作要求 Operator/Admin、可写模式和 CSRF，任务成功或失败均记录 `vm.backup` 审计，detail 不保存 XML 正文。该能力不包含内存状态，也不提供恢复或删除备份接口。
+虚拟机备份请求体为 `{ "name": "...", "targetPool": "...", "online": false, "quiesce": false }`，备份名需满足安全文件名规则；所有可写 `file` 磁盘必须能通过 libvirt Storage Volume API 定位。冷备份只接受 `shutoff` 或 `crashed` 状态且持久化的域；`online=true` 只接受运行中的持久域，且要求源磁盘位于文件型活跃池，明确拒绝 `logical`、`iscsi` 和 `rbd` 源池。在线模式创建外部磁盘快照 overlay，复制稳定基卷后执行活动 block commit；同步完成后通过 `DOMAIN_BLOCK_JOB_ABORT_PIVOT` 将活动磁盘切回基卷，校验 live XML 引用后才删除快照元数据和 overlay。`quiesce=true` 必须同时启用在线模式，并需要 Guest Agent 的 fsfreeze 能力。产物包括 `<name>-domain.xml`（inactive 持久 XML）、`<name>-manifest.json`（`virtmgr.vm-backup/v2`，记录虚拟机身份、磁盘映射、配置 SHA-256、在线/静默一致性及 vTPM 状态）以及 `<name>-disk-NN.<ext>`（磁盘副本）。创建前检查目标池内全部产物名，任一冲突返回 `409 CONFLICT`；磁盘复制、配置写入或 manifest 写入失败时删除本次已创建的卷，并尽力恢复在线快照链。操作要求 Operator/Admin、可写模式和 CSRF，任务成功或失败均记录 `vm.backup` 审计，detail 不保存 XML 正文。该能力不包含内存状态，也不将 vTPM 状态写入备份。
 
 ### 5.4 虚拟机模板
 
@@ -1006,7 +1007,7 @@ Tab 内容：
 - **概览**：控制台、资源指标、实时与历史趋势；Guest Agent 未连接时不展开状态卡，仅已连接时显示顶部徽标。
 - **配置**：vCPU/内存、元数据与标签、基础域信息、磁盘、网络接口、PCI/USB 直通和 ISO 操作。
 - **客户机**：Guest Agent 状态、连接引导、能力矩阵、文件/密码/SSH/进程/服务诊断等受控操作。
-- **快照与备份**：定时策略、快照时间线、冷备份和最近备份。
+- **快照与备份**：定时策略、快照时间线、冷备份/在线备份和最近备份。
 - **高级**：配置导出、克隆、域 XML 与版本历史、危险删除操作；客户机密码入口位于页面顶部工具栏。
 
 ### 7.6 独立控制台
@@ -1229,11 +1230,11 @@ WantedBy=multi-user.target
 ### P2：高级能力
 
 - 虚拟机模板、PCI/USB 设备直通。
-- 备份任务（已实现冷备份）、导出（已实现）、定时快照策略（已实现）。
+- 备份任务（已实现冷备份与在线一致性备份）、导出（已实现）、定时快照策略（已实现）。
 - 多宿主机 registry/agent、迁移。
 - OIDC、细粒度 RBAC、审计 Webhook。
 
-当前 P2 已落地 UEFI/Secure Boot、cloud-init NoCloud seed ISO、虚拟机模板、PCI/USB 直通、定时快照策略、管理员持久 XML 编辑、虚拟机配置导出与冷备份：默认 BIOS 保持向后兼容；UEFI 使用 firmware 自动选择，Secure Boot 通过 loader secure 标志启用。cloud-init 用户数据由纯 Go ISO9660 生成器写入存储池卷，通过只读 CD-ROM 挂载，审计不保存用户内容；Linux 客户机还可通过 Guest Agent 查看 Cloud-init 状态、错误和日志尾部。镜像库支持同存储池 qcow2 链接克隆，基础卷被引用时禁止删除。模板由 SQLite 持久化，支持 CRUD、权限/只读校验和从模板预填创建表单。直通使用 libvirt 节点设备和 hostdev XML，支持运行中热插拔、持久配置写入、跨虚拟机重复分配校验和审计。定时快照策略使用 SQLite 调度元数据和进程内每分钟调度器，支持 CRUD、立即执行、启用/禁用、保留清理和失败状态回写；清理仅作用于带 `[policy:<id>]` 标记的快照。XML 编辑锁定域身份、拒绝 QEMU commandline 命名空间并通过 libvirt validate/define 更新持久配置。配置导出提供版本化 JSON、持久/运行态 XML、快照元数据和只读模式下的审计闭环，不包含磁盘数据。冷备份将持久 XML、manifest 和可写磁盘复制到活跃存储池，以 `vm.backup` 任务展示真实进度，失败回滚本次产物，审计不保存 XML 正文，且暂不包含内存状态或恢复能力。创建审计记录固件、安全启动、cloud-init 元信息和镜像克隆方式，虚拟机详情展示回读结果，Go 单元测试、HTTP 集成测试与严格串行 Playwright 覆盖创建、模板、直通、策略、XML 编辑、导出和冷备份流程。
+当前 P2 已落地多架构/机型能力探测、vTPM 2.0、UEFI/Secure Boot、cloud-init NoCloud seed ISO、虚拟机模板、PCI/USB 直通、定时快照策略、管理员持久 XML 编辑、虚拟机配置导出、冷备份和在线一致性备份：默认 BIOS 保持向后兼容；UEFI 使用 firmware 自动选择，Secure Boot 通过 loader secure 标志启用。创建和导入根据 libvirt capabilities/domain capabilities 校验架构、机型、固件和 swtpm 能力。cloud-init 用户数据由纯 Go ISO9660 生成器写入存储池卷，通过只读 CD-ROM 挂载，审计不保存用户内容；Linux 客户机还可通过 Guest Agent 查看 Cloud-init 状态、错误和日志尾部。镜像库支持同存储池 qcow2 链接克隆，基础卷被引用时禁止删除。模板由 SQLite 持久化，支持 CRUD、权限/只读校验和从模板预填创建表单。直通使用 libvirt 节点设备和 hostdev XML，支持运行中热插拔、持久配置写入、跨虚拟机重复分配校验和审计。定时快照策略使用 SQLite 调度元数据和进程内每分钟调度器，支持 CRUD、立即执行、启用/禁用、保留清理和失败状态回写；清理仅作用于带 `[policy:<id>]` 标记的快照。XML 编辑锁定域身份、拒绝 QEMU commandline 命名空间并通过 libvirt validate/define 更新持久配置。配置导出提供版本化 JSON、持久/运行态 XML、快照元数据和只读模式下的审计闭环，不包含磁盘数据。关机域可显式跨池迁移数据盘并原子切换持久配置引用。冷备份复制持久 XML、manifest 和可写磁盘；在线备份通过外部磁盘快照复制稳定基卷，活动 block commit 同步后 pivot 回基卷，可选 Guest Agent 静默。两者均以 `vm.backup` 任务展示真实进度，失败回滚本次产物，审计不保存 XML 正文；暂不包含内存状态、vTPM 状态或原地恢复能力。创建审计记录架构、机型、固件、安全启动、vTPM、cloud-init 元信息和镜像克隆方式，虚拟机详情展示回读结果，Go 单元测试、HTTP 集成测试与严格串行 Playwright 覆盖创建、导入、模板、直通、策略、XML 编辑、导出、磁盘迁移和备份流程。
 
 ## 13. 与 dosh 的复用边界
 

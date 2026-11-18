@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSessionQuery } from "@/features/auth/use-session";
+import { useHostQuery } from "@/features/host/use-host-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 import { buildVMImportInput, importDiskCapacityError, importFilenameError, importVolumeFormat, isSupportedImportVolume, vmImportTargetDiskName, type VMImportFormValues } from "@/features/vms/vm-import-model";
@@ -19,6 +20,8 @@ import { formatBytes } from "@/lib/utils";
 
 const initialForm: VMImportFormValues = {
   name: "",
+  architecture: "",
+  machine: "",
   sourcePool: "",
   sourceVolume: "",
   targetPool: "",
@@ -30,6 +33,7 @@ const initialForm: VMImportFormValues = {
   nicModel: "virtio",
   firmware: "bios",
   secureBoot: false,
+  tpm: false,
   guestAgent: true,
   autostart: false,
   start: false,
@@ -40,6 +44,7 @@ export function VMImportPage() {
   const poolsQuery = useStoragePoolsQuery();
   const networksQuery = useNetworksQuery();
   const queryClient = useQueryClient();
+  const hostQuery = useHostQuery();
   const [form, setForm] = useState<VMImportFormValues>(initialForm);
   const [sourceMode, setSourceMode] = useState<"existing" | "upload">("existing");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -57,6 +62,14 @@ export function VMImportPage() {
   const readOnly = Boolean(session.data?.readOnly);
   const canImport = Boolean(session.data) && !readOnly && session.data?.user.role !== "viewer";
   const disabledReason = readOnly ? "系统当前处于只读模式" : "当前账号没有导入虚拟机权限";
+  const host = hostQuery.data?.host;
+  const architectureOptions = host?.architectures?.length ? host.architectures : host?.architecture ? [host.architecture] : [];
+  const machineOptions = host?.machineTypes ?? [];
+
+  useEffect(() => {
+    if (!host?.architecture) return;
+    setForm((current) => current.architecture ? current : { ...current, architecture: host.architecture });
+  }, [host?.architecture]);
 
   useEffect(() => {
     if (!activePools.length) return;
@@ -226,6 +239,20 @@ export function VMImportPage() {
                 <Input id="vm-import-vcpus" type="number" min={1} max={255} value={form.vcpus} onChange={(event) => update("vcpus", event.target.value)} required disabled={!canImport} />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="vm-import-architecture">架构</Label>
+                <select id="vm-import-architecture" value={form.architecture} onChange={(event) => update("architecture", event.target.value)} disabled={!canImport || !architectureOptions.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  {!architectureOptions.length ? <option value="">跟随宿主机</option> : null}
+                  {architectureOptions.map((architecture) => <option key={architecture} value={architecture}>{architecture}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vm-import-machine">机型</Label>
+                <select id="vm-import-machine" value={form.machine} onChange={(event) => update("machine", event.target.value)} disabled={!canImport || !machineOptions.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  <option value="">libvirt 自动选择</option>
+                  {machineOptions.map((machine) => <option key={machine} value={machine}>{machine}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="vm-import-memory">内存 (MiB)</Label>
                 <Input id="vm-import-memory" type="number" min={128} value={form.memoryMiB} onChange={(event) => update("memoryMiB", event.target.value)} required disabled={!canImport} />
               </div>
@@ -269,6 +296,10 @@ export function VMImportPage() {
                 <label className="flex items-start gap-3 text-sm">
                   <input aria-label="启用 Secure Boot" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.secureBoot} onChange={(event) => update("secureBoot", event.target.checked)} disabled={!canImport || form.firmware !== "uefi"} />
                   <span><span className="block font-medium">Secure Boot</span><span className="mt-0.5 block text-xs text-muted-foreground">仅 UEFI 固件支持。</span></span>
+                </label>
+                <label className="flex items-start gap-3 text-sm">
+                  <input aria-label="启用 vTPM 2.0" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.tpm} onChange={(event) => update("tpm", event.target.checked)} disabled={!canImport || Boolean(host && !host.tpm)} />
+                  <span><span className="block font-medium">vTPM 2.0</span><span className="mt-0.5 block text-xs text-muted-foreground">仅宿主机提供 swtpm emulator 时可用。</span></span>
                 </label>
                 <label className="flex items-start gap-3 text-sm">
                   <input aria-label="启用 Guest Agent" type="checkbox" className="mt-0.5 h-4 w-4" checked={form.guestAgent} onChange={(event) => update("guestAgent", event.target.checked)} disabled={!canImport} />

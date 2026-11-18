@@ -19,9 +19,7 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	if s.backupService != nil {
 		return s.backupService.Create(ctx, backupsapp.CreateCommand{
 			VMUUID: strings.TrimSpace(command.UUID),
-			Spec: domain.BackupCreateSpec{
-				Name: command.Spec.Name, TargetPool: command.Spec.TargetPool,
-			},
+			Spec:   backupCreateSpec(command.Spec),
 			Request: backupsapp.MutationContext{
 				Session: command.Request.Session, RequestID: command.Request.RequestID, SourceIP: command.Request.SourceIP,
 			},
@@ -33,6 +31,8 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	detail := map[string]any{
 		"backupName": command.Spec.Name,
 		"targetPool": command.Spec.TargetPool,
+		"online":     command.Spec.Online,
+		"quiesce":    command.Spec.Quiesce,
 	}
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, domain.ErrForbidden)
@@ -46,6 +46,9 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	if command.UUID == "" || !vmNamePattern.MatchString(command.Spec.Name) || !backupPoolPattern.MatchString(command.Spec.TargetPool) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, domain.ErrInvalidInput)
 	}
+	if command.Spec.Quiesce && !command.Spec.Online {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, fmt.Errorf("%w: quiesced backup requires online mode", domain.ErrInvalidInput))
+	}
 	source, err := s.repository.GetVM(ctx, command.UUID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, err)
@@ -53,7 +56,8 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	detail["sourceName"] = source.Name
 	detail["sourceState"] = string(source.State)
 	detail["diskCount"] = backupableDiskCount(source.Disks)
-	if (source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) || !source.Persistent {
+	if !source.Persistent || (!command.Spec.Online && source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) ||
+		(command.Spec.Online && source.State != domain.VMStateRunning) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, domain.ErrActionNotAllowed)
 	}
 
@@ -79,6 +83,12 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 		s.runBackup(jobContext, task.ID, command, detail)
 	}()
 	return task, nil
+}
+
+func backupCreateSpec(spec domain.VMBackupSpec) domain.BackupCreateSpec {
+	return domain.BackupCreateSpec{
+		Name: spec.Name, TargetPool: spec.TargetPool, Online: spec.Online, Quiesce: spec.Quiesce,
+	}
 }
 
 func (s *Service) runBackup(ctx context.Context, taskID string, command BackupCommand, detail map[string]any) {

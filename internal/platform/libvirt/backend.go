@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"virtmgr/internal/domain"
 
@@ -22,6 +23,7 @@ type Backend interface {
 	DefineVMXML(ctx context.Context, uuid, xmlText string) (domain.VMXML, error)
 	UpdateVMResources(ctx context.Context, uuid string, spec domain.VMResourcesSpec) (domain.VM, error)
 	ResizeVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskResizeSpec) (domain.VM, error)
+	MigrateVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskMigrateSpec) (domain.VM, error)
 	AttachVMDisk(ctx context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error)
 	DetachVMDisk(ctx context.Context, uuid, target string) (domain.VM, error)
 	AttachVMNetwork(ctx context.Context, uuid string, spec domain.VMNetworkAttachSpec) (domain.VM, error)
@@ -71,6 +73,7 @@ type Backend interface {
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	CloneStorageVolumeLinked(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)
 	ConvertStorageVolume(ctx context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error)
+	FlattenStorageVolume(ctx context.Context, spec domain.StorageVolumeFlattenSpec) (domain.StorageVolume, error)
 	StorageVolumeChecksum(ctx context.Context, poolName, volumeName string) (string, error)
 	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)
@@ -101,6 +104,8 @@ type Client struct {
 	guestCacheMu    sync.Mutex
 	guestCache      map[string]guestAgentCacheEntry
 	guestInflight   map[string]*guestAgentProbeCall
+	platform        *hostPlatform
+	platformAt      time.Time
 }
 
 type EventSink interface {
@@ -181,9 +186,21 @@ func (c *Client) Host(ctx context.Context) (domain.Host, error) {
 	if err != nil {
 		return domain.Host{}, fmt.Errorf("read libvirt version: %w", err)
 	}
+	platform := c.hostPlatformLocked(ctx)
+	capabilities := platform.capabilities
+	if capabilities.Architecture == "" {
+		capabilities.Architecture = domain.HostArchitectureFallback()
+	}
 	return domain.Host{
 		Name:           c.hostName,
 		LibvirtVersion: formatVersion(version),
+		Architecture:   capabilities.Architecture,
+		Architectures:  capabilities.Architectures,
+		MachineTypes:   capabilities.MachineTypes,
+		Virtualization: capabilities.Virtualization,
+		UEFI:           capabilities.UEFI,
+		SecureBoot:     capabilities.SecureBoot,
+		TPM:            capabilities.TPM,
 		CPUModel:       info.Model,
 		CPUs:           info.Cpus,
 		CPUSockets:     info.Sockets,

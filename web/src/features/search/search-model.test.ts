@@ -16,6 +16,7 @@ const vm: VM = {
   cpuTimeNanos: 0,
   firmware: "uefi",
   secureBoot: true,
+  tpm: true,
   cloudInit: false,
   disks: [],
   interfaces: [{ type: "network", source: "default" }],

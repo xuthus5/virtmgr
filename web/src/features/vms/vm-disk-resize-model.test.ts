@@ -33,6 +33,7 @@ const vm: VM = {
   cpuTimeNanos: 0,
   firmware: "bios",
   secureBoot: false,
+  tpm: false,
   cloudInit: false,
   disks: [disk],
   interfaces: [],

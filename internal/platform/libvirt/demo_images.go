@@ -146,10 +146,69 @@ func (d *DemoBackend) CloneStorageVolumeLinked(_ context.Context, sourcePoolName
 	}
 	target := domain.StorageVolume{
 		Name: targetName, Path: filepath.Join(sourcePool.TargetPath, targetName), Type: "file", Format: "qcow2",
-		CapacityBytes: source.CapacityBytes, AllocationBytes: 0,
+		Linked: true, CapacityBytes: source.CapacityBytes, AllocationBytes: 0,
 	}
 	d.volumes[sourcePoolName] = append(d.volumes[sourcePoolName], target)
 	d.volumeBacking[sourcePoolName+"/"+targetName] = source.Path
+	return target, nil
+}
+
+func (d *DemoBackend) FlattenStorageVolume(_ context.Context, spec domain.StorageVolumeFlattenSpec) (domain.StorageVolume, error) {
+	spec.SourcePool = strings.TrimSpace(spec.SourcePool)
+	spec.SourceVolume = strings.TrimSpace(spec.SourceVolume)
+	spec.TargetPool = strings.TrimSpace(spec.TargetPool)
+	spec.TargetName = strings.TrimSpace(spec.TargetName)
+	if spec.SourcePool == "" || spec.SourceVolume == "" || spec.TargetPool == "" || spec.TargetName == "" ||
+		(spec.SourcePool == spec.TargetPool && spec.SourceVolume == spec.TargetName) ||
+		!strings.HasSuffix(strings.ToLower(spec.TargetName), ".qcow2") {
+		return domain.StorageVolume{}, domain.ErrInvalidInput
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	sourcePool, ok := d.pools[spec.SourcePool]
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if sourcePool.State != domain.StoragePoolStateActive {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	source, ok := d.demoVolumeLocked(spec.SourcePool, spec.SourceVolume)
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	backing := strings.TrimSpace(d.volumeBacking[spec.SourcePool+"/"+source.Name])
+	if source.Format != "qcow2" || backing == "" {
+		return domain.StorageVolume{}, fmt.Errorf("%w: only linked qcow2 volumes can be flattened", domain.ErrInvalidInput)
+	}
+	for _, volume := range d.volumes[spec.SourcePool] {
+		if volume.Name != source.Name && filepath.Clean(d.volumeBacking[spec.SourcePool+"/"+volume.Name]) == filepath.Clean(source.Path) {
+			return domain.StorageVolume{}, fmt.Errorf("%w: source volume is a backing store for %s", domain.ErrVolumeInUse, volume.Name)
+		}
+	}
+	targetPool, ok := d.pools[spec.TargetPool]
+	if !ok {
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if targetPool.State != domain.StoragePoolStateActive {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	if _, exists := d.demoVolumeLocked(spec.TargetPool, spec.TargetName); exists {
+		return domain.StorageVolume{}, domain.ErrConflict
+	}
+	required := domain.StorageProvisionRequiredBytes("qcow2", source.CapacityBytes, source.AllocationBytes)
+	if !domain.StoragePoolHasCapacity(targetPool, required) {
+		return domain.StorageVolume{}, fmt.Errorf("%w: target pool requires %d bytes", domain.ErrStorageInsufficient, required)
+	}
+	target := domain.StorageVolume{
+		Name: spec.TargetName, Path: filepath.Join(targetPool.TargetPath, spec.TargetName), Type: "file", Format: "qcow2",
+		CapacityBytes: source.CapacityBytes, AllocationBytes: source.AllocationBytes,
+	}
+	d.volumes[spec.TargetPool] = append(d.volumes[spec.TargetPool], target)
+	if body, exists := d.volumeData[spec.SourcePool+"/"+source.Name]; exists {
+		d.volumeData[spec.TargetPool+"/"+target.Name] = append([]byte(nil), body...)
+	}
+	delete(d.volumeBacking, spec.TargetPool+"/"+target.Name)
+	d.publish("storage.volume.flattened", "info", "storage_volume", spec.TargetPool+"/"+target.Name, target.Name, "链接克隆卷 "+source.Name+" 已展平")
 	return target, nil
 }
 

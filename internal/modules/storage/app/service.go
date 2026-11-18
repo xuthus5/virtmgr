@@ -32,6 +32,10 @@ type VolumeConverter interface {
 	ConvertStorageVolume(ctx context.Context, spec domain.StorageVolumeConvertSpec) (domain.StorageVolume, error)
 }
 
+type VolumeFlattener interface {
+	FlattenStorageVolume(ctx context.Context, spec domain.StorageVolumeFlattenSpec) (domain.StorageVolume, error)
+}
+
 type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
@@ -118,6 +122,13 @@ type ConvertVolumeCommand struct {
 	Pool    string
 	Name    string
 	Spec    domain.StorageVolumeConvertSpec
+	Request MutationContext
+}
+
+type FlattenVolumeCommand struct {
+	Pool    string
+	Name    string
+	Spec    domain.StorageVolumeFlattenSpec
 	Request MutationContext
 }
 
@@ -571,6 +582,150 @@ func validateConvertVolumeCommand(command ConvertVolumeCommand) error {
 		return fmt.Errorf("%w: target must differ from source volume", domain.ErrInvalidInput)
 	}
 	return nil
+}
+
+func (s *Service) FlattenVolume(ctx context.Context, command FlattenVolumeCommand) (domain.Task, error) {
+	command.Pool = strings.TrimSpace(command.Pool)
+	command.Name = strings.TrimSpace(command.Name)
+	command.Spec.TargetPool = strings.TrimSpace(command.Spec.TargetPool)
+	command.Spec.TargetName = strings.TrimSpace(command.Spec.TargetName)
+	command.Spec.SourcePool = command.Pool
+	command.Spec.SourceVolume = command.Name
+	detail := flattenVolumeDetail(command.Spec)
+	targetID := command.Pool + "/" + command.Name
+	if !domain.CanManageStorage(command.Request.Session.User.Role) {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrReadOnly)
+	}
+	flattener, ok := s.repository.(VolumeFlattener)
+	if !ok || s.tasks == nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrUnavailable)
+	}
+	if err := validateFlattenVolumeCommand(command); err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	sourceVolumes, err := s.repository.ListStorageVolumes(ctx, command.Pool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	var source domain.StorageVolume
+	for _, volume := range sourceVolumes {
+		if volume.Name == command.Name {
+			source = volume
+			break
+		}
+	}
+	if source.Name == "" {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrNotFound)
+	}
+	detail["sourceFormat"] = source.Format
+	detail["sourceCapacityBytes"] = source.CapacityBytes
+	detail["sourceAllocationBytes"] = source.AllocationBytes
+	if source.Format != "qcow2" || !source.Linked {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail,
+			fmt.Errorf("%w: only linked qcow2 volumes can be flattened", domain.ErrInvalidInput))
+	}
+	vms, err := s.repository.ListVMs(ctx)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	if usages := storageVolumeUsage(source, vms); len(usages) > 0 {
+		names := make([]string, 0, len(usages))
+		for _, usage := range usages {
+			names = append(names, usage.VMName)
+		}
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail,
+			fmt.Errorf("%w: source volume is attached to %s", domain.ErrVolumeInUse, strings.Join(names, ", ")))
+	}
+	targetPool, err := s.repository.GetStoragePool(ctx, command.Spec.TargetPool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	detail["targetPool"] = targetPool.Name
+	detail["targetType"] = targetPool.Type
+	if targetPool.State != domain.StoragePoolStateActive {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrUnavailable)
+	}
+	if targetPool.Type == "logical" {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail,
+			fmt.Errorf("%w: logical LVM pools cannot store flattened qcow2 volumes", domain.ErrInvalidInput))
+	}
+	targetVolumes, err := s.repository.ListStorageVolumes(ctx, command.Spec.TargetPool)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	for _, volume := range targetVolumes {
+		if volume.Name == command.Spec.TargetName {
+			return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, domain.ErrConflict)
+		}
+	}
+	required := domain.StorageProvisionRequiredBytes("qcow2", source.CapacityBytes, source.AllocationBytes)
+	detail["requiredBytes"] = required
+	if !domain.StoragePoolHasCapacity(targetPool, required) {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail,
+			fmt.Errorf("%w: target pool requires %d bytes, only %d available", domain.ErrStorageInsufficient, required, targetPool.AvailableBytes))
+	}
+	startStep := fmt.Sprintf("正在展平链接克隆 %s/%s", command.Pool, command.Name)
+	taskID, err := s.tasks.Start(ctx, "storage.volume.flatten", "storage_volume", targetID, command.Request.Session.User.Username, startStep)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	now := time.Now().UTC()
+	task := domain.Task{
+		ID: taskID, Kind: "storage.volume.flatten", TargetKind: "storage_volume", TargetID: targetID,
+		Status: domain.TaskStatusRunning, Progress: 0, Step: startStep,
+		Actor: command.Request.Session.User.Username, CreatedAt: now, UpdatedAt: now,
+	}
+	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertTimeout)
+	if registrar, ok := s.tasks.(interface {
+		RegisterCancel(string, context.CancelFunc)
+	}); ok {
+		registrar.RegisterCancel(task.ID, cancel)
+	}
+	go func() {
+		defer cancel()
+		result, flattenErr := flattener.FlattenStorageVolume(jobContext, command.Spec)
+		finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertFinalize)
+		defer finalizeCancel()
+		if flattenErr != nil {
+			_ = s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.flatten", targetID, "failure", detail, flattenErr)
+			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "链接克隆展平失败", flattenErr)
+			return
+		}
+		detail["targetPath"] = result.Path
+		detail["targetCapacityBytes"] = result.CapacityBytes
+		detail["targetAllocationBytes"] = result.AllocationBytes
+		detail["targetLinked"] = result.Linked
+		if auditErr := s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.flatten", targetID, "success", detail, nil); auditErr != nil {
+			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "链接克隆展平完成但审计写入失败", auditErr)
+			return
+		}
+		_ = s.tasks.Succeed(finalizeContext, task.ID, "链接克隆已展平为独立卷")
+	}()
+	return task, nil
+}
+
+func validateFlattenVolumeCommand(command FlattenVolumeCommand) error {
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) ||
+		!poolNamePattern.MatchString(command.Spec.TargetPool) || !validVolumeName(command.Spec.TargetName) {
+		return domain.ErrInvalidInput
+	}
+	if !strings.HasSuffix(strings.ToLower(command.Spec.TargetName), ".qcow2") {
+		return fmt.Errorf("%w: flattened target name must end with .qcow2", domain.ErrInvalidInput)
+	}
+	if command.Pool == command.Spec.TargetPool && command.Name == command.Spec.TargetName {
+		return fmt.Errorf("%w: target must differ from source volume", domain.ErrInvalidInput)
+	}
+	return nil
+}
+
+func flattenVolumeDetail(spec domain.StorageVolumeFlattenSpec) map[string]any {
+	return map[string]any{
+		"sourcePool": spec.SourcePool, "sourceVolume": spec.SourceVolume,
+		"targetPool": spec.TargetPool, "targetName": spec.TargetName, "targetFormat": "qcow2",
+	}
 }
 
 func convertVolumeDetail(spec domain.StorageVolumeConvertSpec) map[string]any {

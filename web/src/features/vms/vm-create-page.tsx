@@ -14,6 +14,7 @@ import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
 import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
 import { useImagesQuery } from "@/features/images/use-images-query";
+import { useHostQuery } from "@/features/host/use-host-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
@@ -25,6 +26,8 @@ import { formatBytes } from "@/lib/utils";
 
 type FormState = {
   name: string;
+  architecture: string;
+  machine: string;
   vcpus: string;
   memoryMiB: string;
   diskPath: string;
@@ -36,6 +39,7 @@ type FormState = {
   bootOrder: VMBootOrder;
   firmware: VMFirmware;
   secureBoot: boolean;
+  tpm: boolean;
   cloudInit: boolean;
   cloudInitUserData: string;
   cloudInitNetworkConfig: string;
@@ -47,6 +51,8 @@ type FormState = {
 
 const initialForm: FormState = {
   name: "",
+  architecture: "",
+  machine: "",
   vcpus: "2",
   memoryMiB: "2048",
   diskPath: "",
@@ -58,6 +64,7 @@ const initialForm: FormState = {
   bootOrder: "auto",
   firmware: "bios",
   secureBoot: false,
+  tpm: false,
   cloudInit: false,
   cloudInitUserData: "",
   cloudInitNetworkConfig: "",
@@ -73,6 +80,7 @@ export function VMCreatePage() {
   const poolsQuery = useStoragePoolsQuery();
   const templatesQuery = useTemplatesQuery();
   const imagesQuery = useImagesQuery();
+  const hostQuery = useHostQuery();
   const search = useSearch({ strict: false }) as { template?: number };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -105,6 +113,14 @@ export function VMCreatePage() {
   const selectedImage = images.find((image) => String(image.id) === selectedImageID);
   const linkedCloneAvailable = selectedImage?.format === "qcow2" && diskPool === selectedImage.pool;
   const selectedTemplate = templates.find((template) => String(template.id) === selectedTemplateID);
+  const host = hostQuery.data?.host;
+  const architectureOptions = host?.architectures?.length ? host.architectures : host?.architecture ? [host.architecture] : [];
+  const machineOptions = host?.machineTypes ?? [];
+
+  useEffect(() => {
+    if (!host?.architecture) return;
+    setForm((current) => current.architecture ? current : { ...current, architecture: host.architecture });
+  }, [host?.architecture]);
 
   useEffect(() => {
     if (!search.template || presetApplied.current) return;
@@ -223,6 +239,8 @@ export function VMCreatePage() {
     }
     mutation.mutate({
       name: form.name.trim(),
+      ...(form.architecture ? { architecture: form.architecture } : {}),
+      ...(form.machine ? { machine: form.machine } : {}),
       vcpus: Number(form.vcpus),
       memoryMiB: Number(form.memoryMiB),
       ...(sourceMode === "image" ? { diskPath: "", diskFormat: "", imageId: Number(selectedImageID), imageCloneMode, targetPool: diskPool } : { diskPath: form.diskPath.trim(), diskFormat: form.diskFormat }),
@@ -233,6 +251,7 @@ export function VMCreatePage() {
       bootOrder: form.bootOrder,
       firmware: form.firmware,
       secureBoot: form.secureBoot,
+      tpm: form.tpm,
       cloudInit: form.cloudInit ? {
         userData: form.cloudInitUserData.trim(),
         networkConfig: form.cloudInitNetworkConfig.trim() || undefined,
@@ -302,6 +321,21 @@ export function VMCreatePage() {
                 <Input id="vm-memory" type="number" min={128} value={form.memoryMiB} onChange={(event) => update("memoryMiB", event.target.value)} required disabled={!canCreate} />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="vm-architecture">架构</Label>
+                <select id="vm-architecture" value={form.architecture} onChange={(event) => update("architecture", event.target.value)} disabled={!canCreate || !architectureOptions.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  {!architectureOptions.length ? <option value="">跟随宿主机</option> : null}
+                  {architectureOptions.map((architecture) => <option key={architecture} value={architecture}>{architecture}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vm-machine">机型</Label>
+                <select id="vm-machine" value={form.machine} onChange={(event) => update("machine", event.target.value)} disabled={!canCreate || !machineOptions.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                  <option value="">libvirt 自动选择</option>
+                  {machineOptions.map((machine) => <option key={machine} value={machine}>{machine}</option>)}
+                </select>
+                <p className="text-xs text-muted-foreground">架构与机型来自宿主机 libvirt 能力探测；默认自动选择。</p>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="vm-firmware">固件</Label>
                 <select
                   id="vm-firmware"
@@ -314,7 +348,7 @@ export function VMCreatePage() {
                   className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 >
                   <option value="bios">BIOS</option>
-                  <option value="uefi">UEFI</option>
+                  <option value="uefi" disabled={Boolean(host && !host.uefi)}>UEFI</option>
                 </select>
               </div>
               <div className="space-y-2">
@@ -326,11 +360,26 @@ export function VMCreatePage() {
                     className="h-4 w-4"
                     checked={form.secureBoot}
                     onChange={(event) => update("secureBoot", event.target.checked)}
-                    disabled={!canCreate || form.firmware !== "uefi"}
+                    disabled={!canCreate || form.firmware !== "uefi" || Boolean(host && !host.secureBoot)}
                   />
                   <span className={form.firmware === "uefi" ? "" : "text-muted-foreground"}>Secure Boot</span>
                 </label>
                 <p className="text-xs text-muted-foreground">仅 UEFI 固件支持，使用 libvirt 安全固件自动选择。</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium leading-none">虚拟 TPM</p>
+                <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm shadow-sm">
+                  <input
+                    aria-label="启用 vTPM 2.0"
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={form.tpm}
+                    onChange={(event) => update("tpm", event.target.checked)}
+                    disabled={!canCreate || Boolean(host && !host.tpm)}
+                  />
+                  <span className={host?.tpm ? "" : "text-muted-foreground"}>vTPM 2.0</span>
+                </label>
+                <p className="text-xs text-muted-foreground">使用 libvirt emulator 后端，适用于 Windows 11 和 BitLocker。</p>
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label>系统盘来源</Label>
@@ -586,6 +635,7 @@ export function VMCreatePage() {
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">计算资源</span><span className="font-medium">{form.vcpus || "0"} vCPU · {form.memoryMiB || "0"} MiB</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">系统盘</span><span className="max-w-52 truncate font-medium">{sourceMode === "image" ? (selectedImage?.name || "未选择镜像") : (form.diskPath || "未选择磁盘")}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">固件</span><span className="font-medium">{form.firmware === "uefi" ? "UEFI" : "BIOS"}{form.secureBoot ? " · Secure Boot" : ""}</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">vTPM</span><span className="font-medium">{form.tpm ? "2.0 已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Cloud-init</span><span className="font-medium">{form.cloudInit ? "已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Guest Agent</span><span className="font-medium">{form.guestAgent ? "通道已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">网络</span><Badge variant="outline">{form.network || "-"}</Badge></div>

@@ -165,6 +165,12 @@ export type VMDiskResizeInput = {
   capacityBytes: number;
 };
 
+export type VMDiskMigrateInput = {
+  targetPool: string;
+  targetName: string;
+  targetFormat: "qcow2" | "raw";
+};
+
 export type VMDiskAttachInput = {
   pool: string;
   volume: string;
@@ -216,6 +222,8 @@ export type VMBatchActionResult = {
 
 export type VMCreateInput = {
   name: string;
+  architecture?: string;
+  machine?: string;
   vcpus: number;
   memoryMiB: number;
   diskPath: string;
@@ -230,6 +238,7 @@ export type VMCreateInput = {
   bootOrder?: VMBootOrder;
   firmware: VMFirmware;
   secureBoot: boolean;
+  tpm?: boolean;
   cloudInit?: CloudInitInput;
   guestAgent?: boolean;
   autostart: boolean;
@@ -238,6 +247,8 @@ export type VMCreateInput = {
 
 export type VMImportInput = {
   name: string;
+  architecture?: string;
+  machine?: string;
   sourcePool: string;
   sourceVolume: string;
   targetPool: string;
@@ -249,6 +260,7 @@ export type VMImportInput = {
   nicModel: VMNICModel;
   firmware: VMFirmware;
   secureBoot: boolean;
+  tpm?: boolean;
   guestAgent: boolean;
   autostart: boolean;
   start: boolean;
@@ -329,6 +341,8 @@ export type VMCloneInput = {
 export type VMBackupInput = {
   name: string;
   targetPool: string;
+  online?: boolean;
+  quiesce?: boolean;
 };
 
 export type VMBackupDisk = {
@@ -350,6 +364,11 @@ export type VMBackup = {
   configBytes: number;
   disks: VMBackupDisk[];
   totalBytes: number;
+  online: boolean;
+  quiesced: boolean;
+  consistent: boolean;
+  containsTpm: boolean;
+  tpmStateSaved: boolean;
 };
 
 export type BackupStatus = "running" | "completed" | "failed" | "interrupted" | "deleting" | "delete_failed";
@@ -390,6 +409,11 @@ export type Backup = {
   createdAt: string;
   completedAt?: string;
   disks?: BackupDisk[];
+  online: boolean;
+  quiesced: boolean;
+  consistent: boolean;
+  containsTpm: boolean;
+  tpmStateSaved: boolean;
 };
 
 export type BackupList = {
@@ -422,6 +446,8 @@ export type BackupCreateInput = {
   name: string;
   targetPool: string;
   repositoryId?: string;
+  online?: boolean;
+  quiesce?: boolean;
 };
 
 export type VMRestoreInput = {
@@ -537,6 +563,7 @@ export type VM = {
   cpuThreads?: number;
   firmware: VMFirmware;
   secureBoot: boolean;
+  tpm: boolean;
   cloudInit: boolean;
   disks: Disk[];
   interfaces: NetworkInterface[];
@@ -992,6 +1019,13 @@ export type SnapshotPolicyRunResult = {
 export type Host = {
   name: string;
   libvirtVersion: string;
+  architecture: string;
+  architectures?: string[];
+  machineTypes?: string[];
+  virtualization?: string;
+  uefi: boolean;
+  secureBoot: boolean;
+  tpm: boolean;
   cpuModel: string;
   cpus: number;
   cpuSockets: number;
@@ -1201,6 +1235,7 @@ export type StorageVolume = {
   path?: string;
   type: string;
   format?: string;
+  linked?: boolean;
   capacityBytes: number;
   allocationBytes: number;
   usedBy?: StorageVolumeUsage[];
@@ -1225,6 +1260,11 @@ export type StorageVolumeConvertInput = {
   targetPool: string;
   targetName: string;
   targetFormat: StorageVolumeFormat;
+};
+
+export type StorageVolumeFlattenInput = {
+  targetPool: string;
+  targetName: string;
 };
 
 export type StoragePoolList = {

@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { canBackupVM, defaultVMBackupName, validateVMBackupDraft } from "@/features/vms/vm-backup-model";
 
 describe("VM backup model", () => {
-  it("only enables cold backups for persistent VMs with write permission", () => {
+  it("enables cold and online backups for persistent VMs with write permission", () => {
     expect(canBackupVM("operator", false, true, "shutoff")).toBe(true);
     expect(canBackupVM("admin", false, true, "crashed")).toBe(true);
     expect(canBackupVM("operator", true, true, "shutoff")).toBe(false);
     expect(canBackupVM("viewer", false, true, "shutoff")).toBe(false);
     expect(canBackupVM("operator", false, false, "shutoff")).toBe(false);
-    expect(canBackupVM("operator", false, true, "running")).toBe(false);
+    expect(canBackupVM("operator", false, true, "running")).toBe(true);
   });
 
   it("builds a bounded default name with a UTC timestamp", () => {

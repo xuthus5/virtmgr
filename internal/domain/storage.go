@@ -77,6 +77,7 @@ type StorageVolume struct {
 	Path            string               `json:"path,omitempty"`
 	Type            string               `json:"type"`
 	Format          string               `json:"format,omitempty"`
+	Linked          bool                 `json:"linked"`
 	CapacityBytes   uint64               `json:"capacityBytes"`
 	AllocationBytes uint64               `json:"allocationBytes"`
 	UsedBy          []StorageVolumeUsage `json:"usedBy,omitempty"`
@@ -101,6 +102,13 @@ type StorageVolumeConvertSpec struct {
 	TargetPool   string `json:"targetPool"`
 	TargetName   string `json:"targetName"`
 	TargetFormat string `json:"targetFormat"`
+}
+
+type StorageVolumeFlattenSpec struct {
+	SourcePool   string `json:"sourcePool"`
+	SourceVolume string `json:"sourceVolume"`
+	TargetPool   string `json:"targetPool"`
+	TargetName   string `json:"targetName"`
 }
 
 func CanManageStorage(role Role) bool {

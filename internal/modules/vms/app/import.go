@@ -43,10 +43,16 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (domain.Tas
 	command.Spec.SourceVolume = strings.TrimSpace(command.Spec.SourceVolume)
 	command.Spec.TargetPool = strings.TrimSpace(command.Spec.TargetPool)
 	normalized, createSpec, err := normalizeImportSpec(command.Spec)
-	detail := importSpecDetail(normalized)
 	if err != nil {
+		detail := importSpecDetail(command.Spec)
 		return domain.Task{}, s.importFailure(ctx, command.Request, detail, err)
 	}
+	if err := s.resolveCreatePlatform(ctx, &createSpec); err != nil {
+		return domain.Task{}, s.importFailure(ctx, command.Request, importSpecDetail(normalized), err)
+	}
+	normalized.Architecture = createSpec.Architecture
+	normalized.Machine = createSpec.Machine
+	detail := importSpecDetail(normalized)
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.Task{}, s.importFailure(ctx, command.Request, detail, domain.ErrForbidden)
 	}
@@ -338,10 +344,11 @@ func normalizeImportSpec(spec domain.VMImportSpec) (domain.VMImportSpec, domain.
 		}
 	}
 	createSpec := domain.VMCreateSpec{
-		Name: spec.Name, VCPUs: spec.VCPUs, MemoryMiB: spec.MemoryMiB,
+		Name: spec.Name, Architecture: spec.Architecture, Machine: spec.Machine,
+		VCPUs: spec.VCPUs, MemoryMiB: spec.MemoryMiB,
 		DiskPath: "/virtmgr-import/" + imageDiskName(spec.Name, targetFormat), DiskFormat: targetFormat,
 		TargetPool: spec.TargetPool, DiskBus: spec.DiskBus, Network: spec.Network, NICModel: spec.NICModel,
-		Firmware: spec.Firmware, SecureBoot: spec.SecureBoot, GuestAgent: spec.GuestAgent,
+		Firmware: spec.Firmware, SecureBoot: spec.SecureBoot, TPM: spec.TPM, GuestAgent: spec.GuestAgent,
 		Autostart: spec.Autostart, Start: spec.Start,
 	}
 	normalized, err := normalizeCreateSpec(createSpec)
@@ -349,6 +356,8 @@ func normalizeImportSpec(spec domain.VMImportSpec) (domain.VMImportSpec, domain.
 		return domain.VMImportSpec{}, domain.VMCreateSpec{}, err
 	}
 	spec.Name = normalized.Name
+	spec.Architecture = normalized.Architecture
+	spec.Machine = normalized.Machine
 	spec.Network = normalized.Network
 	spec.DiskBus = normalized.DiskBus
 	spec.NICModel = normalized.NICModel
@@ -360,10 +369,12 @@ func normalizeImportSpec(spec domain.VMImportSpec) (domain.VMImportSpec, domain.
 func importSpecDetail(spec domain.VMImportSpec) map[string]any {
 	return map[string]any{
 		"name": spec.Name, "sourcePool": spec.SourcePool, "sourceVolume": spec.SourceVolume,
+		"architecture": spec.Architecture, "machine": spec.Machine,
 		"targetPool": spec.TargetPool, "vcpus": spec.VCPUs, "memoryMiB": spec.MemoryMiB,
 		"diskCapacityBytes": spec.DiskCapacityBytes,
 		"diskBus":           spec.DiskBus, "network": spec.Network, "nicModel": spec.NICModel,
 		"firmware": spec.Firmware, "secureBoot": spec.SecureBoot, "guestAgent": spec.GuestAgentEnabled(),
+		"tpm":       spec.TPM,
 		"autostart": spec.Autostart, "start": spec.Start,
 	}
 }

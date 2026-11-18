@@ -114,7 +114,7 @@ export function BackupsPage() {
       <PageHeader
         title="备份中心"
         breadcrumb="运行与资源 / 备份中心"
-        description="集中管理虚拟机冷备份、完整性校验、恢复为新虚拟机和定时保留策略。"
+        description="集中管理虚拟机冷备份、在线一致性备份、完整性校验、恢复为新虚拟机和定时保留策略。"
         actions={<Button variant="outline" size="sm" disabled={backupsQuery.isFetching} onClick={() => void queryClient.invalidateQueries({ queryKey: queryKeys.backups.root })}><RefreshCw className={cn("h-4 w-4", backupsQuery.isFetching && "animate-spin")} />刷新</Button>}
       />
 
@@ -137,7 +137,7 @@ export function BackupsPage() {
           const Icon = item.icon;
           return <Button key={item.id} role="tab" aria-selected={tab === item.id} variant={tab === item.id ? "default" : "outline"} size="sm" data-testid={`backup-tab-${item.id}`} onClick={() => setTab(item.id)}><Icon className="h-4 w-4" />{item.label}</Button>;
         })}
-        {tab === "backups" ? <Button className="sm:ml-auto" size="sm" data-testid="backup-create-open" disabled={Boolean(actionReason(role, readOnly, "create"))} title={actionReason(role, readOnly, "create") || "创建新的虚拟机冷备份"} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建备份</Button> : null}
+        {tab === "backups" ? <Button className="sm:ml-auto" size="sm" data-testid="backup-create-open" disabled={Boolean(actionReason(role, readOnly, "create"))} title={actionReason(role, readOnly, "create") || "创建虚拟机冷备份或在线一致性备份"} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建备份</Button> : null}
       </div>
 
       {tab === "backups" ? (
@@ -171,7 +171,7 @@ export function BackupsPage() {
               <div className="px-5 py-16 text-center" data-testid="backups-empty">
                 <Archive className="mx-auto h-8 w-8 text-muted-foreground" />
                 <p className="mt-3 font-medium">还没有备份集</p>
-                <p className="mt-1 text-sm text-muted-foreground">先关闭虚拟机，再创建冷备份。备份不会包含内存状态。</p>
+                <p className="mt-1 text-sm text-muted-foreground">关机虚拟机可执行冷备份，运行中虚拟机可执行在线一致性备份；备份不会包含内存状态。</p>
               </div>
             ) : null}
             {backups.length ? (
@@ -222,7 +222,7 @@ export function BackupsPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         repositories={repositories}
-        vms={(vmsQuery.data?.items ?? []).filter((vm) => vm.persistent && (vm.state === "shutoff" || vm.state === "crashed"))}
+        vms={(vmsQuery.data?.items ?? []).filter((vm) => vm.persistent && (vm.state === "shutoff" || vm.state === "crashed" || vm.state === "running"))}
         onCreated={(taskID) => { setCreateOpen(false); beginTask(taskID, "创建备份"); }}
         onNotice={setNotice}
       />

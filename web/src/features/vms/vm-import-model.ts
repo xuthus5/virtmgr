@@ -35,6 +35,8 @@ export function importDiskCapacityError(value: string) {
 
 export type VMImportFormValues = {
   name: string;
+  architecture: string;
+  machine: string;
   sourcePool: string;
   sourceVolume: string;
   targetPool: string;
@@ -46,6 +48,7 @@ export type VMImportFormValues = {
   nicModel: VMNICModel;
   firmware: VMFirmware;
   secureBoot: boolean;
+  tpm: boolean;
   guestAgent: boolean;
   autostart: boolean;
   start: boolean;
@@ -55,6 +58,8 @@ export function buildVMImportInput(values: VMImportFormValues): VMImportInput {
   const capacityGiB = Number(values.diskCapacityGiB);
   return {
     name: values.name.trim(),
+    ...(values.architecture ? { architecture: values.architecture } : {}),
+    ...(values.machine ? { machine: values.machine } : {}),
     sourcePool: values.sourcePool,
     sourceVolume: values.sourceVolume,
     targetPool: values.targetPool,
@@ -66,6 +71,7 @@ export function buildVMImportInput(values: VMImportFormValues): VMImportInput {
     nicModel: values.nicModel,
     firmware: values.firmware,
     secureBoot: values.secureBoot,
+    tpm: values.tpm,
     guestAgent: values.guestAgent,
     autostart: values.autostart,
     start: values.start,

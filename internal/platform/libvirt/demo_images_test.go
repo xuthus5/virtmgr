@@ -18,7 +18,7 @@ func TestDemoLinkedCloneProtectsBackingVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volume.Path != "/var/lib/libvirt/images/demo-linked.qcow2" || volume.AllocationBytes != 0 {
+	if volume.Path != "/var/lib/libvirt/images/demo-linked.qcow2" || volume.AllocationBytes != 0 || !volume.Linked {
 		t.Fatalf("linked clone volume = %+v", volume)
 	}
 	if err := backend.DeleteStorageVolume(ctx, "default", "demo-linked-base.qcow2"); !errors.Is(err, domain.ErrVolumeInUse) {
@@ -29,6 +29,34 @@ func TestDemoLinkedCloneProtectsBackingVolume(t *testing.T) {
 	}
 	if err := backend.DeleteStorageVolume(ctx, "default", "demo-linked-base.qcow2"); err != nil {
 		t.Fatalf("delete parent after child error = %v", err)
+	}
+}
+
+func TestDemoFlattenStorageVolumeCreatesIndependentCopy(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	if _, err := backend.CreateStorageVolume(ctx, "default", domain.StorageVolumeCreateSpec{Name: "flatten-base.qcow2", Format: "qcow2", CapacityBytes: 1 << 30}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.CloneStorageVolumeLinked(ctx, "default", "flatten-base.qcow2", "default", "flatten-linked.qcow2"); err != nil {
+		t.Fatal(err)
+	}
+	flattened, err := backend.FlattenStorageVolume(ctx, domain.StorageVolumeFlattenSpec{
+		SourcePool: "default", SourceVolume: "flatten-linked.qcow2", TargetPool: "default", TargetName: "flatten-linked-flat.qcow2",
+	})
+	if err != nil {
+		t.Fatalf("FlattenStorageVolume() error = %v", err)
+	}
+	if flattened.Linked || flattened.Format != "qcow2" || flattened.Name != "flatten-linked-flat.qcow2" {
+		t.Fatalf("flattened volume = %+v", flattened)
+	}
+	if _, err := backend.FlattenStorageVolume(ctx, domain.StorageVolumeFlattenSpec{
+		SourcePool: "default", SourceVolume: "flatten-base.qcow2", TargetPool: "default", TargetName: "not-linked.qcow2",
+	}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("non-linked flatten error = %v", err)
+	}
+	if err := backend.DeleteStorageVolume(ctx, "default", "flatten-linked.qcow2"); err != nil {
+		t.Fatalf("source should remain deletable independently: %v", err)
 	}
 }
 

@@ -270,6 +270,97 @@ func operatorSession() domain.Session {
 	return domain.Session{User: domain.User{ID: 1, Username: "operator", Role: domain.RoleOperator}, ExpiresAt: time.Now().Add(time.Hour)}
 }
 
+type fakeHostProvider struct {
+	host domain.Host
+	err  error
+}
+
+func (f fakeHostProvider) Host(context.Context) (domain.Host, error) {
+	return f.host, f.err
+}
+
+func TestCreateVMResolvesHostArchitectureAndRejectsMismatchedImage(t *testing.T) {
+	host := fakeHostProvider{host: domain.Host{
+		Name: "arm-node", Architecture: "aarch64", Architectures: []string{"aarch64"},
+		MachineTypes: []string{"virt-9.2"}, UEFI: true, SecureBoot: true,
+	}}
+	repository := &recordingRepository{}
+	service := New(repository, &fakeAuditRecorder{}, false, WithHostProvider(host))
+	_, err := service.Create(context.Background(), CreateCommand{
+		Spec: domain.VMCreateSpec{
+			Name: "arm-01", VCPUs: 2, MemoryMiB: 2048, DiskPath: "/var/lib/libvirt/images/arm-01.qcow2", DiskFormat: "qcow2", Network: "default",
+		},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(repository.createdSpecs) != 1 || repository.createdSpecs[0].Architecture != "aarch64" || repository.createdSpecs[0].Machine != "virt-9.2" {
+		t.Fatalf("created specs = %+v", repository.createdSpecs)
+	}
+
+	imageService := New(&recordingRepository{}, &fakeAuditRecorder{}, false,
+		WithHostProvider(host),
+		WithImages(fakeImageRepository{image: domain.VMImage{
+			ID: 3, Name: "x86-base", Pool: "images", Volume: "base.qcow2", Format: "qcow2", Architecture: "x86_64",
+		}}, &fakeImageVolumes{}),
+	)
+	_, err = imageService.Create(context.Background(), CreateCommand{
+		Spec:    domain.VMCreateSpec{Name: "arm-02", VCPUs: 2, MemoryMiB: 2048, ImageID: 3, TargetPool: "images"},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("mismatched image error = %v", err)
+	}
+}
+
+func TestCreateVMRejectsUnsupportedHostPlatformOptions(t *testing.T) {
+	host := fakeHostProvider{host: domain.Host{
+		Name: "node", Architecture: "x86_64", Architectures: []string{"x86_64"}, MachineTypes: []string{"pc-q35-9.2"},
+		UEFI: false, SecureBoot: false, LibvirtVersion: "9.2.0",
+	}}
+	for _, test := range []struct {
+		name string
+		spec domain.VMCreateSpec
+	}{
+		{name: "architecture", spec: domain.VMCreateSpec{Name: "bad-arch", Architecture: "aarch64", VCPUs: 2, MemoryMiB: 2048, DiskPath: "/tmp/x.qcow2", DiskFormat: "qcow2", Network: "default"}},
+		{name: "machine", spec: domain.VMCreateSpec{Name: "bad-machine", Machine: "pc-i440fx-9.2", VCPUs: 2, MemoryMiB: 2048, DiskPath: "/tmp/x.qcow2", DiskFormat: "qcow2", Network: "default"}},
+		{name: "uefi", spec: domain.VMCreateSpec{Name: "bad-uefi", Firmware: domain.VMFirmwareUEFI, VCPUs: 2, MemoryMiB: 2048, DiskPath: "/tmp/x.qcow2", DiskFormat: "qcow2", Network: "default"}},
+		{name: "tpm", spec: domain.VMCreateSpec{Name: "bad-tpm", TPM: true, VCPUs: 2, MemoryMiB: 2048, DiskPath: "/tmp/x.qcow2", DiskFormat: "qcow2", Network: "default"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := New(&recordingRepository{}, &fakeAuditRecorder{}, false, WithHostProvider(host)).Create(context.Background(), CreateCommand{
+				Spec: test.spec, Request: MutationContext{Session: operatorSession()},
+			})
+			if !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("Create() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateVMAllowsSupportedVirtualTPM(t *testing.T) {
+	host := fakeHostProvider{host: domain.Host{
+		Name: "node", Architecture: "x86_64", Architectures: []string{"x86_64"}, MachineTypes: []string{"pc-q35-9.2"},
+		UEFI: true, SecureBoot: true, TPM: true,
+	}}
+	repository := &recordingRepository{}
+	_, err := New(repository, &fakeAuditRecorder{}, false, WithHostProvider(host)).Create(context.Background(), CreateCommand{
+		Spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
+			spec.Firmware = domain.VMFirmwareUEFI
+			spec.SecureBoot = true
+			spec.TPM = true
+		}),
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(repository.createdSpecs) != 1 || !repository.createdSpecs[0].TPM || !repository.createdSpecs[0].SecureBoot {
+		t.Fatalf("created specs = %+v", repository.createdSpecs)
+	}
+}
+
 type dynamicReadOnly struct{ value bool }
 
 func (m *dynamicReadOnly) ReadOnly() bool { return m.value }
@@ -1105,6 +1196,7 @@ func TestBackupVMRejectsInvalidRequests(t *testing.T) {
 		{name: "running source", source: persistentVM(), spec: domain.VMBackupSpec{Name: "backup", TargetPool: "archive"}, role: domain.RoleOperator, want: domain.ErrActionNotAllowed},
 		{name: "invalid name", source: shutoff, spec: domain.VMBackupSpec{Name: "../backup", TargetPool: "archive"}, role: domain.RoleOperator, want: domain.ErrInvalidInput},
 		{name: "invalid pool", source: shutoff, spec: domain.VMBackupSpec{Name: "backup", TargetPool: "bad/pool"}, role: domain.RoleOperator, want: domain.ErrInvalidInput},
+		{name: "quiesce without online", source: shutoff, spec: domain.VMBackupSpec{Name: "backup", TargetPool: "archive", Quiesce: true}, role: domain.RoleOperator, want: domain.ErrInvalidInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &recordingRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{test.source}}}
@@ -1125,6 +1217,32 @@ func TestBackupVMRejectsInvalidRequests(t *testing.T) {
 				t.Fatalf("audit = %+v", audit.events)
 			}
 		})
+	}
+}
+
+func TestBackupVMAllowsRunningSourceWithOnlineMode(t *testing.T) {
+	source := persistentVM()
+	source.Disks = []domain.Disk{{Device: "disk", Source: "/var/lib/libvirt/images/api-01.qcow2", Format: "qcow2"}}
+	repository := &recordingRepository{fakeVMRepository: fakeVMRepository{vms: []domain.VM{source}}}
+	taskRecorder := newFakeTaskRecorder()
+	service := New(repository, &fakeAuditRecorder{}, false, WithTaskRecorder(taskRecorder))
+
+	if _, err := service.Backup(context.Background(), BackupCommand{
+		UUID: "uuid-a", Spec: domain.VMBackupSpec{Name: "online-backup", TargetPool: "archive", Online: true, Quiesce: true},
+		Request: MutationContext{Session: operatorSession()},
+	}); err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	taskRecorder.wait(t)
+	if repository.backupSpec.Online != true || repository.backupSpec.Quiesce != true {
+		t.Fatalf("backend backup spec = %+v", repository.backupSpec)
+	}
+}
+
+func TestBackupCreateSpecPreservesOnlineOptions(t *testing.T) {
+	got := backupCreateSpec(domain.VMBackupSpec{Name: "nightly", TargetPool: "archive", Online: true, Quiesce: true})
+	if got.Name != "nightly" || got.TargetPool != "archive" || !got.Online || !got.Quiesce {
+		t.Fatalf("backupCreateSpec() = %+v", got)
 	}
 }
 

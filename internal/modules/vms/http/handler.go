@@ -458,6 +458,28 @@ func (h *Handler) ResizeDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, vm)
 }
 
+func (h *Handler) MigrateDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMDiskMigrateSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	task, err := h.service.MigrateDisk(r.Context(), vmsapp.MigrateDiskCommand{
+		UUID: chi.URLParam(r, "uuid"), Target: chi.URLParam(r, "target"), Spec: spec,
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, task)
+}
+
 func (h *Handler) AttachDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var input attachDiskInput
 	if err := httpx.DecodeJSON(r, &input); err != nil {
@@ -725,6 +747,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Patch("/vms/{uuid}/boot", h.UpdateBootOrder)
 		mutating.Patch("/vms/{uuid}/cpu", h.UpdateCPUConfig)
 		mutating.Patch("/vms/{uuid}/disks/{target}", h.ResizeDisk)
+		mutating.Post("/vms/{uuid}/disks/{target}/migrate", h.MigrateDisk)
 		mutating.Patch("/vms/{uuid}/disks/{target}/qos", h.UpdateDiskQoS)
 		mutating.Put("/vms/{uuid}/metadata", h.UpdateMetadata)
 		mutating.Post("/vms/{uuid}/disks", h.AttachDisk)

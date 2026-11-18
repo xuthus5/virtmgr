@@ -21,6 +21,7 @@ const (
 	VMConfigSourceRollback       VMConfigVersionSource = "rollback"
 	VMConfigSourcePreRollback    VMConfigVersionSource = "pre_rollback"
 	VMConfigSourceDiskResize     VMConfigVersionSource = "disk_resize"
+	VMConfigSourceDiskMigrate    VMConfigVersionSource = "disk_migrate"
 	VMConfigSourceDiskHotplug    VMConfigVersionSource = "disk_hotplug"
 	VMConfigSourceNetworkHotplug VMConfigVersionSource = "network_hotplug"
 	VMConfigSourceISOEject       VMConfigVersionSource = "iso_eject"
@@ -33,7 +34,7 @@ func ValidVMConfigVersionSource(value VMConfigVersionSource) bool {
 	case VMConfigSourceManualXML, VMConfigSourceResources, VMConfigSourcePassthrough,
 		VMConfigSourceSnapshotRevert, VMConfigSourceExternal, VMConfigSourceCreate,
 		VMConfigSourceClone, VMConfigSourceImport, VMConfigSourceBackupRestore, VMConfigSourceRollback,
-		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceBaseline:
+		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceDiskMigrate, VMConfigSourceBaseline:
 		return true
 	case VMConfigSourceDiskHotplug, VMConfigSourceNetworkHotplug, VMConfigSourceISOEject, VMConfigSourceISOAttach:
 		return true

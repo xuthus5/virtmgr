@@ -15,7 +15,7 @@ export function VMDetailSnapshotsTab({ vm, role, readOnly, canMutate, disabledRe
   return <div role="tabpanel" id="vm-tabpanel-snapshots" aria-labelledby="vm-tab-snapshots" data-testid="vm-tabpanel-snapshots">
     <VMSnapshotPoliciesCard uuid={vm.uuid} canMutate={canMutate} disabledReason={disabledReason} />
     <VMSnapshotsCard uuid={vm.uuid} canMutate={canMutate} disabledReason={disabledReason} />
-    <VMBackupCard uuid={vm.uuid} vmName={vm.name} state={vm.state} persistent={vm.persistent} role={role} readOnly={readOnly} disabledReason={backupDisabledReason} />
+    <VMBackupCard uuid={vm.uuid} vmName={vm.name} state={vm.state} persistent={vm.persistent} tpm={vm.tpm} role={role} readOnly={readOnly} disabledReason={backupDisabledReason} />
     <VMRecentBackupsCard uuid={vm.uuid} />
   </div>;
 }

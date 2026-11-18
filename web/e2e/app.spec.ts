@@ -708,6 +708,39 @@ test("只读模式禁用新建和导入虚拟机", async ({ page }) => {
   await expect(page.getByTestId("vm-import-disabled")).toContainText("只读模式");
   await expect(page.getByTestId("vm-import-submit")).toBeDisabled();
   await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
+  await expect(page.getByLabel("架构", { exact: true })).toHaveValue("x86_64");
+  await expect(page.getByLabel("机型", { exact: true })).toContainText("pc-q35-10.2");
+});
+
+test("移动端创建和导入表单展示架构与机型", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto("/vms/new");
+  await expect(page.getByLabel("架构", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("机型", { exact: true })).toBeVisible();
+  await page.goto("/vms/import");
+  await expect(page.getByLabel("架构", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("机型", { exact: true })).toBeVisible();
+});
+
+test("存储页识别链接克隆并展示展平入口", async ({ page }) => {
+  await page.route("**/api/v1/storage/pools/default/volumes", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json() as { items: Array<Record<string, unknown>>; total: number; pool: string };
+    payload.items = [...payload.items, {
+      name: "e2e-linked.qcow2", path: "/var/lib/libvirt/images/e2e-linked.qcow2", type: "file", format: "qcow2",
+      linked: true, capacityBytes: 10 * 1024 ** 3, allocationBytes: 512 * 1024 ** 2, usedBy: [],
+    }];
+    payload.total = payload.items.length;
+    await route.fulfill({ response, json: payload });
+  });
+  await login(page);
+  await page.getByRole("link", { name: "存储", exact: true }).click();
+  const row = page.getByTestId("storage-volume-row-e2e-linked.qcow2");
+  await expect(row).toContainText("链接克隆");
+  const flatten = page.getByTestId("flatten-volume-e2e-linked.qcow2");
+  await expect(flatten).toBeVisible();
+  await expect(flatten).toBeDisabled();
 });
 
 test("只读模式展示备份中心并禁用写操作", async ({ page }) => {
@@ -815,6 +848,8 @@ test("只读模式展示虚拟机模板并支持预填新建表单", async ({ pa
   await expect(page.getByLabel("vCPU", { exact: true })).toHaveValue("2");
   await expect(page.getByLabel("内存 (MiB)", { exact: true })).toHaveValue("2048");
   await expect(page.getByLabel("固件", { exact: true })).toHaveValue("bios");
+  await expect(page.getByLabel("架构", { exact: true })).toHaveValue("x86_64");
+  await expect(page.getByLabel("机型", { exact: true })).toContainText("pc-q35-10.2");
 
   await page.getByLabel("虚拟机模板", { exact: true }).selectOption({ label: "secure-uefi · 4 vCPU · 4096 MiB" });
   await expect(page.getByLabel("vCPU", { exact: true })).toHaveValue("4");

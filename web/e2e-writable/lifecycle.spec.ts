@@ -323,6 +323,8 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await page.getByLabel("内存 (MiB)", { exact: true }).fill("2048");
   await page.getByLabel("固件", { exact: true }).selectOption("uefi");
   await page.getByLabel("安全启动 (Secure Boot)", { exact: true }).check();
+  await expect(page.getByLabel("启用 vTPM 2.0", { exact: true })).toBeEnabled();
+  await page.getByLabel("启用 vTPM 2.0", { exact: true }).check();
   await page.getByLabel("启用 Cloud-init", { exact: true }).check();
   await expect(page.getByTestId("vm-cloud-init-mode-visual")).toHaveAttribute("aria-selected", "true");
   await page.getByTestId("vm-cloud-init-runcmd").fill("echo e2e-cloud-init");
@@ -341,6 +343,7 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await openVMTab(page, "config");
   await expect(page.getByTestId("vm-firmware")).toHaveText("UEFI");
   await expect(page.getByTestId("vm-secure-boot")).toHaveText("已启用");
+  await expect(page.getByTestId("vm-tpm")).toHaveText("2.0 已启用");
   await expect(page.getByTestId("vm-cloud-init")).toHaveText("已配置");
 
   await openVMTab(page, "advanced");
@@ -1485,6 +1488,38 @@ test("可写模式通过备份中心完成创建、校验、恢复、调度与�
   }
 });
 
+test("可写模式通过备份中心在线备份运行中虚拟机并展示一致性信息", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto("/backups");
+  await expect(page.getByRole("heading", { name: "备份中心", exact: true })).toBeVisible();
+
+  await page.getByTestId("backup-create-open").click();
+  const createModal = page.getByTestId("backup-create-modal");
+  await expect(createModal).toBeVisible();
+  await selectOptionContaining(createModal.getByTestId("backup-create-vm"), "demo-web-01");
+  await createModal.getByTestId("backup-create-name").fill("e2e-online-backup-01");
+  await selectOptionContaining(createModal.getByTestId("backup-create-repository"), "default");
+  await expect(createModal.getByLabel("运行中在线备份", { exact: true })).toBeChecked();
+  await createModal.getByLabel("Guest Agent 静默", { exact: true }).check();
+  await createModal.getByRole("button", { name: "开始备份", exact: true }).click();
+  await expect(page.getByTestId("backup-notice")).toContainText("创建备份已完成。", { timeout: 30_000 });
+
+  const backupRow = page.locator('[data-testid^="backup-row-"]').filter({ hasText: "e2e-online-backup-01" });
+  await expect(backupRow).toContainText("已完成");
+  await page.getByRole("button", { name: "查看 e2e-online-backup-01 详情", exact: true }).click();
+  const detail = page.getByTestId("backup-detail-modal");
+  await expect(detail).toContainText("在线 · Agent 静默");
+  await expect(detail).toContainText("磁盘快照一致性");
+  await expect(detail).toContainText("未使用");
+  await page.getByRole("button", { name: "关闭对话框", exact: true }).click();
+
+  await page.goto("/vms/11111111-1111-4111-8111-111111111111");
+  await openVMTab(page, "snapshots");
+  await expect(page.getByTestId("vm-backup-card")).toContainText("在线备份");
+  await expect(page.getByTestId("vm-backup-open")).toBeEnabled();
+});
+
 test("可写模式调整运行中虚拟机的 CPU 和内存并写入审计", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "虚拟机", exact: true }).click();
@@ -1866,6 +1901,8 @@ test("可写模式导入 QCOW2 磁盘并保留来源卷", async ({ page }) => {
   await page.getByLabel("来源磁盘或 ISO", { exact: true }).selectOption("demo-db-01.qcow2");
   await page.getByLabel("目标存储池", { exact: true }).selectOption("default");
   await page.getByLabel("名称", { exact: true }).fill("e2e-import-01");
+  await expect(page.getByLabel("启用 vTPM 2.0", { exact: true })).toBeEnabled();
+  await page.getByLabel("启用 vTPM 2.0", { exact: true }).check();
   await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
   await expect(page.getByText("default/e2e-import-01-disk.qcow2", { exact: true })).toBeVisible();
   await page.getByTestId("vm-import-submit").click();
@@ -1880,6 +1917,7 @@ test("可写模式导入 QCOW2 磁盘并保留来源卷", async ({ page }) => {
   await page.getByRole("link", { name: "e2e-import-01", exact: true }).click();
   await openVMTab(page, "config");
   await expect(page.getByTestId("vm-disk-source").first()).toContainText("e2e-import-01-disk.qcow2");
+  await expect(page.getByTestId("vm-tpm")).toHaveText("2.0 已启用");
 
   await page.getByRole("link", { name: "存储", exact: true }).click();
   await expect(page.getByText("demo-db-01.qcow2", { exact: true }).first()).toBeVisible();
@@ -1949,4 +1987,89 @@ test("非管理员也可从顶部进入账号安全", async ({ page }) => {
 
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await loginAs(page, "account-viewer", "viewer-secret-456");
+});
+
+test("可写模式将空闲链接克隆展平为独立卷", async ({ page }) => {
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const session = await fetch("/api/v1/session").then((response) => response.json()) as { csrfToken: string };
+    const call = async (path: string, method: string, body?: unknown) => {
+      const response = await fetch(path, {
+        method,
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": session.csrfToken },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`${method} ${path} failed with ${response.status}: ${await response.text()}`);
+      return response.status === 204 ? null : response.json();
+    };
+    await call("/api/v1/storage/pools/default/volumes", "POST", {
+      name: "e2e-flatten-base.qcow2", format: "qcow2", capacityBytes: 8 * 1024 ** 3,
+    });
+    const image = await call("/api/v1/images", "POST", {
+      name: "e2e-flatten-image", description: "flatten e2e", pool: "default", volume: "e2e-flatten-base.qcow2",
+      osFamily: "linux", osName: "E2E", architecture: "x86_64",
+    }) as { id: number };
+    const vm = await call("/api/v1/vms", "POST", {
+      name: "e2e-flatten-vm", vcpus: 2, memoryMiB: 2048, imageId: image.id, imageCloneMode: "linked",
+      targetPool: "default", network: "default", firmware: "bios", secureBoot: false, guestAgent: true,
+      autostart: false, start: false,
+    }) as { uuid: string };
+    await call(`/api/v1/vms/${vm.uuid}`, "DELETE");
+    return { imageID: image.id };
+  });
+
+  await page.getByRole("link", { name: "存储", exact: true }).click();
+  const row = page.getByTestId("storage-volume-row-e2e-flatten-vm-disk.qcow2");
+  await expect(row).toContainText("链接克隆");
+  const flatten = page.getByTestId("flatten-volume-e2e-flatten-vm-disk.qcow2");
+  await expect(flatten).toBeEnabled();
+  await flatten.click();
+  const modal = page.getByTestId("storage-flatten-modal");
+  await expect(modal).toBeVisible();
+  await expect(page.getByTestId("storage-flatten-name")).toHaveValue("e2e-flatten-vm-disk-flat.qcow2");
+  await page.getByTestId("storage-flatten-submit").click();
+  const task = page.getByTestId("storage-flatten-task");
+  await expect(task).toHaveAttribute("data-status", "succeeded", { timeout: 10_000 });
+  await expect(page.getByTestId("storage-volume-row-e2e-flatten-vm-disk-flat.qcow2")).toBeVisible();
+  await expect(page.getByTestId("storage-volume-row-e2e-flatten-vm-disk-flat.qcow2")).not.toContainText("链接克隆");
+
+  await page.evaluate(async ({ imageID }) => {
+    const session = await fetch("/api/v1/session").then((response) => response.json()) as { csrfToken: string };
+    await fetch(`/api/v1/images/${imageID}`, {
+      method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": session.csrfToken },
+    });
+  }, created);
+});
+
+test("可写模式跨池迁移关机虚拟机磁盘并切换持久引用", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/44444444-4444-4444-8444-444444444444");
+  await expect(page.getByTestId("vm-detail-name")).toHaveText("demo-legacy-01");
+  await openVMTab(page, "config");
+
+  const migrate = page.getByTestId("vm-disk-migrate-vda");
+  await expect(migrate).toBeEnabled();
+  await migrate.click();
+  const modal = page.getByTestId("vm-disk-migrate-modal");
+  await expect(modal).toBeVisible();
+  await expect(page.getByTestId("vm-disk-migrate-pool")).toContainText("iso-store");
+  await page.getByTestId("vm-disk-migrate-pool").selectOption("iso-store");
+  await page.getByTestId("vm-disk-migrate-format").selectOption("raw");
+  await page.getByTestId("vm-disk-migrate-name").fill("e2e-migrated-vda.raw");
+  await page.getByTestId("vm-disk-migrate-submit").click();
+  await expect(page.getByTestId("vm-disk-resize-notice")).toContainText("磁盘已迁移并切换虚拟机引用；旧卷保留在源存储池。", { timeout: 20_000 });
+  await expect(page.getByTestId("vm-disk-source").first()).toContainText("/var/lib/libvirt/iso/e2e-migrated-vda.raw");
+
+  await page.getByRole("link", { name: "存储", exact: true }).click();
+  await page.getByRole("button", { name: "iso-store", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "存储卷 / iso-store", exact: true })).toBeVisible();
+  await expect(page.getByTestId("storage-volume-row-e2e-migrated-vda.raw")).toBeVisible();
+
+  await page.getByRole("link", { name: "审计日志", exact: true }).click();
+  await page.getByTestId("audit-action-filter").selectOption("vm.disk.migrate");
+  const row = page.locator('[data-testid^="audit-row-"]').first();
+  await expect(row).toContainText("跨池迁移虚拟机磁盘");
+  await expect(row).toContainText("成功");
+  await expect(row).toContainText("demo-legacy-01");
 });

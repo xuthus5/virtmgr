@@ -10,3 +10,13 @@ type HostDetails struct {
 	Networks             []VirtualNetwork `json:"networks"`
 	Warnings             []string         `json:"warnings,omitempty"`
 }
+
+type HostCapabilities struct {
+	Architecture   string   `json:"architecture"`
+	Architectures  []string `json:"architectures,omitempty"`
+	MachineTypes   []string `json:"machineTypes,omitempty"`
+	Virtualization string   `json:"virtualization,omitempty"`
+	UEFI           bool     `json:"uefi"`
+	SecureBoot     bool     `json:"secureBoot"`
+	TPM            bool     `json:"tpm"`
+}

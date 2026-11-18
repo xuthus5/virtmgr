@@ -100,6 +100,8 @@ test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page 
   await page.goto("/vms/import");
   await expect(page.getByTestId("vm-import-page")).toBeVisible();
   await expect(page.getByTestId("vm-import-copy-notice")).toContainText("来源卷不会被修改或删除");
+  await expect(page.getByLabel("启用 vTPM 2.0", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("启用 vTPM 2.0", { exact: true })).toBeDisabled();
 
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
@@ -111,6 +113,38 @@ test("虚拟机导入向导在移动端无页面级横向溢出", async ({ page 
     expect(layout.documentWidth, `/vms/import ${width}px document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.bodyWidth, `/vms/import ${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
   }
+});
+
+test("vTPM、磁盘迁移和在线备份控件在移动端保持可读且无横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+
+  for (const path of ["/vms/new", "/vms/import"]) {
+    await page.goto(path);
+    await expect(page.getByLabel("启用 vTPM 2.0", { exact: true })).toBeVisible();
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      const layout = await page.evaluate(() => ({
+        viewportWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+      }));
+      expect(layout.documentWidth, `${path} ${width}px document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+      expect(layout.bodyWidth, `${path} ${width}px body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    }
+  }
+
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await page.getByTestId("vm-tab-config").click();
+  const migrate = page.getByTestId("vm-disk-migrate-vda");
+  await expect(migrate).toBeVisible();
+  await expect(migrate).toBeDisabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+  await page.getByTestId("vm-tab-snapshots").click();
+  await expect(page.getByTestId("vm-backup-card")).toContainText("在线备份");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
 test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", async ({ page }) => {

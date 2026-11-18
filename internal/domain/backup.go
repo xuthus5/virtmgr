@@ -106,6 +106,11 @@ type Backup struct {
 	CreatedAt      time.Time          `json:"createdAt"`
 	CompletedAt    *time.Time         `json:"completedAt,omitempty"`
 	Disks          []BackupDisk       `json:"disks,omitempty"`
+	Online         bool               `json:"online"`
+	Quiesced       bool               `json:"quiesced"`
+	Consistent     bool               `json:"consistent"`
+	ContainsTPM    bool               `json:"containsTpm"`
+	TPMStateSaved  bool               `json:"tpmStateSaved"`
 }
 
 type BackupList struct {
@@ -129,6 +134,8 @@ type BackupCreateSpec struct {
 	Name         string `json:"name"`
 	TargetPool   string `json:"targetPool"`
 	RepositoryID string `json:"repositoryId,omitempty"`
+	Online       bool   `json:"online,omitempty"`
+	Quiesce      bool   `json:"quiesce,omitempty"`
 }
 
 type BackupQuery struct {

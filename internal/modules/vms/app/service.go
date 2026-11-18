@@ -49,6 +49,10 @@ type HotplugRepository interface {
 	DetachVMNetwork(ctx context.Context, uuid, mac string) (domain.VM, error)
 }
 
+type VMDiskMigrationRepository interface {
+	MigrateVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskMigrateSpec) (domain.VM, error)
+}
+
 type VMMetadataRepository interface {
 	ListVMMetadata(ctx context.Context) (map[string]domain.VMMetadata, error)
 	GetVMMetadata(ctx context.Context, uuid string) (domain.VMMetadata, error)
@@ -101,6 +105,10 @@ type ISOVolumeRepository interface {
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
 }
 
+type HostProvider interface {
+	Host(ctx context.Context) (domain.Host, error)
+}
+
 type TaskRecorder interface {
 	Start(ctx context.Context, kind, targetKind, targetID, actor, step string) (string, error)
 	Progress(ctx context.Context, id string, progress int, step string) error
@@ -125,6 +133,7 @@ type Service struct {
 	imageVolumes   ImageVolumeRepository
 	importVolumes  ImportVolumeRepository
 	isoVolumes     ISOVolumeRepository
+	hostProvider   HostProvider
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -170,6 +179,12 @@ func WithImportVolumes(repository ImportVolumeRepository) Option {
 func WithISOVolumes(repository ISOVolumeRepository) Option {
 	return func(service *Service) {
 		service.isoVolumes = repository
+	}
+}
+
+func WithHostProvider(provider HostProvider) Option {
+	return func(service *Service) {
+		service.hostProvider = provider
 	}
 }
 
@@ -276,6 +291,13 @@ type ResizeDiskCommand struct {
 	Request MutationContext
 }
 
+type MigrateDiskCommand struct {
+	UUID    string
+	Target  string
+	Spec    domain.VMDiskMigrateSpec
+	Request MutationContext
+}
+
 type HostDeviceCommand struct {
 	UUID    string
 	Device  string
@@ -340,6 +362,7 @@ var (
 	hostDeviceNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	diskTargetPattern         = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,31}$`)
 	storageVolumeNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	machinePattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$`)
 	macAddressPattern         = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 	maxMemoryMiB              = uint64(1024 * 1024)
 	minMemoryMiB              = uint64(128)
@@ -581,6 +604,9 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", spec.Name, specDetail(spec), err)
 	}
+	if err := s.resolveCreatePlatform(ctx, &normalized); err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", spec.Name, specDetail(normalized), err)
+	}
 	detail := specDetail(normalized)
 	clonedVolume := ""
 	imageName := ""
@@ -628,6 +654,9 @@ func (s *Service) prepareImageDisk(ctx context.Context, spec *domain.VMCreateSpe
 	}
 	if image.Format != "qcow2" && image.Format != "raw" {
 		return domain.VMImage{}, domain.ErrInvalidInput
+	}
+	if !domain.VMArchitecturesCompatible(spec.Architecture, image.Architecture) {
+		return domain.VMImage{}, fmt.Errorf("%w: image architecture %s does not match VM architecture %s", domain.ErrInvalidInput, image.Architecture, spec.Architecture)
 	}
 	targetPool := strings.TrimSpace(spec.TargetPool)
 	if targetPool == "" {
@@ -1493,6 +1522,8 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	guestAgent := spec.GuestAgentEnabled()
 	spec.GuestAgent = &guestAgent
 	spec.Name = strings.TrimSpace(spec.Name)
+	spec.Architecture = strings.TrimSpace(spec.Architecture)
+	spec.Machine = strings.TrimSpace(spec.Machine)
 	spec.DiskPath = strings.TrimSpace(spec.DiskPath)
 	spec.DiskFormat = strings.ToLower(strings.TrimSpace(spec.DiskFormat))
 	spec.TargetPool = strings.TrimSpace(spec.TargetPool)
@@ -1509,6 +1540,14 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	}
 	if !vmNamePattern.MatchString(spec.Name) {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid VM name", domain.ErrInvalidInput)
+	}
+	if architecture, ok := domain.NormalizeVMArchitecture(spec.Architecture); !ok {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: unsupported VM architecture", domain.ErrInvalidInput)
+	} else {
+		spec.Architecture = architecture
+	}
+	if spec.Machine != "" && !machinePattern.MatchString(spec.Machine) {
+		return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid machine type", domain.ErrInvalidInput)
 	}
 	if spec.VCPUs == 0 || spec.VCPUs > maxVCPUs {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: vCPUs must be between 1 and %d", domain.ErrInvalidInput, maxVCPUs)
@@ -1609,21 +1648,24 @@ func validAbsolutePath(path string) bool {
 
 func specDetail(spec domain.VMCreateSpec) map[string]any {
 	detail := map[string]any{
-		"name":       spec.Name,
-		"vcpus":      spec.VCPUs,
-		"memoryMiB":  spec.MemoryMiB,
-		"diskPath":   spec.DiskPath,
-		"diskFormat": spec.DiskFormat,
-		"diskBus":    spec.DiskBus,
-		"network":    spec.Network,
-		"nicModel":   spec.NICModel,
-		"bootOrder":  spec.BootOrder,
-		"firmware":   spec.Firmware,
-		"secureBoot": spec.SecureBoot,
-		"cloudInit":  spec.CloudInit != nil,
-		"guestAgent": spec.GuestAgentEnabled(),
-		"autostart":  spec.Autostart,
-		"start":      spec.Start,
+		"name":         spec.Name,
+		"architecture": spec.Architecture,
+		"machine":      spec.Machine,
+		"vcpus":        spec.VCPUs,
+		"memoryMiB":    spec.MemoryMiB,
+		"diskPath":     spec.DiskPath,
+		"diskFormat":   spec.DiskFormat,
+		"diskBus":      spec.DiskBus,
+		"network":      spec.Network,
+		"nicModel":     spec.NICModel,
+		"bootOrder":    spec.BootOrder,
+		"firmware":     spec.Firmware,
+		"secureBoot":   spec.SecureBoot,
+		"tpm":          spec.TPM,
+		"cloudInit":    spec.CloudInit != nil,
+		"guestAgent":   spec.GuestAgentEnabled(),
+		"autostart":    spec.Autostart,
+		"start":        spec.Start,
 	}
 	if spec.ImageID > 0 {
 		detail["imageId"] = spec.ImageID
@@ -1639,4 +1681,47 @@ func specDetail(spec domain.VMCreateSpec) map[string]any {
 		detail["cloudInitUserDataBytes"] = len(spec.CloudInit.UserData)
 	}
 	return detail
+}
+
+func (s *Service) resolveCreatePlatform(ctx context.Context, spec *domain.VMCreateSpec) error {
+	if s.hostProvider == nil {
+		return nil
+	}
+	host, err := s.hostProvider.Host(ctx)
+	if err != nil {
+		return err
+	}
+	architecture := spec.Architecture
+	if architecture == "" {
+		architecture = host.Architecture
+	}
+	if architecture == "" {
+		architecture = domain.HostArchitectureFallback()
+	}
+	if len(host.Architectures) > 0 && !slices.Contains(host.Architectures, architecture) {
+		return fmt.Errorf("%w: architecture %s is not supported by the host", domain.ErrInvalidInput, architecture)
+	}
+	machine := spec.Machine
+	if machine == "" {
+		machine = domain.DefaultVMMachine(architecture, spec.Firmware)
+	}
+	if machine != "" && len(host.MachineTypes) > 0 {
+		resolvedMachine, supported := domain.ResolveVMMachine(machine, host.MachineTypes)
+		if !supported {
+			return fmt.Errorf("%w: machine type %s is not supported by the host", domain.ErrInvalidInput, machine)
+		}
+		machine = resolvedMachine
+	}
+	if spec.Firmware == domain.VMFirmwareUEFI && host.LibvirtVersion != "" && !host.UEFI {
+		return fmt.Errorf("%w: UEFI firmware is not available on this host", domain.ErrInvalidInput)
+	}
+	if spec.SecureBoot && !host.SecureBoot {
+		return fmt.Errorf("%w: Secure Boot is not available on this host", domain.ErrInvalidInput)
+	}
+	if spec.TPM && host.LibvirtVersion != "" && !host.TPM {
+		return fmt.Errorf("%w: vTPM 2.0 is not available on this host", domain.ErrInvalidInput)
+	}
+	spec.Architecture = architecture
+	spec.Machine = machine
+	return nil
 }

@@ -106,12 +106,14 @@ func TestListMarksOnlyRunningKnownTaskKindsCancellable(t *testing.T) {
 		{ID: "task-1", Kind: "vm.clone", Status: domain.TaskStatusRunning},
 		{ID: "task-2", Kind: "vm.delete", Status: domain.TaskStatusRunning},
 		{ID: "task-3", Kind: "vm.backup", Status: domain.TaskStatusSucceeded},
+		{ID: "task-4", Kind: "vm.disk.migrate", Status: domain.TaskStatusRunning},
+		{ID: "task-5", Kind: "storage.volume.flatten", Status: domain.TaskStatusRunning},
 	}}}
 	result, err := New(repository).List(context.Background(), domain.TaskQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Items[0].Cancellable || result.Items[1].Cancellable || result.Items[2].Cancellable {
+	if !result.Items[0].Cancellable || result.Items[1].Cancellable || result.Items[2].Cancellable || !result.Items[3].Cancellable || !result.Items[4].Cancellable {
 		t.Fatalf("cancellable flags = %+v", result.Items)
 	}
 }

@@ -145,6 +145,7 @@ func TestOpenAPIContractCoversGuestAgentResizeConfigurationAndQoS(t *testing.T) 
 		"/vms/{uuid}/disks/{target}/qos":                 "patch",
 		"/vms/{uuid}/network-interfaces/{mac}/qos":       "patch",
 		"/storage/pools/{pool}/volumes/{volume}/convert": "post",
+		"/storage/pools/{pool}/volumes/{volume}/flatten": "post",
 	}
 	for path, method := range operations {
 		if _, ok := document.Paths[path][method]; !ok {
@@ -154,7 +155,7 @@ func TestOpenAPIContractCoversGuestAgentResizeConfigurationAndQoS(t *testing.T) 
 	for _, schema := range []string{
 		"GuestAgentDiagnostics", "GuestAgentServiceLog", "GuestAgentFilesystemResizeRequest",
 		"GuestAgentFilesystemResizeResult", "GuestAgentFilesystemResizeResponse", "VMBootRequest",
-		"VMCPURequest", "VMDiskQoSRequest", "VMNetworkQoSRequest", "StorageVolumeConvertRequest",
+		"VMCPURequest", "VMDiskQoSRequest", "VMNetworkQoSRequest", "StorageVolumeConvertRequest", "StorageVolumeFlattenRequest",
 	} {
 		if _, ok := document.Components.Schemas[schema]; !ok {
 			t.Errorf("OpenAPI schema %s is missing", schema)
@@ -186,7 +187,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms/{uuid}/snapshots", "/vms/{uuid}/snapshots/{snapshot}", "/vms/{uuid}/snapshots/{snapshot}/revert",
 		"/vms/{uuid}/metrics", "/vms/{uuid}/clone", "/vms/{uuid}/backups", "/vms/{uuid}/iso/eject", "/vms/{uuid}/iso/attach",
 		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
-		"/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}", "/vms/{uuid}/disks/{target}/qos",
+		"/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}", "/vms/{uuid}/disks/{target}/migrate", "/vms/{uuid}/disks/{target}/qos",
 		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/network-interfaces/{mac}/qos",
 		"/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
 		"/vms/{uuid}/metadata", "/vms/{uuid}/actions/{action}", "/vms/{uuid}/console-token", "/vms/{uuid}/console",
@@ -202,6 +203,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
 		"/storage/pools/{pool}/volumes/{volume}/convert",
+		"/storage/pools/{pool}/volumes/{volume}/flatten",
 		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
 		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
 		"/networks/{name}/actions/{action}",

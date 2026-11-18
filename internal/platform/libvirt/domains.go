@@ -391,6 +391,7 @@ func domainFromLibvirt(dom *libvirt.Domain) (domain.VM, error) {
 		CPUThreads:      details.CPUThreads,
 		Firmware:        details.Firmware,
 		SecureBoot:      details.SecureBoot,
+		TPM:             details.TPM,
 		CloudInit:       details.CloudInit,
 		Disks:           details.Disks,
 		Interfaces:      details.Interfaces,

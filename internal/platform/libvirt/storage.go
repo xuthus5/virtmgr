@@ -645,7 +645,7 @@ func storageVolumeFromLibvirt(volume *libvirt.StorageVol) (domain.StorageVolume,
 	}
 	return domain.StorageVolume{
 		Name: name, Path: path, Type: mapStorageVolumeType(info.Type), Format: parsed.Target.Format.Type,
-		CapacityBytes: info.Capacity, AllocationBytes: info.Allocation,
+		Linked: len(parsed.BackingStore) > 0, CapacityBytes: info.Capacity, AllocationBytes: info.Allocation,
 	}, nil
 }
 

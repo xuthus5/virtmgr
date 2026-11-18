@@ -47,6 +47,9 @@ export function VMDetailConfigTab({ vm, role, readOnly, canMutate, resourcesDisa
           <DetailItem label="安全启动">
             <Badge variant={vm.secureBoot ? "success" : "secondary"} data-testid="vm-secure-boot">{vm.secureBoot ? "已启用" : "未启用"}</Badge>
           </DetailItem>
+          <DetailItem label="vTPM">
+            <Badge variant={vm.tpm ? "success" : "secondary"} data-testid="vm-tpm">{vm.tpm ? "2.0 已启用" : "未启用"}</Badge>
+          </DetailItem>
           <DetailItem label="Cloud-init">
             <Badge variant={vm.cloudInit ? "success" : "secondary"} data-testid="vm-cloud-init">{vm.cloudInit ? "已配置" : "未配置"}</Badge>
           </DetailItem>

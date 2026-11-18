@@ -226,11 +226,12 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 		return err
 	}
 	detail := map[string]any{"scheduleId": schedule.ID, "vmUuid": vm.UUID, "vmName": vm.Name, "targetPool": schedule.TargetPool}
-	if (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) || !vm.Persistent {
-		cause := fmt.Errorf("%w: virtual machine must be shut off", domain.ErrActionNotAllowed)
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed && vm.State != domain.VMStateRunning) {
+		cause := fmt.Errorf("%w: virtual machine must be shut off, crashed or running", domain.ErrActionNotAllowed)
 		_ = s.recordAudit(ctx, request, "backup.schedule", vm.UUID, "failure", detail, cause)
 		return cause
 	}
+	online := vm.State == domain.VMStateRunning
 	repository, err := s.repository.GetBackupRepository(ctx, schedule.RepositoryID)
 	if err != nil {
 		return err
@@ -256,13 +257,14 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 		FormatVersion: domain.VMBackupFormatVersionV2, ManifestVolume: backupID + "-manifest.json",
 		ConfigVolume: backupID + "-domain.xml", VerifyStatus: domain.BackupVerifyUnknown,
 		CreatedBy: request.Session.User.Username, CreatedAt: now,
+		Online: online, Consistent: online,
 	})
 	if err != nil {
 		_ = s.tasks.Fail(ctx, taskID, 0, "创建定时备份记录失败", err)
 		return err
 	}
 	progress := 0
-	result, err := s.backend.BackupVM(jobContext, vm.UUID, domain.VMBackupSpec{BackupID: backupID, Name: name, TargetPool: repository.PoolName}, func(percent int, step string) {
+	result, err := s.backend.BackupVM(jobContext, vm.UUID, domain.VMBackupSpec{BackupID: backupID, Name: name, TargetPool: repository.PoolName, Online: online}, func(percent int, step string) {
 		if percent < progress {
 			percent = progress
 		}
@@ -290,6 +292,12 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	item.DiskCount = len(result.Disks)
 	item.CompletedAt = &completedAt
 	item.Disks = backupDisks(result.Disks)
+	item.Online = result.Online
+	item.Quiesced = result.Quiesced
+	item.Consistent = result.Consistent
+	item.ContainsTPM = result.ContainsTPM
+	item.TPMStateSaved = result.TPMStateSaved
+	detail["online"] = result.Online
 	if _, err := s.repository.UpdateBackup(ctx, item); err != nil {
 		_ = s.tasks.Fail(jobContext, taskID, 100, "定时备份完成但写入目录失败", err)
 		return err

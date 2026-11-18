@@ -249,7 +249,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
       : !vm.persistent
         ? "临时域不支持克隆"
         : vm.state !== "shutoff" && vm.state !== "crashed"
-          ? "请先关闭虚拟机"
+          ? "仅支持关机或异常停止的虚拟机"
           : "";
   const backupDisabledReason = readOnly
     ? "系统当前处于只读模式"
@@ -257,8 +257,8 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
       ? "当前账号没有虚拟机操作权限"
       : !vm.persistent
         ? "临时域不支持备份"
-        : vm.state !== "shutoff" && vm.state !== "crashed"
-          ? "请先关闭虚拟机"
+        : vm.state !== "shutoff" && vm.state !== "crashed" && vm.state !== "running"
+          ? "仅支持关机、异常停止或运行中的虚拟机"
           : "";
   const allowedActions = actionOrder.filter((action) => vm.allowedActions.includes(action));
   const hasConsole = vm.graphics.some((graphics) => graphics.type.toLowerCase() === "vnc") || Boolean(vm.serials?.length);

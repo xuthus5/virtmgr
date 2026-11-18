@@ -41,6 +41,11 @@ type backupManifest struct {
 	ConfigVolume  string                 `json:"configVolume,omitempty"`
 	ConfigSHA256  string                 `json:"configSha256,omitempty"`
 	Disks         []domain.VMBackupDisk  `json:"disks"`
+	Online        bool                   `json:"online,omitempty"`
+	Quiesced      bool                   `json:"quiesced,omitempty"`
+	Consistent    bool                   `json:"consistent,omitempty"`
+	ContainsTPM   bool                   `json:"containsTpm,omitempty"`
+	TPMStateSaved bool                   `json:"tpmStateSaved,omitempty"`
 }
 
 type backupManifestSource struct {
@@ -62,7 +67,7 @@ type backupManifestRestore struct {
 	ContainsMemory    bool   `json:"containsMemory"`
 }
 
-func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackupSpec, progress VMBackupProgress) (domain.VMBackup, error) {
+func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackupSpec, progress VMBackupProgress) (result domain.VMBackup, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return domain.VMBackup{}, err
 	}
@@ -82,7 +87,13 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 	if err != nil {
 		return domain.VMBackup{}, fmt.Errorf("read source domain %s state: %w", uuid, err)
 	}
-	if state != libvirt.DOMAIN_SHUTOFF && state != libvirt.DOMAIN_CRASHED {
+	if spec.Online && state != libvirt.DOMAIN_RUNNING {
+		return domain.VMBackup{}, domain.ErrActionNotAllowed
+	}
+	if spec.Quiesce && !spec.Online {
+		return domain.VMBackup{}, fmt.Errorf("%w: quiesced backup requires online mode", domain.ErrInvalidInput)
+	}
+	if !spec.Online && state != libvirt.DOMAIN_SHUTOFF && state != libvirt.DOMAIN_CRASHED {
 		return domain.VMBackup{}, domain.ErrActionNotAllowed
 	}
 	persistent, err := source.IsPersistent()
@@ -172,7 +183,15 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 
 	created := make([]string, 0, len(artifacts)+2)
 	committed := false
+	var online *onlineBackupSnapshot
 	defer func() {
+		if online != nil && !online.joined {
+			cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
+			defer cancel()
+			if joinErr := online.join(cleanupContext, conn, source); joinErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("restore VM after online backup failure: %w", joinErr))
+			}
+		}
 		if committed {
 			return
 		}
@@ -183,6 +202,12 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 			}
 		}
 	}()
+	if spec.Online {
+		online, err = createOnlineBackupSnapshot(ctx, conn, source, backupIDForSpec(spec), spec, disks, sourceVolumes)
+		if err != nil {
+			return domain.VMBackup{}, err
+		}
+	}
 	backupDisks := make([]domain.VMBackupDisk, 0, len(artifacts))
 	totalBytes := uint64(0)
 	for index, artifact := range artifacts {
@@ -219,19 +244,22 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 
 	createdAt := time.Now().UTC()
 	configSum := sha256.Sum256(configBytes)
-	backupID := spec.BackupID
-	if backupID == "" {
-		backupID = spec.Name
-	}
+	backupID := backupIDForSpec(spec)
+	containsTPM := domainXMLContainsTPM(configXML)
 	manifest, err := json.MarshalIndent(backupManifest{
 		FormatVersion: domain.VMBackupFormatVersionV2,
 		BackupID:      backupID,
 		CreatedAt:     createdAt,
 		ToolVersion:   version.Version,
-		Source:        &backupManifestSource{VMUUID: uuid, VMName: vmName, State: domain.VMStateShutoff, Persistent: true},
+		Source:        &backupManifestSource{VMUUID: uuid, VMName: vmName, State: backupSourceState(spec.Online), Persistent: true},
 		Config:        &backupManifestConfig{Artifact: configName, SizeBytes: uint64(len(configBytes)), SHA256: hex.EncodeToString(configSum[:])},
 		Restore:       &backupManifestRestore{DefaultTargetPool: spec.TargetPool, RequiresNewMAC: true, ContainsMemory: false},
 		Disks:         backupDisks,
+		Online:        spec.Online,
+		Quiesced:      spec.Online && spec.Quiesce,
+		Consistent:    spec.Online,
+		ContainsTPM:   containsTPM,
+		TPMStateSaved: false,
 	}, "", "  ")
 	if err != nil {
 		return domain.VMBackup{}, fmt.Errorf("encode backup manifest: %w", err)
@@ -243,6 +271,12 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 	}
 	created = append(created, manifestName)
 	totalBytes += uint64(len(manifest))
+	if online != nil {
+		reportBackupProgress(progress, 95, "正在回收在线备份快照链")
+		if err := online.join(ctx, conn, source); err != nil {
+			return domain.VMBackup{}, err
+		}
+	}
 
 	committed = true
 	reportBackupProgress(progress, 100, "备份完成")
@@ -259,7 +293,26 @@ func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackup
 		ConfigBytes:    uint64(len(configBytes)),
 		Disks:          backupDisks,
 		TotalBytes:     totalBytes,
+		Online:         spec.Online,
+		Quiesced:       spec.Online && spec.Quiesce,
+		Consistent:     spec.Online,
+		ContainsTPM:    containsTPM,
+		TPMStateSaved:  false,
 	}, nil
+}
+
+func backupIDForSpec(spec domain.VMBackupSpec) string {
+	if strings.TrimSpace(spec.BackupID) != "" {
+		return strings.TrimSpace(spec.BackupID)
+	}
+	return strings.TrimSpace(spec.Name)
+}
+
+func backupSourceState(online bool) domain.VMState {
+	if online {
+		return domain.VMStateRunning
+	}
+	return domain.VMStateShutoff
 }
 
 func (c *Client) VerifyVMBackup(ctx context.Context, backup domain.Backup, deep bool) (domain.BackupVerification, error) {

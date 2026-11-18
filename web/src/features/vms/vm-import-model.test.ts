@@ -31,13 +31,13 @@ describe("vm import model", () => {
 
   it("maps form values to the API payload", () => {
     expect(buildVMImportInput({
-      name: " web-import ", sourcePool: "default", sourceVolume: "base.qcow2", targetPool: "fast",
+      name: " web-import ", architecture: "x86_64", machine: "q35", sourcePool: "default", sourceVolume: "base.qcow2", targetPool: "fast",
       vcpus: "4", memoryMiB: "4096", diskCapacityGiB: "30", diskBus: "virtio", network: "default", nicModel: "e1000",
-      firmware: "uefi", secureBoot: true, guestAgent: true, autostart: true, start: false,
+      firmware: "uefi", secureBoot: true, tpm: true, guestAgent: true, autostart: true, start: false,
     })).toEqual({
-      name: "web-import", sourcePool: "default", sourceVolume: "base.qcow2", targetPool: "fast",
+      name: "web-import", architecture: "x86_64", machine: "q35", sourcePool: "default", sourceVolume: "base.qcow2", targetPool: "fast",
       vcpus: 4, memoryMiB: 4096, diskCapacityBytes: 30 * 1024 ** 3, diskBus: "virtio", network: "default", nicModel: "e1000",
-      firmware: "uefi", secureBoot: true, guestAgent: true, autostart: true, start: false,
+      firmware: "uefi", secureBoot: true, tpm: true, guestAgent: true, autostart: true, start: false,
     });
   });
 });

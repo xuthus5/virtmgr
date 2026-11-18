@@ -221,7 +221,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 	command.Spec.Name = strings.TrimSpace(command.Spec.Name)
 	command.Spec.TargetPool = strings.TrimSpace(command.Spec.TargetPool)
 	command.Spec.RepositoryID = strings.TrimSpace(command.Spec.RepositoryID)
-	detail := map[string]any{"backupName": command.Spec.Name, "targetPool": command.Spec.TargetPool, "repositoryId": command.Spec.RepositoryID}
+	detail := map[string]any{"backupName": command.Spec.Name, "targetPool": command.Spec.TargetPool, "repositoryId": command.Spec.RepositoryID, "online": command.Spec.Online, "quiesce": command.Spec.Quiesce}
 	if !domain.CanCreateBackups(command.Request.Session.User.Role) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, domain.ErrForbidden)
 	}
@@ -243,8 +243,12 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 	}
 	detail["sourceName"] = source.Name
 	detail["sourceState"] = string(source.State)
-	if (source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) || !source.Persistent {
+	if !source.Persistent || (!command.Spec.Online && source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) ||
+		(command.Spec.Online && source.State != domain.VMStateRunning) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, domain.ErrActionNotAllowed)
+	}
+	if command.Spec.Quiesce && !command.Spec.Online {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, fmt.Errorf("%w: quiesced backup requires online mode", domain.ErrInvalidInput))
 	}
 	repository, err := s.resolveRepository(ctx, command.Spec)
 	if err != nil {
@@ -267,6 +271,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 		_ = recorder.SetMetadata(ctx, taskID, map[string]any{
 			"vmUuid": command.VMUUID, "name": command.Spec.Name,
 			"targetPool": command.Spec.TargetPool, "repositoryId": command.Spec.RepositoryID,
+			"online": command.Spec.Online, "quiesce": command.Spec.Quiesce,
 		})
 	}
 	now := s.now().UTC()
@@ -276,6 +281,8 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 		FormatVersion: domain.VMBackupFormatVersionV2, ManifestVolume: backupID + "-manifest.json",
 		ConfigVolume: backupID + "-domain.xml", VerifyStatus: domain.BackupVerifyUnknown,
 		CreatedBy: command.Request.Session.User.Username, CreatedAt: now,
+		Online: command.Spec.Online, Quiesced: command.Spec.Online && command.Spec.Quiesce,
+		Consistent: command.Spec.Online,
 	})
 	if err != nil {
 		_ = s.tasks.Fail(ctx, taskID, 0, "创建备份记录失败", err)
@@ -306,6 +313,8 @@ func (s *Service) RetryTask(ctx context.Context, task domain.Task, session domai
 		Name:         stringMetadata(task.Metadata, "name"),
 		TargetPool:   stringMetadata(task.Metadata, "targetPool"),
 		RepositoryID: stringMetadata(task.Metadata, "repositoryId"),
+		Online:       boolMetadata(task.Metadata, "online"),
+		Quiesce:      boolMetadata(task.Metadata, "quiesce"),
 	}
 	if vmUUID == "" || spec.Name == "" || (spec.TargetPool == "" && spec.RepositoryID == "") {
 		return domain.Task{}, domain.ErrInvalidInput
@@ -321,12 +330,17 @@ func stringMetadata(metadata map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+func boolMetadata(metadata map[string]any, key string) bool {
+	value, _ := metadata[key].(bool)
+	return value
+}
+
 func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.Backup, command CreateCommand, detail map[string]any) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	progress := 0
 	result, err := s.backend.BackupVM(ctx, item.VMUUID, domain.VMBackupSpec{
-		BackupID: item.ID, Name: item.Name, TargetPool: item.TargetPool,
+		BackupID: item.ID, Name: item.Name, TargetPool: item.TargetPool, Online: item.Online, Quiesce: item.Quiesced,
 	}, func(percent int, step string) {
 		if percent < progress {
 			percent = progress
@@ -355,6 +369,13 @@ func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.
 	item.DiskCount = len(result.Disks)
 	item.CompletedAt = &completedAt
 	item.Disks = backupDisks(result.Disks)
+	item.Online = result.Online
+	item.Quiesced = result.Quiesced
+	item.Consistent = result.Consistent
+	item.ContainsTPM = result.ContainsTPM
+	item.TPMStateSaved = result.TPMStateSaved
+	detail["online"] = result.Online
+	detail["quiesced"] = result.Quiesced
 	updated, saveErr := s.repository.UpdateBackup(ctx, item)
 	if saveErr != nil {
 		_ = s.recordAudit(ctx, command.Request, "backup.create", item.ID, "failure", detail, saveErr)

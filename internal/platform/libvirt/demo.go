@@ -94,6 +94,13 @@ func (d *DemoBackend) Host(context.Context) (domain.Host, error) {
 	return domain.Host{
 		Name:           "virtmgr-demo",
 		LibvirtVersion: "12.0.0-demo",
+		Architecture:   "x86_64",
+		Architectures:  []string{"x86_64"},
+		MachineTypes:   []string{"pc-i440fx-10.2", "pc-q35-10.2"},
+		Virtualization: "kvm",
+		UEFI:           true,
+		SecureBoot:     true,
+		TPM:            true,
 		CPUModel:       "x86_64",
 		CPUs:           16,
 		CPUSockets:     1,
@@ -382,6 +389,61 @@ func (d *DemoBackend) ResizeVMDisk(_ context.Context, uuid, target string, spec 
 	return cloneVM(vm), nil
 }
 
+func (d *DemoBackend) MigrateVMDisk(_ context.Context, uuid, target string, spec domain.VMDiskMigrateSpec) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	pool, ok := d.pools[spec.TargetPool]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if pool.State != domain.StoragePoolStateActive {
+		return domain.VM{}, domain.ErrUnavailable
+	}
+	format := strings.ToLower(strings.TrimSpace(spec.TargetFormat))
+	if format != "qcow2" && format != "raw" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	if pool.Type == "logical" && format != "raw" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	for _, volume := range d.volumes[spec.TargetPool] {
+		if volume.Name == spec.TargetName {
+			return domain.VM{}, domain.ErrConflict
+		}
+	}
+	for index := range vm.Disks {
+		disk := &vm.Disks[index]
+		if disk.Target != target {
+			continue
+		}
+		if disk.Device != "disk" || disk.ReadOnly || disk.Source == "" {
+			return domain.VM{}, domain.ErrActionNotAllowed
+		}
+		targetPath := filepath.Join(pool.TargetPath, spec.TargetName)
+		volume := domain.StorageVolume{
+			Name: spec.TargetName, Path: targetPath, Type: "file", Format: format,
+			CapacityBytes: disk.CapacityBytes, AllocationBytes: disk.AllocationBytes,
+		}
+		if pool.Type == "logical" {
+			volume.Type = "block"
+		}
+		d.volumes[spec.TargetPool] = append(d.volumes[spec.TargetPool], volume)
+		disk.Source = targetPath
+		disk.Format = format
+		d.vms[uuid] = vm
+		d.publish("vm.disk.migrated", "info", "vm", uuid, vm.Name, "磁盘 "+target+" 已迁移到存储池 "+spec.TargetPool)
+		return cloneVM(vm), nil
+	}
+	return domain.VM{}, domain.ErrNotFound
+}
+
 func (d *DemoBackend) AttachVMDisk(_ context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -609,11 +671,22 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 			Source: "/var/lib/libvirt/images/" + cloudInitSeedVolumeName(spec.Name), ReadOnly: true,
 		})
 	}
+	architecture, ok := domain.NormalizeVMArchitecture(spec.Architecture)
+	if !ok || architecture == "" {
+		architecture = "x86_64"
+	}
+	machine := strings.TrimSpace(spec.Machine)
+	if machine == "" {
+		machine = domain.DefaultVMMachine(architecture, firmware)
+		if machine == "" {
+			machine = "pc-q35-10.2"
+		}
+	}
 	vm := domain.VM{
 		UUID: uuid, Name: spec.Name, State: state, Persistent: true, Autostart: spec.Autostart,
 		VCPUs: spec.VCPUs, MaxVCPUs: spec.VCPUs, MemoryBytes: spec.MemoryMiB * 1024 * 1024, MaxMemoryBytes: spec.MemoryMiB * 1024 * 1024,
-		OSType: "hvm", Arch: "x86_64", Machine: "pc-q35-10.2",
-		Firmware: firmware, SecureBoot: spec.SecureBoot, CloudInit: spec.CloudInit != nil,
+		OSType: "hvm", Arch: architecture, Machine: machine,
+		Firmware: firmware, SecureBoot: spec.SecureBoot, TPM: spec.TPM, CloudInit: spec.CloudInit != nil,
 		Disks:       disks,
 		Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: demoMAC(len(d.vms) + 1), Source: spec.Network, Model: "virtio"}},
 		Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5900 + len(d.vms) + 1}},
@@ -748,8 +821,12 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 	if !ok {
 		return domain.VMBackup{}, domain.ErrNotFound
 	}
-	if (source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) || !source.Persistent {
+	if !source.Persistent || (!spec.Online && source.State != domain.VMStateShutoff && source.State != domain.VMStateCrashed) ||
+		(spec.Online && source.State != domain.VMStateRunning) {
 		return domain.VMBackup{}, domain.ErrActionNotAllowed
+	}
+	if spec.Quiesce && !spec.Online {
+		return domain.VMBackup{}, domain.ErrInvalidInput
 	}
 	targetPool, ok := d.pools[spec.TargetPool]
 	if !ok {
@@ -856,6 +933,11 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 		Config:        &backupManifestConfig{Artifact: configName, SizeBytes: uint64(len(configBytes)), SHA256: hex.EncodeToString(configSum[:])},
 		Restore:       &backupManifestRestore{DefaultTargetPool: spec.TargetPool, RequiresNewMAC: true, ContainsMemory: false},
 		Disks:         backupDisks,
+		Online:        spec.Online,
+		Quiesced:      spec.Online && spec.Quiesce,
+		Consistent:    spec.Online,
+		ContainsTPM:   source.TPM,
+		TPMStateSaved: false,
 	}, "", "  ")
 	if err != nil {
 		return domain.VMBackup{}, fmt.Errorf("encode demo backup manifest: %w", err)
@@ -887,6 +969,11 @@ func (d *DemoBackend) BackupVM(ctx context.Context, uuid string, spec domain.VMB
 		ConfigBytes:    uint64(len(configBytes)),
 		Disks:          backupDisks,
 		TotalBytes:     totalBytes,
+		Online:         spec.Online,
+		Quiesced:       spec.Online && spec.Quiesce,
+		Consistent:     spec.Online,
+		ContainsTPM:    source.TPM,
+		TPMStateSaved:  false,
 	}, nil
 }
 
@@ -1888,6 +1975,9 @@ func demoVMDomainXML(vm domain.VM) string {
 		}
 	}
 	builder.WriteString("  <devices>\n")
+	if vm.TPM {
+		fmt.Fprintf(&builder, "    <tpm model='%s'><backend type='emulator' version='2.0'/></tpm>\n", vmTPMModel(vm.Arch))
+	}
 	for _, disk := range vm.Disks {
 		fmt.Fprintf(&builder, "    <disk type='file' device='%s'><driver name='qemu' type='%s'/><source file='%s'/><target dev='%s' bus='%s'/>", escapeXML(disk.Device), escapeXML(disk.Format), escapeXML(disk.Source), escapeXML(disk.Target), escapeXML(disk.Bus))
 		if disk.ReadOnly {

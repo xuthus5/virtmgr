@@ -207,6 +207,8 @@ type VMCPUConfigSpec struct {
 
 type VMCreateSpec struct {
 	Name           string           `json:"name"`
+	Architecture   string           `json:"architecture,omitempty"`
+	Machine        string           `json:"machine,omitempty"`
 	VCPUs          uint             `json:"vcpus"`
 	MemoryMiB      uint64           `json:"memoryMiB"`
 	DiskPath       string           `json:"diskPath"`
@@ -221,6 +223,7 @@ type VMCreateSpec struct {
 	BootOrder      VMBootOrder      `json:"bootOrder,omitempty"`
 	Firmware       VMFirmware       `json:"firmware"`
 	SecureBoot     bool             `json:"secureBoot"`
+	TPM            bool             `json:"tpm,omitempty"`
 	CloudInit      *CloudInitSpec   `json:"cloudInit,omitempty"`
 	GuestAgent     *bool            `json:"guestAgent,omitempty"`
 	Autostart      bool             `json:"autostart"`
@@ -233,6 +236,8 @@ func (spec VMCreateSpec) GuestAgentEnabled() bool {
 
 type VMImportSpec struct {
 	Name              string     `json:"name"`
+	Architecture      string     `json:"architecture,omitempty"`
+	Machine           string     `json:"machine,omitempty"`
 	SourcePool        string     `json:"sourcePool"`
 	SourceVolume      string     `json:"sourceVolume"`
 	TargetPool        string     `json:"targetPool,omitempty"`
@@ -244,6 +249,7 @@ type VMImportSpec struct {
 	NICModel          VMNICModel `json:"nicModel,omitempty"`
 	Firmware          VMFirmware `json:"firmware"`
 	SecureBoot        bool       `json:"secureBoot"`
+	TPM               bool       `json:"tpm,omitempty"`
 	GuestAgent        *bool      `json:"guestAgent,omitempty"`
 	Autostart         bool       `json:"autostart"`
 	Start             bool       `json:"start"`
@@ -260,6 +266,12 @@ type VMResourcesSpec struct {
 
 type VMDiskResizeSpec struct {
 	CapacityBytes uint64 `json:"capacityBytes"`
+}
+
+type VMDiskMigrateSpec struct {
+	TargetPool   string `json:"targetPool"`
+	TargetName   string `json:"targetName"`
+	TargetFormat string `json:"targetFormat,omitempty"`
 }
 
 type VMDiskQoSSpec struct {
@@ -325,6 +337,8 @@ type VMBackupSpec struct {
 	BackupID   string `json:"backupId,omitempty"`
 	Name       string `json:"name"`
 	TargetPool string `json:"targetPool"`
+	Online     bool   `json:"online,omitempty"`
+	Quiesce    bool   `json:"quiesce,omitempty"`
 }
 
 type VMBackupDisk struct {
@@ -349,6 +363,11 @@ type VMBackup struct {
 	ConfigBytes    uint64         `json:"configBytes"`
 	Disks          []VMBackupDisk `json:"disks"`
 	TotalBytes     uint64         `json:"totalBytes"`
+	Online         bool           `json:"online"`
+	Quiesced       bool           `json:"quiesced"`
+	Consistent     bool           `json:"consistent"`
+	ContainsTPM    bool           `json:"containsTpm"`
+	TPMStateSaved  bool           `json:"tpmStateSaved"`
 }
 
 type VMSnapshot struct {
@@ -458,6 +477,7 @@ type VM struct {
 	CPUThreads      uint                `json:"cpuThreads"`
 	Firmware        VMFirmware          `json:"firmware"`
 	SecureBoot      bool                `json:"secureBoot"`
+	TPM             bool                `json:"tpm"`
 	CloudInit       bool                `json:"cloudInit"`
 	Disks           []Disk              `json:"disks"`
 	Interfaces      []NetworkInterface  `json:"interfaces"`
@@ -509,15 +529,22 @@ func ValidVMXMLFormat(value string) (VMXMLFormat, bool) {
 }
 
 type Host struct {
-	Name           string `json:"name"`
-	LibvirtVersion string `json:"libvirtVersion"`
-	CPUModel       string `json:"cpuModel"`
-	CPUs           uint   `json:"cpus"`
-	CPUSockets     uint32 `json:"cpuSockets"`
-	CPUCores       uint32 `json:"cpuCores"`
-	CPUThreads     uint32 `json:"cpuThreads"`
-	CPUMHz         uint   `json:"cpuMhz"`
-	MemoryBytes    uint64 `json:"memoryBytes"`
+	Name           string   `json:"name"`
+	LibvirtVersion string   `json:"libvirtVersion"`
+	Architecture   string   `json:"architecture"`
+	Architectures  []string `json:"architectures,omitempty"`
+	MachineTypes   []string `json:"machineTypes,omitempty"`
+	Virtualization string   `json:"virtualization,omitempty"`
+	UEFI           bool     `json:"uefi"`
+	SecureBoot     bool     `json:"secureBoot"`
+	TPM            bool     `json:"tpm"`
+	CPUModel       string   `json:"cpuModel"`
+	CPUs           uint     `json:"cpus"`
+	CPUSockets     uint32   `json:"cpuSockets"`
+	CPUCores       uint32   `json:"cpuCores"`
+	CPUThreads     uint32   `json:"cpuThreads"`
+	CPUMHz         uint     `json:"cpuMhz"`
+	MemoryBytes    uint64   `json:"memoryBytes"`
 }
 
 type VMCounts struct {

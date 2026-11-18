@@ -19,6 +19,16 @@ func (c *Client) CreateVM(ctx context.Context, spec domain.VMCreateSpec) (domain
 	if err := c.ensureConnectionLocked(ctx); err != nil {
 		return domain.VM{}, err
 	}
+	platform := c.hostPlatformLocked(ctx)
+	architecture, machine, err := resolveVMPlatform(platform, spec.Architecture, spec.Machine, spec.Firmware)
+	if err != nil {
+		return domain.VM{}, err
+	}
+	if spec.TPM && platform.known && !platform.capabilities.TPM {
+		return domain.VM{}, fmt.Errorf("%w: vTPM 2.0 is not available on this host", domain.ErrInvalidInput)
+	}
+	spec.Architecture = architecture
+	spec.Machine = machine
 	if existing, err := c.conn.LookupDomainByName(spec.Name); err == nil {
 		_ = existing.Free()
 		return domain.VM{}, domain.ErrConflict
@@ -26,7 +36,6 @@ func (c *Client) CreateVM(ctx context.Context, spec domain.VMCreateSpec) (domain
 		return domain.VM{}, fmt.Errorf("check existing domain %s: %w", spec.Name, err)
 	}
 	var seed *cloudInitSeed
-	var err error
 	seedCommitted := false
 	if spec.CloudInit != nil {
 		seed, err = c.createCloudInitSeedLocked(ctx, spec.Name, *spec.CloudInit)
@@ -118,13 +127,25 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 	if firmware == "" {
 		firmware = domain.VMFirmwareBIOS
 	}
+	architecture, ok := domain.NormalizeVMArchitecture(spec.Architecture)
+	if !ok || architecture == "" {
+		architecture = "x86_64"
+	}
+	machine := strings.TrimSpace(spec.Machine)
+	if machine == "" {
+		machine = domain.DefaultVMMachine(architecture, firmware)
+	}
+	machineAttribute := ""
+	if machine != "" {
+		machineAttribute = fmt.Sprintf(" machine='%s'", escapeXML(machine))
+	}
 	var builder strings.Builder
 	builder.WriteString("<domain type='kvm'>")
 	fmt.Fprintf(&builder, "<name>%s</name>", escapeXML(spec.Name))
 	fmt.Fprintf(&builder, "<memory unit='MiB'>%d</memory>", spec.MemoryMiB)
 	fmt.Fprintf(&builder, "<vcpu>%d</vcpu>", spec.VCPUs)
 	if firmware == domain.VMFirmwareUEFI {
-		builder.WriteString("<os firmware='efi'><type arch='x86_64' machine='q35'>hvm</type><loader secure='")
+		fmt.Fprintf(&builder, "<os firmware='efi'><type arch='%s'%s>hvm</type><loader secure='", escapeXML(architecture), machineAttribute)
 		if spec.SecureBoot {
 			builder.WriteString("yes")
 		} else {
@@ -132,7 +153,7 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 		}
 		builder.WriteString("'/>")
 	} else {
-		builder.WriteString("<os><type arch='x86_64'>hvm</type>")
+		fmt.Fprintf(&builder, "<os><type arch='%s'%s>hvm</type>", escapeXML(architecture), machineAttribute)
 	}
 	builder.WriteString("</os><features><acpi/><apic/></features><devices>")
 	diskBus := spec.DiskBus
@@ -169,8 +190,19 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 	if spec.GuestAgentEnabled() {
 		builder.WriteString("<controller type='virtio-serial' index='0'/><channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>")
 	}
+	if spec.TPM {
+		fmt.Fprintf(&builder, "<tpm model='%s'><backend type='emulator' version='2.0'/></tpm>", vmTPMModel(architecture))
+	}
 	builder.WriteString("</devices></domain>")
 	return builder.String()
+}
+
+func vmTPMModel(architecture string) string {
+	architecture, _ = domain.NormalizeVMArchitecture(architecture)
+	if architecture == "x86_64" || architecture == "i686" {
+		return "tpm-crb"
+	}
+	return "tpm-tis"
 }
 
 func nextSATAAndSCSITarget(current string) string {

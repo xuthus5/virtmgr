@@ -212,12 +212,12 @@ describe("api client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await api.login("admin", "secret");
-    const task = await api.backupVM("uuid-a", { name: "api-backup", targetPool: "default" });
+    const task = await api.backupVM("uuid-a", { name: "api-backup", targetPool: "default", online: true, quiesce: true });
 
     expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/vms/uuid-a/backups");
     const init = fetchMock.mock.calls[1][1] as RequestInit;
     expect(init.method).toBe("POST");
-    expect(init.body).toBe('{"name":"api-backup","targetPool":"default"}');
+    expect(init.body).toBe('{"name":"api-backup","targetPool":"default","online":true,"quiesce":true}');
     expect((init.headers as Headers).get("X-CSRF-Token")).toBe("csrf-token");
     expect(task.id).toBe("task-backup");
     expect(task.kind).toBe("vm.backup");
@@ -521,5 +521,31 @@ describe("api client", () => {
     expect(init.body).toBe('{"capacityBytes":107374182400}');
     expect((init.headers as Headers).get("X-CSRF-Token")).toBe("csrf-disk");
     expect(vm.disks[0].capacityBytes).toBe(100 * 1024 ** 3);
+  });
+
+  it("migrates a VM disk to another pool with CSRF", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        user: { id: 1, username: "admin", role: "admin", disabled: false, createdAt: "2026-01-01T00:00:00Z" },
+        authMode: "local",
+        readOnly: false,
+        csrfToken: "csrf-migrate",
+        expiresAt: "2026-01-01T01:00:00Z",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "task-migrate", kind: "vm.disk.migrate", targetKind: "vm", targetId: "uuid-a", status: "running",
+        progress: 0, step: "准备迁移", actor: "admin", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+      }), { status: 202, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.login("admin", "secret");
+    const task = await api.migrateVMDisk("uuid-a", "vda", { targetPool: "fast", targetName: "api-01.raw", targetFormat: "raw" });
+
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/vms/uuid-a/disks/vda/migrate");
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe('{"targetPool":"fast","targetName":"api-01.raw","targetFormat":"raw"}');
+    expect((init.headers as Headers).get("X-CSRF-Token")).toBe("csrf-migrate");
+    expect(task.kind).toBe("vm.disk.migrate");
   });
 });

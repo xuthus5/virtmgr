@@ -24,11 +24,12 @@ const taskStatusLabel = {
   cancelled: "已取消",
 } as const;
 
-export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, disabledReason }: {
+export function VMBackupCard({ uuid, vmName, state, persistent, tpm, role, readOnly, disabledReason }: {
   uuid: string;
   vmName: string;
   state: VMState;
   persistent: boolean;
+  tpm: boolean;
   role: Role | undefined;
   readOnly: boolean;
   disabledReason: string;
@@ -40,6 +41,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(() => defaultVMBackupName(vmName));
   const [targetPool, setTargetPool] = useState("");
+  const [quiesce, setQuiesce] = useState(false);
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [taskID, setTaskID] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
   }, [queryClient, taskQuery.data?.error, taskQuery.data?.status, taskQuery.data?.step, vmName]);
 
   const mutation = useMutation({
-    mutationFn: (input: { name: string; targetPool: string }) => api.createBackup({ vmUuid: uuid, ...input }),
+    mutationFn: (input: { name: string; targetPool: string; online: boolean; quiesce: boolean }) => api.createBackup({ vmUuid: uuid, ...input }),
     onSuccess: (task) => {
       setTaskID(task.id);
       setOpen(false);
@@ -77,6 +79,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
     if (!eligible) return;
     setName(defaultVMBackupName(vmName));
     setTargetPool(activePools[0]?.name ?? "");
+    setQuiesce(false);
     setFormError("");
     setNotice(null);
     setOpen((current) => !current);
@@ -91,7 +94,7 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
       return;
     }
     setFormError("");
-    mutation.mutate({ name: name.trim(), targetPool });
+    mutation.mutate({ name: name.trim(), targetPool, online: state === "running", quiesce: state === "running" && quiesce });
   }
 
   const disabledTitle = disabledReason || (!activePools.length && poolsQuery.data ? "没有可用的活跃存储池" : "");
@@ -103,8 +106,8 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
       <CardHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2"><Archive className="h-4 w-4 text-primary" />冷备份</CardTitle>
-            <CardDescription>将持久配置 XML、manifest 和可写磁盘复制到指定活跃存储池。仅支持关机或异常停止的持久虚拟机。</CardDescription>
+            <CardTitle className="flex items-center gap-2"><Archive className="h-4 w-4 text-primary" />{state === "running" ? "在线备份" : "冷备份"}</CardTitle>
+            <CardDescription>{state === "running" ? "通过外部磁盘快照复制稳定基卷，备份期间虚拟机保持运行；不包含内存状态。" : "将持久配置 XML、manifest 和可写磁盘复制到指定活跃存储池。"}</CardDescription>
           </div>
           <Button type="button" variant="outline" size="sm" data-testid="vm-backup-open" disabled={!canOpen || mutation.isPending} title={disabledTitle || "创建虚拟机冷备份"} onClick={toggleForm}>
             <Archive className="h-4 w-4" />创建备份
@@ -130,9 +133,10 @@ export function VMBackupCard({ uuid, vmName, state, persistent, role, readOnly, 
                   {activePools.map((pool) => <option key={pool.name} value={pool.name}>{pool.name} · {pool.targetPath || pool.type}</option>)}
                 </select>
               </div>
+              {state === "running" ? <label className="flex items-center gap-2 rounded-md border p-3 text-sm"><input type="checkbox" checked={quiesce} onChange={(event) => setQuiesce(event.target.checked)} />启用 Guest Agent 静默（可选）</label> : null}
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="flex items-center gap-2 text-xs text-muted-foreground"><HardDrive className="h-3.5 w-3.5" />备份内容不包含内存状态，完成后可在存储页查看卷。</p>
+              <p className="flex items-center gap-2 text-xs text-muted-foreground"><HardDrive className="h-3.5 w-3.5" />备份内容不包含内存状态{tpm ? "；vTPM 状态不会保存，恢复后可能需要 BitLocker 恢复密钥" : ""}，完成后可在存储页查看卷。</p>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="ghost" size="sm" onClick={() => { setOpen(false); setFormError(""); }}>取消</Button>
                 <Button type="submit" size="sm" data-testid="vm-backup-submit" disabled={mutation.isPending || !name.trim() || !targetPool}>
