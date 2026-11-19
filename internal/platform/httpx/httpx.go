@@ -147,6 +147,8 @@ func mapError(err error) (int, string, string) {
 		return stdhttp.StatusForbidden, "CSRF_INVALID", "安全校验失败，请刷新页面后重试"
 	case errors.Is(err, domain.ErrActionNotAllowed):
 		return stdhttp.StatusConflict, "ACTION_NOT_ALLOWED", "当前虚拟机状态不允许执行该操作"
+	case errors.Is(err, domain.ErrOperationConflict):
+		return stdhttp.StatusConflict, "OPERATION_CONFLICT", "该资源已有数据面操作正在执行，请等待当前任务完成"
 	case errors.Is(err, domain.ErrDiskResize):
 		return stdhttp.StatusConflict, "DISK_RESIZE_UNSUPPORTED", "该磁盘不是可扩容的文件型 qcow2/raw 卷，或当前存储后端不支持扩容"
 	case errors.Is(err, domain.ErrVolumeInUse):

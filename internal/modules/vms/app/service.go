@@ -16,6 +16,7 @@ import (
 
 	"virtmgr/internal/domain"
 	backupsapp "virtmgr/internal/modules/backups/app"
+	"virtmgr/internal/platform/dataplane"
 )
 
 type Repository interface {
@@ -134,6 +135,8 @@ type Service struct {
 	importVolumes  ImportVolumeRepository
 	isoVolumes     ISOVolumeRepository
 	hostProvider   HostProvider
+	locks          *dataplane.LockManager
+	journal        *dataplane.Journal
 	serialMu       sync.Mutex
 	serialSessions map[string]struct{}
 }
@@ -222,6 +225,20 @@ func WithVMMetadata(repository VMMetadataRepository) Option {
 	return func(service *Service) {
 		service.metadata = repository
 	}
+}
+
+func WithDataPlane(locks *dataplane.LockManager, journal *dataplane.Journal) Option {
+	return func(service *Service) {
+		service.locks = locks
+		service.journal = journal
+	}
+}
+
+func (s *Service) acquireDataPlane(operation string, keys ...string) (*dataplane.Lease, error) {
+	if s.locks == nil {
+		return nil, nil
+	}
+	return s.locks.AcquireMany(keys, operation)
 }
 
 func (s *Service) isReadOnly() bool {
@@ -608,6 +625,11 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.VM,
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", spec.Name, specDetail(normalized), err)
 	}
 	detail := specDetail(normalized)
+	lease, err := s.acquireDataPlane("创建虚拟机", domain.VMNameLockKey(normalized.Name))
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.create", normalized.Name, detail, err)
+	}
+	defer lease.Release()
 	clonedVolume := ""
 	imageName := ""
 	if normalized.ImageID > 0 {
@@ -872,6 +894,11 @@ func (s *Service) ResizeDisk(ctx context.Context, command ResizeDiskCommand) (do
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.resize", command.UUID, detail,
 			fmt.Errorf("%w: disk capacity must be between %d and %d bytes", domain.ErrInvalidInput, minDiskCapacityBytes, maxDiskCapacityBytes))
 	}
+	lease, err := s.acquireDataPlane("扩容磁盘", domain.VMLockKey(command.UUID))
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.resize", command.UUID, detail, err)
+	}
+	defer lease.Release()
 	vm, err := s.repository.GetVM(ctx, command.UUID)
 	if err != nil {
 		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.disk.resize", command.UUID, detail, err)
@@ -1292,6 +1319,11 @@ func (s *Service) CreateSnapshot(ctx context.Context, command SnapshotCreateComm
 	if command.UUID == "" || !snapshotPattern.MatchString(command.Spec.Name) || len(command.Spec.Description) > 1024 {
 		return domain.VMSnapshot{}, s.snapshotFailure(ctx, command.Request, "vm.snapshot.create", command.UUID+"/"+command.Spec.Name, detail, domain.ErrInvalidInput)
 	}
+	lease, err := s.acquireDataPlane("创建快照", domain.VMLockKey(command.UUID))
+	if err != nil {
+		return domain.VMSnapshot{}, s.snapshotFailure(ctx, command.Request, "vm.snapshot.create", command.UUID+"/"+command.Spec.Name, detail, err)
+	}
+	defer lease.Release()
 	snapshot, err := s.repository.CreateSnapshot(ctx, command.UUID, command.Spec)
 	if err != nil {
 		return domain.VMSnapshot{}, s.snapshotFailure(ctx, command.Request, "vm.snapshot.create", command.UUID+"/"+command.Spec.Name, detail, err)
@@ -1324,6 +1356,11 @@ func (s *Service) RevertSnapshot(ctx context.Context, command SnapshotCommand) e
 	if command.UUID == "" || !snapshotPattern.MatchString(command.Name) {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.revert", command.UUID+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
+	lease, err := s.acquireDataPlane("回滚快照", domain.VMLockKey(command.UUID))
+	if err != nil {
+		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.revert", command.UUID+"/"+command.Name, detail, err)
+	}
+	defer lease.Release()
 	if err := s.repository.RevertSnapshot(ctx, command.UUID, command.Name); err != nil {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.revert", command.UUID+"/"+command.Name, detail, err)
 	}
@@ -1347,6 +1384,11 @@ func (s *Service) DeleteSnapshot(ctx context.Context, command SnapshotCommand) e
 	if command.UUID == "" || !snapshotPattern.MatchString(command.Name) {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.delete", command.UUID+"/"+command.Name, detail, domain.ErrInvalidInput)
 	}
+	lease, err := s.acquireDataPlane("删除快照", domain.VMLockKey(command.UUID))
+	if err != nil {
+		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.delete", command.UUID+"/"+command.Name, detail, err)
+	}
+	defer lease.Release()
 	if err := s.repository.DeleteSnapshot(ctx, command.UUID, command.Name); err != nil {
 		return s.snapshotFailure(ctx, command.Request, "vm.snapshot.delete", command.UUID+"/"+command.Name, detail, err)
 	}

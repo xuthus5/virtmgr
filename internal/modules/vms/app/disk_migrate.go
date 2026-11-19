@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,6 +38,19 @@ func (s *Service) MigrateDisk(ctx context.Context, command MigrateDiskCommand) (
 	if command.Spec.TargetFormat != "" && command.Spec.TargetFormat != "qcow2" && command.Spec.TargetFormat != "raw" {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.disk.migrate", command.UUID, detail, domain.ErrInvalidInput)
 	}
+	lease, err := s.acquireDataPlane("迁移磁盘",
+		domain.VMLockKey(command.UUID),
+		domain.StorageVolumeLockKey(command.Spec.TargetPool, command.Spec.TargetName),
+	)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.disk.migrate", command.UUID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	vm, err := s.repository.GetVM(ctx, command.UUID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.disk.migrate", command.UUID, detail, err)
@@ -78,6 +92,15 @@ func (s *Service) MigrateDisk(ctx context.Context, command MigrateDiskCommand) (
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.disk.migrate", command.UUID, detail, err)
 	}
+	lease.SetTaskID(taskID)
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationMigrate, VMUUID: command.UUID, VMName: vm.Name,
+		TaskID: taskID, Phase: "copying", SourceVolume: filepath.Base(strings.TrimSpace(disk.Source)), SourcePath: disk.Source,
+		TargetPool: command.Spec.TargetPool, TargetName: command.Spec.TargetName,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.disk.migrate", command.UUID, detail, err)
+	}
 	now := time.Now().UTC()
 	task := domain.Task{
 		ID: taskID, Kind: "vm.disk.migrate", TargetKind: "vm", TargetID: command.UUID,
@@ -92,28 +115,44 @@ func (s *Service) MigrateDisk(ctx context.Context, command MigrateDiskCommand) (
 	}
 	go func() {
 		defer cancel()
+		defer lease.Release()
+		journalStatus := domain.DataPlaneStatusFailed
+		journalMessage := "磁盘跨池迁移失败"
+		defer func() {
+			finalCtx, finalCancel := context.WithTimeout(context.WithoutCancel(jobContext), 10*time.Second)
+			defer finalCancel()
+			s.journal.Finish(finalCtx, task.ID, journalStatus, journalMessage)
+		}()
 		_ = s.tasks.Progress(jobContext, task.ID, 5, startStep)
 		updated, migrateErr := migrator.MigrateVMDisk(jobContext, command.UUID, command.Target, command.Spec)
 		finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer finalizeCancel()
 		if migrateErr != nil {
+			journalMessage = migrateErr.Error()
 			_ = s.recordMutationAudit(finalizeContext, command.Request, "vm.disk.migrate", command.UUID, "failure", detail, migrateErr)
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "磁盘跨池迁移失败", migrateErr)
 			return
 		}
+		targetPath := ""
 		for _, candidate := range updated.Disks {
 			if candidate.Target == command.Target {
+				targetPath = candidate.Source
 				detail["targetPath"] = candidate.Source
 				detail["targetCapacityBytes"] = candidate.CapacityBytes
 				break
 			}
 		}
 		s.captureConfigVersion(finalizeContext, command.Request, command.UUID, domain.VMConfigSourceDiskMigrate, 0, "跨池迁移磁盘并切换持久配置引用")
+		s.journal.Phase(finalizeContext, task.ID, "xml_rewritten", targetPath)
 		if auditErr := s.recordMutationAudit(finalizeContext, command.Request, "vm.disk.migrate", command.UUID, "success", detail, nil); auditErr != nil {
+			journalMessage = auditErr.Error()
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "磁盘迁移完成但审计写入失败", auditErr)
 			return
 		}
+		journalStatus = domain.DataPlaneStatusSucceeded
+		journalMessage = ""
 		_ = s.tasks.Succeed(finalizeContext, task.ID, fmt.Sprintf("磁盘 %s 已迁移到 %s", command.Target, command.Spec.TargetPool))
 	}()
+	leaseOwned = false
 	return task, nil
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/platform/dataplane"
 )
 
 const (
@@ -146,6 +147,8 @@ type Service struct {
 	now            func() time.Time
 	onError        ErrorHandler
 	configVersions ConfigVersionRecorder
+	locks          *dataplane.LockManager
+	journal        *dataplane.Journal
 	runMu          sync.Mutex
 }
 
@@ -165,6 +168,20 @@ func WithErrorHandler(handler ErrorHandler) Option {
 
 func WithConfigVersionRecorder(recorder ConfigVersionRecorder) Option {
 	return func(service *Service) { service.configVersions = recorder }
+}
+
+func WithDataPlane(locks *dataplane.LockManager, journal *dataplane.Journal) Option {
+	return func(service *Service) {
+		service.locks = locks
+		service.journal = journal
+	}
+}
+
+func (s *Service) acquireDataPlane(operation string, keys ...string) (*dataplane.Lease, error) {
+	if s.locks == nil {
+		return nil, nil
+	}
+	return s.locks.AcquireMany(keys, operation)
 }
 
 func New(repository Repository, backend VMBackend, audit AuditRecorder, tasks TaskRecorder, readOnly bool, options ...Option) *Service {
@@ -237,6 +254,16 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 	if err := domain.ValidateBackupName(command.Spec.Name); err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
 	}
+	lease, err := s.acquireDataPlane("备份", domain.VMLockKey(command.VMUUID))
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	source, err := s.backend.GetVM(ctx, command.VMUUID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
@@ -288,6 +315,19 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 		_ = s.tasks.Fail(ctx, taskID, 0, "创建备份记录失败", err)
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
 	}
+	lease.SetTaskID(taskID)
+	operation := domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationBackup, VMUUID: command.VMUUID,
+		VMName: source.Name, TaskID: taskID, BackupID: backupID, Phase: "started",
+		Online: command.Spec.Online, TargetPool: repository.PoolName,
+	}
+	if err := s.journal.Start(ctx, operation); err != nil {
+		item.Status = domain.BackupStatusFailed
+		item.Error = err.Error()
+		_, _ = s.repository.UpdateBackup(ctx, item)
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.create", command.VMUUID, detail, err)
+	}
 	task := domain.Task{
 		ID: taskID, Kind: "vm.backup", TargetKind: "vm", TargetID: command.VMUUID,
 		Status: domain.TaskStatusRunning, Step: startStep, Actor: command.Request.Session.User.Username,
@@ -299,8 +339,9 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domain.Tas
 	}
 	go func() {
 		defer cancel()
-		s.executeBackup(jobContext, taskID, item, command, detail)
+		s.executeBackup(jobContext, taskID, lease, item, command, detail)
 	}()
+	leaseOwned = false
 	return task, nil
 }
 
@@ -335,10 +376,19 @@ func boolMetadata(metadata map[string]any, key string) bool {
 	return value
 }
 
-func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.Backup, command CreateCommand, detail map[string]any) {
+func (s *Service) executeBackup(ctx context.Context, taskID string, lease *dataplane.Lease, item domain.Backup, command CreateCommand, detail map[string]any) {
+	defer lease.Release()
+	journalStatus := domain.DataPlaneStatusFailed
+	journalMessage := "备份虚拟机失败"
+	defer func() {
+		finalizeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		s.journal.Finish(finalizeContext, taskID, journalStatus, journalMessage)
+	}()
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	progress := 0
+	journalPhase := "started"
 	result, err := s.backend.BackupVM(ctx, item.VMUUID, domain.VMBackupSpec{
 		BackupID: item.ID, Name: item.Name, TargetPool: item.TargetPool, Online: item.Online, Quiesce: item.Quiesced,
 	}, func(percent int, step string) {
@@ -349,9 +399,14 @@ func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.
 			percent = 100
 		}
 		progress = percent
+		if phase := backupJournalPhase(percent); phase != "" && phase != journalPhase {
+			journalPhase = phase
+			s.journal.Phase(ctx, taskID, phase, "")
+		}
 		_ = s.tasks.Progress(ctx, taskID, progress, step)
 	})
 	if err != nil {
+		journalMessage = err.Error()
 		item.Status = domain.BackupStatusFailed
 		item.Error = err.Error()
 		_, _ = s.repository.UpdateBackup(ctx, item)
@@ -378,6 +433,7 @@ func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.
 	detail["quiesced"] = result.Quiesced
 	updated, saveErr := s.repository.UpdateBackup(ctx, item)
 	if saveErr != nil {
+		journalMessage = saveErr.Error()
 		_ = s.recordAudit(ctx, command.Request, "backup.create", item.ID, "failure", detail, saveErr)
 		_ = s.tasks.Fail(ctx, taskID, 100, "备份完成但写入目录失败", saveErr)
 		return
@@ -385,10 +441,28 @@ func (s *Service) executeBackup(ctx context.Context, taskID string, item domain.
 	detail["diskCount"] = updated.DiskCount
 	detail["totalBytes"] = updated.TotalBytes
 	if err := s.recordAudit(ctx, command.Request, "backup.create", item.ID, "success", detail, nil); err != nil {
+		journalMessage = err.Error()
 		_ = s.tasks.Fail(ctx, taskID, 100, "备份完成但审计写入失败", err)
 		return
 	}
+	journalStatus = domain.DataPlaneStatusSucceeded
+	journalMessage = ""
 	_ = s.tasks.Succeed(ctx, taskID, fmt.Sprintf("虚拟机 %s 备份完成", result.VMName))
+}
+
+func backupJournalPhase(percent int) string {
+	switch {
+	case percent >= 95:
+		return "pivot_pending"
+	case percent >= 90:
+		return "manifest_written"
+	case percent >= 78:
+		return "artifacts_copied"
+	case percent >= 10:
+		return "snapshot_created"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) resolveRepository(ctx context.Context, spec domain.BackupCreateSpec) (domain.BackupRepository, error) {

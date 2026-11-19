@@ -51,7 +51,7 @@
       "Unauthorized": { "description": "未认证或会话已失效", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
       "Forbidden": { "description": "角色或 Token 作用域不足", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
       "NotFound": { "description": "资源不存在", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Conflict": { "description": "资源状态冲突或名称重复", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Conflict": { "description": "资源状态冲突、名称重复或同一资源已有数据面操作", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
       "Unavailable": { "description": "libvirt、Guest Agent 或后端暂不可用", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
     },
     "schemas": {
@@ -63,7 +63,7 @@
             "type": "object",
             "required": ["code", "message"],
             "properties": {
-              "code": { "type": "string", "examples": ["invalid_input", "not_found", "conflict", "forbidden"] },
+              "code": { "type": "string", "examples": ["invalid_input", "not_found", "conflict", "operation_conflict", "forbidden"] },
               "message": { "type": "string" },
               "requestId": { "type": "string" }
             }

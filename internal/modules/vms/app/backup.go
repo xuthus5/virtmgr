@@ -9,6 +9,7 @@ import (
 
 	"virtmgr/internal/domain"
 	backupsapp "virtmgr/internal/modules/backups/app"
+	"virtmgr/internal/platform/dataplane"
 )
 
 const backupTimeout = 6 * time.Hour
@@ -49,6 +50,16 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	if command.Spec.Quiesce && !command.Spec.Online {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, fmt.Errorf("%w: quiesced backup requires online mode", domain.ErrInvalidInput))
 	}
+	lease, err := s.acquireDataPlane("备份", domain.VMLockKey(command.UUID))
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	source, err := s.repository.GetVM(ctx, command.UUID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, err)
@@ -60,7 +71,6 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 		(command.Spec.Online && source.State != domain.VMStateRunning) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.backup", command.UUID, detail, domain.ErrActionNotAllowed)
 	}
-
 	startStep := fmt.Sprintf("准备备份 %s", command.Spec.Name)
 	taskID, err := s.tasks.Start(ctx, "vm.backup", "vm", command.UUID, command.Request.Session.User.Username, startStep)
 	if err != nil {
@@ -78,10 +88,12 @@ func (s *Service) Backup(ctx context.Context, command BackupCommand) (domain.Tas
 	}); ok {
 		registrar.RegisterCancel(task.ID, cancel)
 	}
+	lease.SetTaskID(task.ID)
 	go func() {
 		defer cancel()
-		s.runBackup(jobContext, task.ID, command, detail)
+		s.runBackup(jobContext, task.ID, lease, command, detail)
 	}()
+	leaseOwned = false
 	return task, nil
 }
 
@@ -91,7 +103,8 @@ func backupCreateSpec(spec domain.VMBackupSpec) domain.BackupCreateSpec {
 	}
 }
 
-func (s *Service) runBackup(ctx context.Context, taskID string, command BackupCommand, detail map[string]any) {
+func (s *Service) runBackup(ctx context.Context, taskID string, lease *dataplane.Lease, command BackupCommand, detail map[string]any) {
+	defer lease.Release()
 	progress := 0
 	backup, err := s.repository.BackupVM(ctx, command.UUID, command.Spec, func(percent int, step string) {
 		if percent < progress {

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	stdhttp "net/http"
 	"path"
@@ -22,6 +23,7 @@ import (
 	backupshttp "virtmgr/internal/modules/backups/http"
 	configversionsapp "virtmgr/internal/modules/configversions/app"
 	configversionshttp "virtmgr/internal/modules/configversions/http"
+	dataplaneapp "virtmgr/internal/modules/dataplane/app"
 	eventsapp "virtmgr/internal/modules/events/app"
 	eventshttp "virtmgr/internal/modules/events/http"
 	guestagentapp "virtmgr/internal/modules/guestagent/app"
@@ -54,6 +56,7 @@ import (
 	vmshttp "virtmgr/internal/modules/vms/http"
 	"virtmgr/internal/platform/config"
 	"virtmgr/internal/platform/consoletoken"
+	"virtmgr/internal/platform/dataplane"
 	"virtmgr/internal/platform/eventbus"
 	"virtmgr/internal/platform/httpx"
 	libvirtbackend "virtmgr/internal/platform/libvirt"
@@ -153,6 +156,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			return nil, err
 		}
 	}
+	locks := dataplane.NewLockManager()
+	journal := dataplane.NewJournal(store)
+	recoveryService := dataplaneapp.New(store, store, backend, store, locks,
+		dataplaneapp.WithErrorHandler(func(err error) { logger.Warn("dataplane_recovery_audit_failed", "error", err) }),
+	)
+	recoveryContext, recoveryCancel := context.WithTimeout(ctx, 30*time.Minute)
+	recoverySummary, err := recoveryService.Recover(recoveryContext)
+	recoveryCancel()
+	if err != nil {
+		_ = backend.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("recover interrupted data plane operations: %w", err)
+	}
+	if recoverySummary.Operations > 0 {
+		logger.Info("dataplane_recovery_completed",
+			"operations", recoverySummary.Operations, "recovered", recoverySummary.Recovered,
+			"needs_attention", recoverySummary.NeedsAttention, "failed", recoverySummary.Failed)
+	}
 
 	apiTokenService := apitokensapp.New(store, store)
 	apiTokensHandler := apitokenshttp.New(apiTokenService)
@@ -174,6 +195,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		backupsapp.WithReadOnlyMode(mode),
 		backupsapp.WithErrorHandler(func(err error) { logger.Error("backup_scheduler_failed", "error", err) }),
 		backupsapp.WithConfigVersionRecorder(configVersionService),
+		backupsapp.WithDataPlane(locks, journal),
 	)
 	backupsHandler := backupshttp.New(backupService)
 	tasksHandler := taskshttp.New(tasksapp.New(store,
@@ -183,10 +205,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		tasksapp.WithReadOnlyMode(mode),
 	))
 	configVersionsHandler := configversionshttp.New(configVersionService)
-	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder)))
+	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder), storageapp.WithDataPlane(locks, journal)))
 	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
 	consoleTokens := consoletoken.New(30 * time.Second)
-	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend), vmsapp.WithImportVolumes(backend), vmsapp.WithISOVolumes(backend), vmsapp.WithHostProvider(backend)))
+	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend), vmsapp.WithImportVolumes(backend), vmsapp.WithISOVolumes(backend), vmsapp.WithHostProvider(backend), vmsapp.WithDataPlane(locks, journal)))
 	imagesHandler := imageshttp.New(imagesapp.New(store, backend, store, cfg.ReadOnly, imagesapp.WithReadOnlyMode(mode)))
 	guestAgentService := guestagentapp.New(backend, store, cfg.ReadOnly,
 		guestagentapp.WithReadOnlyMode(mode),

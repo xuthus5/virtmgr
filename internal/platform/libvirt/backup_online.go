@@ -125,16 +125,7 @@ func (s *onlineBackupSnapshot) join(ctx context.Context, conn *libvirt.Connect, 
 		if s.joinedTargets[disk.target] {
 			continue
 		}
-		if err := dom.BlockCommit(disk.target, "", "", 0, libvirt.DOMAIN_BLOCK_COMMIT_ACTIVE|libvirt.DOMAIN_BLOCK_COMMIT_BANDWIDTH_BYTES); err != nil {
-			return fmt.Errorf("join online backup overlay for disk %s: %w", disk.target, err)
-		}
-		if err := waitForBlockCommit(ctx, dom, disk.target); err != nil {
-			return err
-		}
-		if err := dom.BlockJobAbort(disk.target, libvirt.DOMAIN_BLOCK_JOB_ABORT_PIVOT); err != nil {
-			return fmt.Errorf("pivot online backup overlay for disk %s: %w", disk.target, err)
-		}
-		if err := verifyActiveDiskSource(dom, disk.target, disk.source); err != nil {
+		if err := commitAndPivotOnlineBackupDisk(ctx, dom, disk.target, disk.source); err != nil {
 			return err
 		}
 		s.joinedTargets[disk.target] = true
@@ -151,6 +142,42 @@ func (s *onlineBackupSnapshot) join(ctx context.Context, conn *libvirt.Connect, 
 	}
 	s.joined = true
 	return nil
+}
+
+func (s *onlineBackupSnapshot) joinWithTimeout(ctx context.Context, conn *libvirt.Connect, dom *libvirt.Domain, timeout time.Duration) error {
+	joinContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return s.join(joinContext, conn, dom)
+}
+
+func commitAndPivotOnlineBackupDisk(ctx context.Context, dom *libvirt.Domain, target, baseSource string) error {
+	info, err := dom.GetBlockJobInfo(target, libvirt.DOMAIN_BLOCK_JOB_INFO_BANDWIDTH_BYTES)
+	if err != nil {
+		var libvirtErr libvirt.Error
+		if !(errors.As(err, &libvirtErr) && libvirtErr.Code == libvirt.ERR_OPERATION_INVALID) {
+			return fmt.Errorf("read block job before joining online backup overlay for disk %s: %w", target, err)
+		}
+		info = nil
+	}
+	if info != nil && info.Type != libvirt.DOMAIN_BLOCK_JOB_TYPE_UNKNOWN {
+		if info.Type != libvirt.DOMAIN_BLOCK_JOB_TYPE_COMMIT {
+			return fmt.Errorf("disk %s has an incompatible active block job and cannot be recovered automatically", target)
+		}
+	} else {
+		if err := dom.BlockCommit(target, "", "", 0, libvirt.DOMAIN_BLOCK_COMMIT_ACTIVE|libvirt.DOMAIN_BLOCK_COMMIT_BANDWIDTH_BYTES); err != nil {
+			return fmt.Errorf("join online backup overlay for disk %s: %w", target, err)
+		}
+	}
+	if err := waitForBlockCommit(ctx, dom, target); err != nil {
+		return err
+	}
+	if err := dom.BlockJobAbort(target, libvirt.DOMAIN_BLOCK_JOB_ABORT_PIVOT); err != nil {
+		if verifyErr := verifyActiveDiskSource(dom, target, baseSource); verifyErr == nil {
+			return nil
+		}
+		return fmt.Errorf("pivot online backup overlay for disk %s: %w", target, err)
+	}
+	return verifyActiveDiskSource(dom, target, baseSource)
 }
 
 func (s *onlineBackupSnapshot) deleteOverlays(ctx context.Context, conn *libvirt.Connect) error {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/platform/dataplane"
 )
 
 const (
@@ -62,12 +63,32 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (domain.Tas
 	if s.tasks == nil || s.importVolumes == nil {
 		return domain.Task{}, s.importFailure(ctx, command.Request, detail, domain.ErrUnavailable)
 	}
+	lease, err := s.acquireDataPlane("导入虚拟机", domain.VMNameLockKey(normalized.Name))
+	if err != nil {
+		return domain.Task{}, s.importFailure(ctx, command.Request, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 
 	plan, err := s.prepareImport(ctx, normalized, createSpec)
 	if err != nil {
 		return domain.Task{}, s.importFailure(ctx, command.Request, detail, err)
 	}
 	detail = importPlanDetail(normalized, plan)
+	targetLease, err := s.acquireDataPlane("导入虚拟机目标卷", domain.StorageVolumeLockKey(plan.targetPool, plan.targetName))
+	if err != nil {
+		return domain.Task{}, s.importFailure(ctx, command.Request, detail, err)
+	}
+	targetLeaseOwned := true
+	defer func() {
+		if targetLeaseOwned {
+			targetLease.Release()
+		}
+	}()
 
 	startStep := "正在复制磁盘到目标存储池"
 	if plan.sourceKind == importSourceKindISO {
@@ -77,6 +98,16 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (domain.Tas
 		command.Request.Session.User.Username, startStep)
 	if err != nil {
 		return domain.Task{}, s.importFailure(ctx, command.Request, detail, fmt.Errorf("start import task: %w", err))
+	}
+	lease.SetTaskID(taskID)
+	targetLease.SetTaskID(taskID)
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationImport, VMName: normalized.Name, TaskID: taskID,
+		Phase: "target_creating", SourcePool: plan.sourcePool, SourceVolume: plan.source.Name,
+		TargetPool: plan.targetPool, TargetName: plan.targetName,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.importFailure(ctx, command.Request, detail, err)
 	}
 	now := time.Now().UTC()
 	task := domain.Task{
@@ -92,8 +123,11 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (domain.Tas
 	}
 	go func() {
 		defer cancel()
-		s.runImport(jobContext, task.ID, command, plan, detail)
+		defer targetLease.Release()
+		s.runImport(jobContext, task.ID, lease, command, plan, detail)
 	}()
+	leaseOwned = false
+	targetLeaseOwned = false
 	return task, nil
 }
 
@@ -179,7 +213,15 @@ func (s *Service) prepareImport(ctx context.Context, spec domain.VMImportSpec, c
 	}, nil
 }
 
-func (s *Service) runImport(ctx context.Context, taskID string, command ImportCommand, plan importPlan, detail map[string]any) {
+func (s *Service) runImport(ctx context.Context, taskID string, lease *dataplane.Lease, command ImportCommand, plan importPlan, detail map[string]any) {
+	defer lease.Release()
+	journalStatus := domain.DataPlaneStatusFailed
+	journalMessage := "导入虚拟机失败"
+	defer func() {
+		finalizeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), importCleanupTimeout)
+		defer cancel()
+		s.journal.Finish(finalizeContext, taskID, journalStatus, journalMessage)
+	}()
 	progress := 0
 	report := func(percent int, step string) {
 		if percent < progress {
@@ -192,6 +234,7 @@ func (s *Service) runImport(ctx context.Context, taskID string, command ImportCo
 		_ = s.tasks.Progress(ctx, taskID, progress, step)
 	}
 	fail := func(cause error, step string) {
+		journalMessage = cause.Error()
 		finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importCleanupTimeout)
 		defer cancel()
 		_ = s.recordImportAudit(finalCtx, command.Request, plan, "", "failure", detail, cause)
@@ -232,6 +275,7 @@ func (s *Service) runImport(ctx context.Context, taskID string, command ImportCo
 		return
 	}
 	detail["targetPath"] = plan.targetPath
+	s.journal.Phase(ctx, taskID, "target_created", plan.targetPath)
 	if strings.TrimSpace(sourcePath(plan.source)) != "" && filepath.Clean(plan.targetPath) == filepath.Clean(plan.source.Path) {
 		fail(domain.ErrConflict, "导入目标不能覆盖来源磁盘")
 		return
@@ -253,6 +297,7 @@ func (s *Service) runImport(ctx context.Context, taskID string, command ImportCo
 	detail["uuid"] = vm.UUID
 	detail["name"] = vm.Name
 	detail["state"] = string(vm.State)
+	s.journal.Phase(ctx, taskID, "vm_defined", plan.targetPath)
 	if err := ctx.Err(); err != nil {
 		s.cleanupImportedVM(ctx, vm)
 		s.cleanupImportVolume(ctx, plan)
@@ -265,6 +310,7 @@ func (s *Service) runImport(ctx context.Context, taskID string, command ImportCo
 	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importCleanupTimeout)
 	defer cancel()
 	if err := s.recordImportAudit(finalCtx, command.Request, plan, vm.UUID, "success", detail, nil); err != nil {
+		journalMessage = err.Error()
 		_ = s.tasks.Fail(finalCtx, taskID, 100, "导入完成但审计写入失败", err)
 		return
 	}
@@ -273,6 +319,8 @@ func (s *Service) runImport(ctx context.Context, taskID string, command ImportCo
 	}); ok {
 		_ = recorder.SetMetadata(finalCtx, taskID, map[string]any{"vmUuid": vm.UUID, "vmName": vm.Name})
 	}
+	journalStatus = domain.DataPlaneStatusSucceeded
+	journalMessage = ""
 	_ = s.tasks.Succeed(finalCtx, taskID, fmt.Sprintf("虚拟机 %s 导入完成", vm.Name))
 }
 

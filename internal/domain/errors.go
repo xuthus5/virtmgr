@@ -9,6 +9,7 @@ var (
 	ErrForbidden           = errors.New("forbidden")
 	ErrNotFound            = errors.New("not found")
 	ErrConflict            = errors.New("conflict")
+	ErrOperationConflict   = errors.New("data plane operation conflict")
 	ErrUnavailable         = errors.New("unavailable")
 	ErrInvalidInput        = errors.New("invalid input")
 	ErrTooLarge            = errors.New("request too large")

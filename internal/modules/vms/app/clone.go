@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/platform/dataplane"
 )
 
 const cloneTimeout = 2 * time.Hour
@@ -31,6 +32,16 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 	if command.Spec.TargetPool != "" && !storagePoolNamePattern.MatchString(command.Spec.TargetPool) {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, domain.ErrInvalidInput)
 	}
+	lease, err := s.acquireDataPlane("克隆虚拟机", domain.VMLockKey(command.UUID), domain.VMNameLockKey(command.Spec.Name))
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	source, err := s.repository.GetVM(ctx, command.UUID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, err)
@@ -49,7 +60,6 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 			return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, domain.ErrConflict)
 		}
 	}
-
 	startStep := fmt.Sprintf("准备克隆 %s", command.Spec.Name)
 	taskID, err := s.tasks.Start(ctx, "vm.clone", "vm", command.UUID, command.Request.Session.User.Username, startStep)
 	if err != nil {
@@ -67,14 +77,17 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 	}); ok {
 		registrar.RegisterCancel(task.ID, cancel)
 	}
+	lease.SetTaskID(task.ID)
 	go func() {
 		defer cancel()
-		s.runClone(jobContext, task.ID, command, detail)
+		s.runClone(jobContext, task.ID, lease, command, detail)
 	}()
+	leaseOwned = false
 	return task, nil
 }
 
-func (s *Service) runClone(ctx context.Context, taskID string, command CloneCommand, detail map[string]any) {
+func (s *Service) runClone(ctx context.Context, taskID string, lease *dataplane.Lease, command CloneCommand, detail map[string]any) {
+	defer lease.Release()
 	progress := 0
 	vm, err := s.repository.CloneVM(ctx, command.UUID, command.Spec, func(percent int, step string) {
 		if percent < progress {

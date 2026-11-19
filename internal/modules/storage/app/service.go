@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/platform/dataplane"
 )
 
 type Repository interface {
@@ -53,6 +54,8 @@ type Service struct {
 	readOnly     bool
 	readOnlyMode domain.ReadOnlyProvider
 	tasks        TaskRecorder
+	locks        *dataplane.LockManager
+	journal      *dataplane.Journal
 }
 
 type Option func(*Service)
@@ -67,6 +70,20 @@ func WithReadOnlyMode(mode domain.ReadOnlyProvider) Option {
 	return func(service *Service) {
 		service.readOnlyMode = mode
 	}
+}
+
+func WithDataPlane(locks *dataplane.LockManager, journal *dataplane.Journal) Option {
+	return func(service *Service) {
+		service.locks = locks
+		service.journal = journal
+	}
+}
+
+func (s *Service) acquireDataPlane(operation string, keys ...string) (*dataplane.Lease, error) {
+	if s.locks == nil {
+		return nil, nil
+	}
+	return s.locks.AcquireMany(keys, operation)
 }
 
 func (s *Service) isReadOnly() bool {
@@ -470,6 +487,19 @@ func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeComman
 	if err := validateConvertVolumeCommand(command); err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
 	}
+	lease, err := s.acquireDataPlane("转换存储卷",
+		domain.StorageVolumeLockKey(command.Pool, command.Name),
+		domain.StorageVolumeLockKey(command.Spec.TargetPool, command.Spec.TargetName),
+	)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	sourceVolumes, err := s.repository.ListStorageVolumes(ctx, command.Pool)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
@@ -530,10 +560,18 @@ func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeComman
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail,
 			fmt.Errorf("%w: target pool requires %d bytes, only %d available", domain.ErrStorageInsufficient, required, targetPool.AvailableBytes))
 	}
-
 	startStep := fmt.Sprintf("正在将 %s/%s 转换为 %s", command.Pool, command.Name, command.Spec.TargetFormat)
 	taskID, err := s.tasks.Start(ctx, "storage.volume.convert", "storage_volume", targetID, command.Request.Session.User.Username, startStep)
 	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
+	}
+	lease.SetTaskID(taskID)
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationConvert, TaskID: taskID, Phase: "target_creating",
+		SourcePool: command.Pool, SourceVolume: command.Name,
+		TargetPool: command.Spec.TargetPool, TargetName: command.Spec.TargetName,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.convert", targetID, detail, err)
 	}
 	now := time.Now().UTC()
@@ -550,10 +588,19 @@ func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeComman
 	}
 	go func() {
 		defer cancel()
+		defer lease.Release()
+		journalStatus := domain.DataPlaneStatusFailed
+		journalMessage := "存储卷转换失败"
+		defer func() {
+			finalCtx, finalCancel := context.WithTimeout(context.WithoutCancel(jobContext), volumeConvertFinalize)
+			defer finalCancel()
+			s.journal.Finish(finalCtx, task.ID, journalStatus, journalMessage)
+		}()
 		result, convertErr := converter.ConvertStorageVolume(jobContext, command.Spec)
 		finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertFinalize)
 		defer finalizeCancel()
 		if convertErr != nil {
+			journalMessage = convertErr.Error()
 			_ = s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.convert", targetID, "failure", detail, convertErr)
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "存储卷转换失败", convertErr)
 			return
@@ -561,12 +608,17 @@ func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeComman
 		detail["targetPath"] = result.Path
 		detail["targetCapacityBytes"] = result.CapacityBytes
 		detail["targetAllocationBytes"] = result.AllocationBytes
+		s.journal.Phase(finalizeContext, task.ID, "target_created", result.Path)
 		if auditErr := s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.convert", targetID, "success", detail, nil); auditErr != nil {
+			journalMessage = auditErr.Error()
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "存储卷转换完成但审计写入失败", auditErr)
 			return
 		}
+		journalStatus = domain.DataPlaneStatusSucceeded
+		journalMessage = ""
 		_ = s.tasks.Succeed(finalizeContext, task.ID, fmt.Sprintf("存储卷已转换为 %s", command.Spec.TargetFormat))
 	}()
+	leaseOwned = false
 	return task, nil
 }
 
@@ -606,6 +658,19 @@ func (s *Service) FlattenVolume(ctx context.Context, command FlattenVolumeComman
 	if err := validateFlattenVolumeCommand(command); err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
 	}
+	lease, err := s.acquireDataPlane("展平存储卷",
+		domain.StorageVolumeLockKey(command.Pool, command.Name),
+		domain.StorageVolumeLockKey(command.Spec.TargetPool, command.Spec.TargetName),
+	)
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	sourceVolumes, err := s.repository.ListStorageVolumes(ctx, command.Pool)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
@@ -672,6 +737,15 @@ func (s *Service) FlattenVolume(ctx context.Context, command FlattenVolumeComman
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
 	}
+	lease.SetTaskID(taskID)
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationFlatten, TaskID: taskID, Phase: "target_creating",
+		SourcePool: command.Pool, SourceVolume: command.Name,
+		TargetPool: command.Spec.TargetPool, TargetName: command.Spec.TargetName,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "storage.volume.flatten", targetID, detail, err)
+	}
 	now := time.Now().UTC()
 	task := domain.Task{
 		ID: taskID, Kind: "storage.volume.flatten", TargetKind: "storage_volume", TargetID: targetID,
@@ -686,10 +760,19 @@ func (s *Service) FlattenVolume(ctx context.Context, command FlattenVolumeComman
 	}
 	go func() {
 		defer cancel()
+		defer lease.Release()
+		journalStatus := domain.DataPlaneStatusFailed
+		journalMessage := "链接克隆展平失败"
+		defer func() {
+			finalCtx, finalCancel := context.WithTimeout(context.WithoutCancel(jobContext), volumeConvertFinalize)
+			defer finalCancel()
+			s.journal.Finish(finalCtx, task.ID, journalStatus, journalMessage)
+		}()
 		result, flattenErr := flattener.FlattenStorageVolume(jobContext, command.Spec)
 		finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), volumeConvertFinalize)
 		defer finalizeCancel()
 		if flattenErr != nil {
+			journalMessage = flattenErr.Error()
 			_ = s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.flatten", targetID, "failure", detail, flattenErr)
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "链接克隆展平失败", flattenErr)
 			return
@@ -698,12 +781,17 @@ func (s *Service) FlattenVolume(ctx context.Context, command FlattenVolumeComman
 		detail["targetCapacityBytes"] = result.CapacityBytes
 		detail["targetAllocationBytes"] = result.AllocationBytes
 		detail["targetLinked"] = result.Linked
+		s.journal.Phase(finalizeContext, task.ID, "target_created", result.Path)
 		if auditErr := s.recordMutationAudit(finalizeContext, command.Request, "storage.volume.flatten", targetID, "success", detail, nil); auditErr != nil {
+			journalMessage = auditErr.Error()
 			_ = s.tasks.Fail(finalizeContext, task.ID, 100, "链接克隆展平完成但审计写入失败", auditErr)
 			return
 		}
+		journalStatus = domain.DataPlaneStatusSucceeded
+		journalMessage = ""
 		_ = s.tasks.Succeed(finalizeContext, task.ID, "链接克隆已展平为独立卷")
 	}()
+	leaseOwned = false
 	return task, nil
 }
 

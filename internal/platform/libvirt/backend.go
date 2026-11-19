@@ -37,6 +37,7 @@ type Backend interface {
 	VerifyVMBackup(ctx context.Context, backup domain.Backup, deep bool) (domain.BackupVerification, error)
 	RestoreVMBackup(ctx context.Context, backup domain.Backup, spec domain.VMRestoreSpec, progress VMBackupProgress) (domain.VM, error)
 	DeleteVMBackup(ctx context.Context, backup domain.Backup) error
+	RecoverDataPlaneOperation(ctx context.Context, operation domain.DataPlaneOperation) (domain.DataPlaneRecovery, error)
 	DeleteVM(ctx context.Context, uuid string) error
 	PerformAction(ctx context.Context, uuid string, action domain.VMAction) error
 	GetGuestAgentInfo(ctx context.Context, uuid string, refresh bool) (domain.GuestAgentInfo, error)

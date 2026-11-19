@@ -218,6 +218,11 @@ func (s *Service) runDueSchedules(ctx context.Context) error {
 }
 
 func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.BackupSchedule) error {
+	lease, err := s.acquireDataPlane("定时备份", domain.VMLockKey(schedule.VMUUID))
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	request := MutationContext{Session: domain.Session{User: domain.User{Username: "system:scheduler", Role: domain.RoleAdmin}}, RequestID: "backup-scheduler"}
@@ -246,6 +251,14 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	if err != nil {
 		return err
 	}
+	lease.SetTaskID(taskID)
+	journalStatus := domain.DataPlaneStatusFailed
+	journalMessage := "定时备份失败"
+	defer func() {
+		finalizeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		s.journal.Finish(finalizeContext, taskID, journalStatus, journalMessage)
+	}()
 	jobContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupTimeout)
 	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
 		registrar.RegisterCancel(taskID, cancel)
@@ -263,7 +276,18 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 		_ = s.tasks.Fail(ctx, taskID, 0, "创建定时备份记录失败", err)
 		return err
 	}
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationBackup, VMUUID: vm.UUID, VMName: vm.Name,
+		TaskID: taskID, BackupID: backupID, Phase: "started", Online: online, TargetPool: repository.PoolName,
+	}); err != nil {
+		item.Status = domain.BackupStatusFailed
+		item.Error = err.Error()
+		_, _ = s.repository.UpdateBackup(ctx, item)
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return err
+	}
 	progress := 0
+	journalPhase := "started"
 	result, err := s.backend.BackupVM(jobContext, vm.UUID, domain.VMBackupSpec{BackupID: backupID, Name: name, TargetPool: repository.PoolName, Online: online}, func(percent int, step string) {
 		if percent < progress {
 			percent = progress
@@ -272,9 +296,14 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 			percent = 100
 		}
 		progress = percent
+		if phase := backupJournalPhase(percent); phase != "" && phase != journalPhase {
+			journalPhase = phase
+			s.journal.Phase(jobContext, taskID, phase, "")
+		}
 		_ = s.tasks.Progress(jobContext, taskID, progress, step)
 	})
 	if err != nil {
+		journalMessage = err.Error()
 		item.Status = domain.BackupStatusFailed
 		item.Error = err.Error()
 		_, _ = s.repository.UpdateBackup(ctx, item)
@@ -299,14 +328,18 @@ func (s *Service) executeScheduledBackup(ctx context.Context, schedule domain.Ba
 	item.TPMStateSaved = result.TPMStateSaved
 	detail["online"] = result.Online
 	if _, err := s.repository.UpdateBackup(ctx, item); err != nil {
+		journalMessage = err.Error()
 		_ = s.tasks.Fail(jobContext, taskID, 100, "定时备份完成但写入目录失败", err)
 		return err
 	}
 	_ = s.tasks.Succeed(jobContext, taskID, fmt.Sprintf("虚拟机 %s 定时备份完成", vm.Name))
 	detail["backupId"] = item.ID
 	if err := s.recordAudit(ctx, request, "backup.schedule", vm.UUID, "success", detail, nil); err != nil {
+		journalMessage = err.Error()
 		return err
 	}
+	journalStatus = domain.DataPlaneStatusSucceeded
+	journalMessage = ""
 	cleaned, cleanupErr := s.cleanupRetention(ctx, schedule, request)
 	schedule.LastRunAt = &completedAt
 	schedule.NextRunAt = domain.NextScheduleTime(completedAt, schedule.ScheduleMode, time.Duration(schedule.IntervalHours)*time.Hour, schedule.DailyTime)

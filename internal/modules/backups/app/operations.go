@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"virtmgr/internal/domain"
+	"virtmgr/internal/platform/dataplane"
 )
 
 func (s *Service) CreateRepository(ctx context.Context, command RepositoryCommand) (domain.BackupRepository, error) {
@@ -175,6 +176,16 @@ func (s *Service) Restore(ctx context.Context, command RestoreCommand) (domain.T
 	if err := domain.ValidateVMRestoreName(command.Spec.Name); err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.restore", command.ID, detail, err)
 	}
+	lease, err := s.acquireDataPlane("恢复虚拟机", domain.VMNameLockKey(command.Spec.Name))
+	if err != nil {
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.restore", command.ID, detail, err)
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			lease.Release()
+		}
+	}()
 	item, err := s.repository.GetBackup(ctx, command.ID)
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.restore", command.ID, detail, err)
@@ -208,14 +219,17 @@ func (s *Service) Restore(ctx context.Context, command RestoreCommand) (domain.T
 	if registrar, ok := s.tasks.(TaskCancellationRegistrar); ok {
 		registrar.RegisterCancel(taskID, cancel)
 	}
+	lease.SetTaskID(taskID)
 	go func() {
 		defer cancel()
-		s.executeRestore(jobContext, taskID, item, command, detail)
+		s.executeRestore(jobContext, taskID, lease, item, command, detail)
 	}()
+	leaseOwned = false
 	return task, nil
 }
 
-func (s *Service) executeRestore(ctx context.Context, taskID string, item domain.Backup, command RestoreCommand, detail map[string]any) {
+func (s *Service) executeRestore(ctx context.Context, taskID string, lease *dataplane.Lease, item domain.Backup, command RestoreCommand, detail map[string]any) {
+	defer lease.Release()
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	progress := 0

@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ func TestErrorMappings(t *testing.T) {
 		{domain.ErrReadOnly, http.StatusForbidden},
 		{domain.ErrCSRF, http.StatusForbidden},
 		{domain.ErrActionNotAllowed, http.StatusConflict},
+		{domain.ErrOperationConflict, http.StatusConflict},
 		{domain.ErrVolumeInUse, http.StatusConflict},
 		{domain.ErrSelfModification, http.StatusConflict},
 		{domain.ErrNotFound, http.StatusNotFound},
@@ -39,6 +41,18 @@ func TestErrorMappings(t *testing.T) {
 		if recorder.Code != test.status {
 			t.Fatalf("Error(%v) status = %d, want %d", test.err, recorder.Code, test.status)
 		}
+	}
+}
+
+func TestOperationConflictErrorCode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	Error(recorder, httptest.NewRequest(http.MethodGet, "/", nil), domain.ErrOperationConflict)
+	var body errorBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "OPERATION_CONFLICT" {
+		t.Fatalf("error code = %q, want OPERATION_CONFLICT", body.Error.Code)
 	}
 }
 
