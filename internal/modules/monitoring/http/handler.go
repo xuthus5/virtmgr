@@ -107,8 +107,36 @@ func (h *Handler) History(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
+func (h *Handler) GuestFilesystemHistory(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	query, err := parseGuestFilesystemQuery(r)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	result, err := h.service.GuestFilesystemHistory(r.Context(), query)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) CapacityForecast(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	values := r.URL.Query()
+	result, err := h.service.CapacityForecast(r.Context(), monitoringapp.CapacityForecastQuery{
+		Scope: values.Get("scope"), TargetID: values.Get("targetId"),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/metrics/history", h.History)
+	r.Get("/metrics/guest-filesystems", h.GuestFilesystemHistory)
+	r.Get("/metrics/capacity-forecast", h.CapacityForecast)
 	r.Get("/alert-rules", h.ListRules)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
@@ -116,6 +144,33 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Put("/alert-rules/{id}", h.UpdateRule)
 		mutating.Delete("/alert-rules/{id}", h.DeleteRule)
 	})
+}
+
+func parseGuestFilesystemQuery(r *stdhttp.Request) (monitoringapp.GuestFilesystemHistoryQuery, error) {
+	values := r.URL.Query()
+	query := monitoringapp.GuestFilesystemHistoryQuery{VMUUID: strings.TrimSpace(values.Get("vmUuid"))}
+	if raw := strings.TrimSpace(values.Get("from")); raw != "" {
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return monitoringapp.GuestFilesystemHistoryQuery{}, domain.ErrInvalidInput
+		}
+		query.From = value
+	}
+	if raw := strings.TrimSpace(values.Get("to")); raw != "" {
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return monitoringapp.GuestFilesystemHistoryQuery{}, domain.ErrInvalidInput
+		}
+		query.To = value
+	}
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 {
+			return monitoringapp.GuestFilesystemHistoryQuery{}, domain.ErrInvalidInput
+		}
+		query.Limit = value
+	}
+	return query, nil
 }
 
 func parseHistoryQuery(r *stdhttp.Request) (monitoringapp.HistoryQuery, error) {

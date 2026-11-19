@@ -260,3 +260,34 @@ func TestUpdateNetworkQoSPersistsAndValidates(t *testing.T) {
 		t.Fatalf("audit events = %+v", audit.events)
 	}
 }
+
+func TestUpdateNetworkModelPersistsAndRequiresStoppedPersistentVM(t *testing.T) {
+	repository := &configurationRepository{fakeVMRepository: &fakeVMRepository{vms: []domain.VM{configurationVM(domain.VMStateShutoff)}}}
+	audit := &fakeAuditRecorder{}
+	service := New(repository, audit, false)
+	updated, err := service.UpdateNetworkModel(context.Background(), NetworkModelCommand{
+		UUID: " uuid-a ", MAC: "52:54:00:01:12:99", Spec: domain.VMNetworkModelSpec{Model: domain.VMNICModelE1000},
+		Request: MutationContext{Session: operatorSession()},
+	})
+	if err != nil {
+		t.Fatalf("UpdateNetworkModel() error = %v", err)
+	}
+	if repository.defineCalls != 1 || !strings.Contains(repository.definedXML, `<model type="e1000">`) || updated.Interfaces[0].Model != "e1000" {
+		t.Fatalf("defineCalls=%d xml=%s updated=%+v", repository.defineCalls, repository.definedXML, updated.Interfaces)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "vm.network.model.update" {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+
+	running := configurationVM(domain.VMStateRunning)
+	repository = &configurationRepository{fakeVMRepository: &fakeVMRepository{vms: []domain.VM{running}}}
+	service = New(repository, &fakeAuditRecorder{}, false)
+	if _, err := service.UpdateNetworkModel(context.Background(), NetworkModelCommand{
+		UUID: "uuid-a", MAC: "52:54:00:01:12:99", Spec: domain.VMNetworkModelSpec{Model: domain.VMNICModelVirtio}, Request: MutationContext{Session: operatorSession()},
+	}); !errors.Is(err, domain.ErrActionNotAllowed) {
+		t.Fatalf("running VM error = %v", err)
+	}
+	if repository.defineCalls != 0 {
+		t.Fatalf("running VM defined XML %d times", repository.defineCalls)
+	}
+}

@@ -1332,7 +1332,7 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   const original = await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config");
   const edited = original
     .replace("<vcpu>2</vcpu>", "<vcpu>3</vcpu>")
-    .replace(/<topology sockets='1' cores='2' threads='1'\/>/, "<topology sockets='1' cores='3' threads='1'/>");
+    .replace(/<topology([^>]*?)cores=(["'])2\2/, (_match, prefix: string, quote: string) => `<topology${prefix}cores=${quote}3${quote}`);
   await replaceEditorDocument(page, editor, edited);
   await page.getByTestId("vm-xml-save").click();
   const dialog = page.getByRole("alertdialog");
@@ -1346,7 +1346,7 @@ test("管理员校验并保存虚拟机持久 XML", async ({ page }) => {
   await openVMTab(page, "advanced");
   await page.getByLabel("XML 类型").selectOption("config");
   await expect(page.getByTestId("vm-xml-content")).toContainText("<vcpu>3</vcpu>");
-  expect(await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config")).toContain("cores='3'");
+  expect(await readVMXML(page, "44444444-4444-4444-8444-444444444444", "config")).toMatch(/cores=["']3["']/);
 
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
   await page.getByTestId("audit-action-filter").selectOption("vm.xml.update");

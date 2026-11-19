@@ -2,14 +2,17 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +26,9 @@ const (
 	defaultHistoryRange  = 24 * time.Hour
 	maxHistorySamples    = 5000
 	defaultAlertDuration = 0
+	capacityWindowDays   = 7
+	maxCapacitySamples   = 50000
+	maxGuestFSSamples    = 20000
 )
 
 type Repository interface {
@@ -34,6 +40,12 @@ type Repository interface {
 	InsertMetricSample(ctx context.Context, sample domain.MetricSample) error
 	ListMetricSamples(ctx context.Context, scope, targetID string, from, to time.Time, limit int) ([]domain.MetricSample, error)
 	DeleteMetricSamplesBefore(ctx context.Context, before time.Time) (int64, error)
+	InsertGuestFilesystemSample(ctx context.Context, sample domain.GuestFilesystemSample) error
+	ListGuestFilesystemSamples(ctx context.Context, vmUUID string, from, to time.Time, limit int) ([]domain.GuestFilesystemSample, error)
+	DeleteGuestFilesystemSamplesBefore(ctx context.Context, before time.Time) (int64, error)
+	InsertCapacitySample(ctx context.Context, sample domain.CapacitySample) error
+	ListCapacitySamples(ctx context.Context, scope, targetID string, from, to time.Time, limit int) ([]domain.CapacitySample, error)
+	DeleteCapacitySamplesBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
 type MetricsSource interface {
@@ -73,6 +85,18 @@ type HistoryQuery struct {
 	From     time.Time
 	To       time.Time
 	Limit    int
+}
+
+type GuestFilesystemHistoryQuery struct {
+	VMUUID string
+	From   time.Time
+	To     time.Time
+	Limit  int
+}
+
+type CapacityForecastQuery struct {
+	Scope    string
+	TargetID string
 }
 
 type Option func(*Service)
@@ -237,6 +261,109 @@ func (s *Service) History(ctx context.Context, input HistoryQuery) (domain.Metri
 	return domain.MetricSampleList{Items: items, Total: len(items)}, nil
 }
 
+func (s *Service) GuestFilesystemHistory(ctx context.Context, input GuestFilesystemHistoryQuery) (domain.GuestFilesystemSampleList, error) {
+	vmUUID := strings.TrimSpace(input.VMUUID)
+	if vmUUID == "" {
+		return domain.GuestFilesystemSampleList{}, domain.ErrInvalidInput
+	}
+	to := input.To.UTC()
+	if to.IsZero() {
+		to = s.now().UTC()
+	}
+	from := input.From.UTC()
+	if from.IsZero() {
+		from = to.Add(-defaultHistoryRange)
+	}
+	if !from.Before(to) || to.Sub(from) > maxHistoryRange {
+		return domain.GuestFilesystemSampleList{}, domain.ErrInvalidInput
+	}
+	limit := input.Limit
+	if limit < 1 || limit > maxGuestFSSamples {
+		limit = 5000
+	}
+	items, err := s.repository.ListGuestFilesystemSamples(ctx, vmUUID, from, to, limit)
+	if err != nil {
+		return domain.GuestFilesystemSampleList{}, err
+	}
+	return domain.GuestFilesystemSampleList{Items: items, Total: len(items)}, nil
+}
+
+func (s *Service) CapacityForecast(ctx context.Context, input CapacityForecastQuery) (domain.CapacityForecastList, error) {
+	scope := strings.ToLower(strings.TrimSpace(input.Scope))
+	if scope == "" {
+		scope = "storage_pool"
+	}
+	if scope != "storage_pool" {
+		return domain.CapacityForecastList{}, domain.ErrInvalidInput
+	}
+	targetID := strings.TrimSpace(input.TargetID)
+	to := s.now().UTC()
+	from := to.Add(-capacityWindowDays * 24 * time.Hour)
+	samples, err := s.repository.ListCapacitySamples(ctx, scope, targetID, from, to, maxCapacitySamples)
+	if err != nil {
+		return domain.CapacityForecastList{}, err
+	}
+	grouped := make(map[string][]domain.CapacitySample)
+	for _, sample := range samples {
+		if sample.TotalBytes == 0 || sample.UsedBytes > sample.TotalBytes {
+			continue
+		}
+		grouped[sample.TargetID] = append(grouped[sample.TargetID], sample)
+	}
+	items := make([]domain.CapacityForecast, 0, len(grouped))
+	for id, group := range grouped {
+		slices.SortFunc(group, func(left, right domain.CapacitySample) int {
+			return left.SampledAt.Compare(right.SampledAt)
+		})
+		items = append(items, capacityForecast(id, group))
+	}
+	slices.SortFunc(items, func(left, right domain.CapacityForecast) int {
+		return cmp.Compare(right.UsagePercent, left.UsagePercent)
+	})
+	return domain.CapacityForecastList{Items: items, Total: len(items), GeneratedAt: to}, nil
+}
+
+func capacityForecast(targetID string, samples []domain.CapacitySample) domain.CapacityForecast {
+	latest := samples[len(samples)-1]
+	forecast := domain.CapacityForecast{
+		Scope: latest.Scope, TargetID: targetID, UsedBytes: latest.UsedBytes, TotalBytes: latest.TotalBytes,
+		UsagePercent: percent(latest.UsedBytes, latest.TotalBytes), SampleCount: len(samples), WindowDays: capacityWindowDays,
+	}
+	if len(samples) < 2 {
+		return forecast
+	}
+	origin := samples[0].SampledAt
+	var sumX, sumY, sumXY, sumXX float64
+	for _, sample := range samples {
+		x := sample.SampledAt.Sub(origin).Hours() / 24
+		y := float64(sample.UsedBytes)
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumXX += x * x
+	}
+	n := float64(len(samples))
+	denominator := n*sumXX - sumX*sumX
+	if denominator <= 0 {
+		return forecast
+	}
+	forecast.GrowthBytesPerDay = (n*sumXY - sumX*sumY) / denominator
+	if math.Abs(forecast.GrowthBytesPerDay) < 1 {
+		forecast.GrowthBytesPerDay = 0
+	}
+	if forecast.GrowthBytesPerDay <= 0 || latest.TotalBytes <= latest.UsedBytes {
+		return forecast
+	}
+	days := float64(latest.TotalBytes-latest.UsedBytes) / forecast.GrowthBytesPerDay
+	if math.IsNaN(days) || math.IsInf(days, 0) || days < 0 {
+		return forecast
+	}
+	forecast.DaysToFull = &days
+	at := latest.SampledAt.Add(time.Duration(days * 24 * float64(time.Hour)))
+	forecast.ForecastAt = &at
+	return forecast
+}
+
 func (s *Service) Run(ctx context.Context) {
 	s.sampleAndEvaluate(ctx)
 	cleanupTicker := time.NewTicker(6 * time.Hour)
@@ -250,8 +377,15 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ticker.C:
 			s.sampleAndEvaluate(ctx)
 		case <-cleanupTicker.C:
-			if _, err := s.repository.DeleteMetricSamplesBefore(ctx, s.now().UTC().Add(-historyRetention)); err != nil && s.onError != nil {
-				s.onError(err)
+			before := s.now().UTC().Add(-historyRetention)
+			if _, err := s.repository.DeleteMetricSamplesBefore(ctx, before); err != nil {
+				s.report(fmt.Errorf("delete expired metric samples: %w", err))
+			}
+			if _, err := s.repository.DeleteGuestFilesystemSamplesBefore(ctx, before); err != nil {
+				s.report(fmt.Errorf("delete expired guest filesystem samples: %w", err))
+			}
+			if _, err := s.repository.DeleteCapacitySamplesBefore(ctx, before); err != nil {
+				s.report(fmt.Errorf("delete expired capacity samples: %w", err))
 			}
 		}
 	}
@@ -295,11 +429,24 @@ func (s *Service) sampleAndEvaluate(ctx context.Context) {
 			s.report(err)
 		}
 	}
+	guestFilesystems := s.collectGuestFilesystemSamples(ctx, vms, now)
 	pools, poolErr := s.hosts.ListStoragePools(ctx)
 	if poolErr != nil {
 		s.report(fmt.Errorf("list storage pools for alerts: %w", poolErr))
+	} else {
+		for _, pool := range pools {
+			if strings.TrimSpace(pool.Name) == "" || pool.CapacityBytes == 0 {
+				continue
+			}
+			if err := s.repository.InsertCapacitySample(ctx, domain.CapacitySample{
+				Scope: "storage_pool", TargetID: pool.Name, UsedBytes: pool.AllocationBytes,
+				TotalBytes: pool.CapacityBytes, SampledAt: now,
+			}); err != nil {
+				s.report(fmt.Errorf("sample storage pool %s capacity: %w", pool.Name, err))
+			}
+		}
 	}
-	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, pools, vms, now)
+	s.evaluateRules(ctx, hostMetrics.ResourceMetrics, vmSamples, pools, guestFilesystems, now)
 }
 
 func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics domain.ResourceMetrics) domain.MetricSample {
@@ -307,22 +454,16 @@ func sampleFromMetrics(scope, targetID string, sampledAt time.Time, metrics doma
 		Scope: scope, TargetID: targetID, SampledAt: sampledAt, CPUPercent: metrics.CPUPercent,
 		MemoryUsedBytes: metrics.MemoryUsedBytes, MemoryTotalBytes: metrics.MemoryTotalBytes,
 		DiskReadBytesPerSecond: metrics.DiskReadBytesPerSecond, DiskWriteBytesPerSecond: metrics.DiskWriteBytesPerSecond,
+		DiskReadIOPS: metrics.DiskReadOperationsPerSecond, DiskWriteIOPS: metrics.DiskWriteOperationsPerSecond,
 		NetworkRxBytesPerSecond: metrics.NetworkRxBytesPerSecond, NetworkTxBytesPerSecond: metrics.NetworkTxBytesPerSecond,
 	}
 }
 
-func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, inventory []domain.VM, now time.Time) {
+func (s *Service) evaluateRules(ctx context.Context, host domain.ResourceMetrics, vms []domain.MetricSample, pools []domain.StoragePool, guestFilesystems []guestFilesystemUsage, now time.Time) {
 	rules, err := s.repository.ListAlertRules(ctx)
 	if err != nil {
 		s.report(err)
 		return
-	}
-	guestFilesystems := []guestFilesystemUsage(nil)
-	for _, rule := range rules {
-		if rule.Enabled && rule.Metric == domain.AlertMetricGuestFilesystemPercent {
-			guestFilesystems = s.guestFilesystemUsage(ctx, inventory)
-			break
-		}
 	}
 	for _, rule := range rules {
 		if !rule.Enabled {
@@ -364,7 +505,7 @@ type guestFilesystemUsage struct {
 	Percent    float64
 }
 
-func (s *Service) guestFilesystemUsage(ctx context.Context, inventory []domain.VM) []guestFilesystemUsage {
+func (s *Service) collectGuestFilesystemSamples(ctx context.Context, inventory []domain.VM, sampledAt time.Time) []guestFilesystemUsage {
 	if s.guestAgent == nil {
 		return nil
 	}
@@ -383,6 +524,12 @@ func (s *Service) guestFilesystemUsage(ctx context.Context, inventory []domain.V
 			}
 			value := percent(filesystem.UsedBytes, filesystem.TotalBytes)
 			result = append(result, guestFilesystemUsage{VMName: vm.Name, MountPoint: filesystem.MountPoint, Percent: value})
+			if err := s.repository.InsertGuestFilesystemSample(ctx, domain.GuestFilesystemSample{
+				VMUUID: vm.UUID, VMName: vm.Name, MountPoint: filesystem.MountPoint,
+				UsedBytes: filesystem.UsedBytes, TotalBytes: filesystem.TotalBytes, SampledAt: sampledAt,
+			}); err != nil {
+				s.report(fmt.Errorf("sample guest filesystem %s on %s: %w", filesystem.MountPoint, vm.UUID, err))
+			}
 		}
 	}
 	return result

@@ -245,6 +245,89 @@ func (c *Client) ListStorageVolumes(ctx context.Context, poolName string) ([]dom
 	return result, nil
 }
 
+func (c *Client) DownloadStorageVolume(ctx context.Context, poolName, volumeName string, writer io.Writer) (domain.StorageVolume, error) {
+	if writer == nil {
+		return domain.StorageVolume{}, domain.ErrInvalidInput
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ensureConnectionLocked(ctx); err != nil {
+		return domain.StorageVolume{}, err
+	}
+	pool, err := c.conn.LookupStoragePoolByName(poolName)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
+			return domain.StorageVolume{}, domain.ErrNotFound
+		}
+		return domain.StorageVolume{}, fmt.Errorf("lookup storage pool %s for download: %w", poolName, err)
+	}
+	defer func() { _ = pool.Free() }()
+	info, err := pool.GetInfo()
+	if err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("read storage pool %s info for download: %w", poolName, err)
+	}
+	if info.State != libvirt.STORAGE_POOL_RUNNING {
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	volume, err := pool.LookupStorageVolByName(volumeName)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
+			return domain.StorageVolume{}, domain.ErrNotFound
+		}
+		return domain.StorageVolume{}, fmt.Errorf("lookup storage volume %s/%s for download: %w", poolName, volumeName, err)
+	}
+	defer func() { _ = volume.Free() }()
+	path, err := volume.GetPath()
+	if err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("read storage volume %s/%s path: %w", poolName, volumeName, err)
+	}
+	attachedTo, err := c.domainNamesUsingVolumeLocked(path, volumeName)
+	if err != nil {
+		return domain.StorageVolume{}, err
+	}
+	if len(attachedTo) > 0 {
+		return domain.StorageVolume{}, fmt.Errorf("%w: attached to %s", domain.ErrVolumeInUse, strings.Join(attachedTo, ", "))
+	}
+	item, err := storageVolumeFromLibvirt(volume)
+	if err != nil {
+		return domain.StorageVolume{}, err
+	}
+	stream, err := c.conn.NewStream(0)
+	if err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("open storage volume download stream: %w", err)
+	}
+	defer func() { _ = stream.Free() }()
+	if err := volume.Download(stream, 0, 0, 0); err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("start storage volume %s/%s download: %w", poolName, volumeName, err)
+	}
+	buffer := make([]byte, 128<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = stream.Abort()
+			return domain.StorageVolume{}, err
+		}
+		count, recvErr := stream.Recv(buffer)
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			_ = stream.Abort()
+			return domain.StorageVolume{}, fmt.Errorf("read storage volume %s/%s stream: %w", poolName, volumeName, recvErr)
+		}
+		if count == 0 {
+			continue
+		}
+		if _, writeErr := writer.Write(buffer[:count]); writeErr != nil {
+			_ = stream.Abort()
+			return domain.StorageVolume{}, fmt.Errorf("write storage volume %s/%s download: %w", poolName, volumeName, writeErr)
+		}
+	}
+	if err := stream.Finish(); err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("finish storage volume %s/%s download: %w", poolName, volumeName, err)
+	}
+	return item, nil
+}
+
 func (c *Client) CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

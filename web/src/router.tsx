@@ -52,6 +52,7 @@ const LazyAuditPage = lazyRouteComponent(() => import("@/features/audit/audit-pa
 const LazyUsersPage = lazyRouteComponent(() => import("@/features/users/users-page"), "UsersPage");
 const LazyAccountSecurityPage = lazyRouteComponent(() => import("@/features/account/account-security-page"), "AccountSecurityPage");
 const LazySettingsPage = lazyRouteComponent(() => import("@/features/settings/settings-page"), "SettingsPage");
+const LazyDataPlanePage = lazyRouteComponent(() => import("@/features/dataplane/dataplane-page"), "DataPlanePage");
 
 const rootRoute = createRootRoute({
   component: RootComponent,
@@ -94,6 +95,7 @@ const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit",
 const usersRoute = createRoute({ getParentRoute: () => appRoute, path: "/users", component: LazyUsersPage });
 const accountRoute = createRoute({ getParentRoute: () => appRoute, path: "/account", component: LazyAccountSecurityPage });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: "/settings", component: LazySettingsPage });
+const dataPlaneRoute = createRoute({ getParentRoute: () => appRoute, path: "/dataplane", component: LazyDataPlanePage });
 const vmDetailRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/vms/$uuid",
@@ -125,7 +127,7 @@ export const routeTree = rootRoute.addChildren([
   loginRoute,
   forgotPasswordRoute,
   vncConsoleRoute,
-  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmImportRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, accountRoute, settingsRoute]),
+  appRoute.addChildren([overviewRoute, vmsRoute, backupsRoute, vmCreateRoute, vmImportRoute, vmDetailRoute, templatesRoute, imagesRoute, storageRoute, networksRoute, hostRoute, tasksRoute, eventsRoute, auditRoute, usersRoute, accountRoute, settingsRoute, dataPlaneRoute]),
 ]);
 
 export const router = createRouter({

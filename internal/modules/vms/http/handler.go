@@ -434,6 +434,27 @@ func (h *Handler) UpdateNetworkQoS(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	httpx.JSON(w, stdhttp.StatusOK, vm)
 }
 
+func (h *Handler) UpdateNetworkModel(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMNetworkModelSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdateNetworkModel(r.Context(), vmsapp.NetworkModelCommand{
+		UUID: chi.URLParam(r, "uuid"), MAC: decodedPathParam(r, "mac"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
 func (h *Handler) ResizeDisk(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VMDiskResizeSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -753,6 +774,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Post("/vms/{uuid}/disks", h.AttachDisk)
 		mutating.Delete("/vms/{uuid}/disks/{target}", h.DetachDisk)
 		mutating.Post("/vms/{uuid}/network-interfaces", h.AttachNetwork)
+		mutating.Patch("/vms/{uuid}/network-interfaces/{mac}", h.UpdateNetworkModel)
 		mutating.Delete("/vms/{uuid}/network-interfaces/{mac}", h.DetachNetwork)
 		mutating.Patch("/vms/{uuid}/network-interfaces/{mac}/qos", h.UpdateNetworkQoS)
 		mutating.Post("/vms/{uuid}/actions/{action}", h.Action)

@@ -6,11 +6,13 @@ import (
 )
 
 const (
-	DataPlaneOperationBackup  = "vm.backup"
-	DataPlaneOperationMigrate = "vm.disk.migrate"
-	DataPlaneOperationImport  = "vm.import"
-	DataPlaneOperationConvert = "storage.volume.convert"
-	DataPlaneOperationFlatten = "storage.volume.flatten"
+	DataPlaneOperationBackup        = "vm.backup"
+	DataPlaneOperationBackupRestore = "vm.backup.restore"
+	DataPlaneOperationClone         = "vm.clone"
+	DataPlaneOperationMigrate       = "vm.disk.migrate"
+	DataPlaneOperationImport        = "vm.import"
+	DataPlaneOperationConvert       = "storage.volume.convert"
+	DataPlaneOperationFlatten       = "storage.volume.flatten"
 )
 
 const (
@@ -51,6 +53,16 @@ type DataPlaneOperation struct {
 	Error        string    `json:"error,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type DataPlaneOperationList struct {
+	Items []DataPlaneOperation `json:"items"`
+	Total int                  `json:"total"`
+}
+
+type DataPlaneOperationResult struct {
+	Operation DataPlaneOperation `json:"operation"`
+	Recovery  DataPlaneRecovery  `json:"recovery"`
 }
 
 // DataPlaneRecovery describes the outcome of reconciling one interrupted

@@ -156,6 +156,8 @@ func TestOpenAPIContractCoversGuestAgentResizeConfigurationAndQoS(t *testing.T) 
 		"GuestAgentDiagnostics", "GuestAgentServiceLog", "GuestAgentFilesystemResizeRequest",
 		"GuestAgentFilesystemResizeResult", "GuestAgentFilesystemResizeResponse", "VMBootRequest",
 		"VMCPURequest", "VMDiskQoSRequest", "VMNetworkQoSRequest", "StorageVolumeConvertRequest", "StorageVolumeFlattenRequest",
+		"VMNetworkModelRequest", "DatabaseRestoreStatus", "DataPlaneOperation", "DataPlaneOperationResult",
+		"GuestFilesystemSampleList", "CapacityForecastList",
 	} {
 		if _, ok := document.Components.Schemas[schema]; !ok {
 			t.Errorf("OpenAPI schema %s is missing", schema)
@@ -202,7 +204,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms/{uuid}/guest-agent/health", "/vms/{uuid}/guest-agent/diagnostics", "/vms/{uuid}/guest-agent/filesystem/grow",
 		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
-		"/storage/pools/{pool}/volumes/{volume}/convert",
+		"/storage/pools/{pool}/volumes/{volume}/convert", "/storage/pools/{pool}/volumes/{volume}/download",
 		"/storage/pools/{pool}/volumes/{volume}/flatten",
 		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
 		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
@@ -212,10 +214,11 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/events", "/events/stream", "/audit-events", "/audit-events/export",
 		"/users", "/users/{id}", "/users/me/password", "/users/{id}/password", "/users/{id}/sessions",
 		"/users/{id}/sessions/{sessionId}", "/settings", "/settings/audit-retention",
-		"/system/info", "/system/database-export",
+		"/system/info", "/system/database-export", "/system/database-restore",
+		"/dataplane/operations", "/dataplane/operations/{id}", "/dataplane/operations/{id}/recheck", "/dataplane/operations/{id}/unblock",
 		"/backups", "/backups/summary", "/backups/{id}", "/backups/{id}/verify", "/backups/{id}/restore",
 		"/backup-repositories", "/backup-repositories/{id}", "/backup-schedules", "/backup-schedules/{id}",
-		"/backup-schedules/{id}/run", "/metrics/history", "/alert-rules", "/alert-rules/{id}",
+		"/backup-schedules/{id}/run", "/metrics/history", "/metrics/guest-filesystems", "/metrics/capacity-forecast", "/alert-rules", "/alert-rules/{id}",
 	}
 	for _, path := range requiredPaths {
 		if _, exists := paths[path]; !exists {

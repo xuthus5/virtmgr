@@ -2,6 +2,7 @@ package libvirtbackend
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -39,6 +40,10 @@ func (c *Client) RecoverDataPlaneOperation(ctx context.Context, operation domain
 	switch operation.Kind {
 	case domain.DataPlaneOperationBackup:
 		return recoverBackupOperation(ctx, conn, operation)
+	case domain.DataPlaneOperationBackupRestore:
+		return recoverBackupRestore(ctx, conn, operation)
+	case domain.DataPlaneOperationClone:
+		return recoverCloneOperation(ctx, conn, operation)
 	case domain.DataPlaneOperationMigrate:
 		return recoverDiskMigration(ctx, conn, operation)
 	case domain.DataPlaneOperationImport:
@@ -48,6 +53,212 @@ func (c *Client) RecoverDataPlaneOperation(ctx context.Context, operation domain
 	default:
 		return recoveryNeedsAttention("不支持自动恢复该操作类型"), nil
 	}
+}
+
+type recoveryTargetVolume struct {
+	Pool string
+	Name string
+}
+
+func recoverCloneOperation(ctx context.Context, conn *libvirt.Connect, operation domain.DataPlaneOperation) (domain.DataPlaneRecovery, error) {
+	if strings.TrimSpace(operation.VMName) == "" {
+		return recoveryNeedsAttention("克隆恢复日志缺少目标虚拟机名称"), nil
+	}
+	exists, err := recoveryDomainExists(conn, operation.VMName)
+	if err != nil {
+		return domain.DataPlaneRecovery{}, err
+	}
+	if exists {
+		return recoveryCompleted("克隆目标虚拟机已定义，克隆结果已生效"), nil
+	}
+	if strings.TrimSpace(operation.VMUUID) == "" {
+		return recoveryNeedsAttention("克隆恢复日志缺少源虚拟机 UUID"), nil
+	}
+	source, err := conn.LookupDomainByUUIDString(operation.VMUUID)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_DOMAIN) {
+			return recoveryNeedsAttention("源虚拟机已不存在，无法推断克隆目标卷"), nil
+		}
+		return domain.DataPlaneRecovery{}, fmt.Errorf("lookup clone source domain during recovery: %w", err)
+	}
+	defer func() { _ = source.Free() }()
+	sourceXML, err := source.GetXMLDesc(libvirt.DOMAIN_XML_INACTIVE)
+	if err != nil {
+		return domain.DataPlaneRecovery{}, fmt.Errorf("read clone source XML during recovery: %w", err)
+	}
+	disks, err := cloneDisksFromDomainXML(sourceXML)
+	if err != nil {
+		return domain.DataPlaneRecovery{}, err
+	}
+	targets := make([]recoveryTargetVolume, 0, len(disks))
+	for index, disk := range disks {
+		target, err := recoveryCloneTarget(conn, operation, disk, index)
+		if err != nil {
+			return recoveryNeedsAttention(err.Error()), nil
+		}
+		targets = append(targets, target)
+	}
+	return cleanupRecoveryTargets(ctx, conn, targets, "未完成克隆的孤立磁盘已回收")
+}
+
+func recoveryCloneTarget(conn *libvirt.Connect, operation domain.DataPlaneOperation, disk cloneDisk, index int) (recoveryTargetVolume, error) {
+	sourceVolume, err := conn.LookupStorageVolByPath(disk.source)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
+			return recoveryTargetVolume{}, fmt.Errorf("克隆源磁盘 %s 已不在存储池中", disk.source)
+		}
+		return recoveryTargetVolume{}, fmt.Errorf("lookup clone source volume %s during recovery: %w", disk.source, err)
+	}
+	sourceName, nameErr := sourceVolume.GetName()
+	sourcePool, poolErr := sourceVolume.LookupPoolByVolume()
+	_ = sourceVolume.Free()
+	if nameErr != nil || poolErr != nil {
+		return recoveryTargetVolume{}, fmt.Errorf("inspect clone source volume during recovery: %w", errors.Join(nameErr, poolErr))
+	}
+	poolName, poolNameErr := sourcePool.GetName()
+	_ = sourcePool.Free()
+	if poolNameErr != nil {
+		return recoveryTargetVolume{}, fmt.Errorf("read clone source pool name during recovery: %w", poolNameErr)
+	}
+	format, err := cloneDiskFormat(disk.format, sourceName)
+	if err != nil {
+		return recoveryTargetVolume{}, err
+	}
+	targetPool := strings.TrimSpace(operation.TargetPool)
+	if targetPool == "" {
+		targetPool = poolName
+	}
+	return recoveryTargetVolume{Pool: targetPool, Name: cloneVolumeName(operation.VMName, index, sourceName, format)}, nil
+}
+
+func recoverBackupRestore(ctx context.Context, conn *libvirt.Connect, operation domain.DataPlaneOperation) (domain.DataPlaneRecovery, error) {
+	if strings.TrimSpace(operation.VMName) == "" || strings.TrimSpace(operation.TargetPool) == "" {
+		return recoveryNeedsAttention("备份恢复日志缺少目标虚拟机名称或目标存储池"), nil
+	}
+	exists, err := recoveryDomainExists(conn, operation.VMName)
+	if err != nil {
+		return domain.DataPlaneRecovery{}, err
+	}
+	if exists {
+		return recoveryCompleted("恢复出的虚拟机已定义，备份恢复结果已生效"), nil
+	}
+	if strings.TrimSpace(operation.SourcePool) == "" || strings.TrimSpace(operation.SourceVolume) == "" {
+		return recoveryNeedsAttention("备份恢复日志缺少备份清单位置"), nil
+	}
+	pool, err := conn.LookupStoragePoolByName(operation.SourcePool)
+	if err != nil {
+		if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
+			return recoveryNeedsAttention("备份存储池已不存在，无法读取恢复卷清单"), nil
+		}
+		return domain.DataPlaneRecovery{}, fmt.Errorf("lookup restore source pool during recovery: %w", err)
+	}
+	defer func() { _ = pool.Free() }()
+	manifestBytes, _, err := readBackupVolume(ctx, conn, pool, operation.SourceVolume, 8<<20)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return recoveryNeedsAttention("备份清单已不存在，无法推断恢复目标卷"), nil
+		}
+		return domain.DataPlaneRecovery{}, fmt.Errorf("read restore manifest during recovery: %w", err)
+	}
+	var manifest backupManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return recoveryNeedsAttention("备份清单无法解析，无法推断恢复目标卷"), nil
+	}
+	targets, err := backupRestoreRecoveryTargets(operation, manifest)
+	if err != nil {
+		return recoveryNeedsAttention(err.Error()), nil
+	}
+	return cleanupRecoveryTargets(ctx, conn, targets, "未完成备份恢复的孤立磁盘已回收")
+}
+
+func backupRestoreRecoveryTargets(operation domain.DataPlaneOperation, manifest backupManifest) ([]recoveryTargetVolume, error) {
+	targets := make([]recoveryTargetVolume, 0, len(manifest.Disks))
+	for index, disk := range manifest.Disks {
+		format, err := cloneDiskFormat(disk.Format, disk.BackupVolume)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, recoveryTargetVolume{
+			Pool: operation.TargetPool,
+			Name: cloneVolumeName(operation.VMName, index, disk.BackupVolume, format),
+		})
+	}
+	return targets, nil
+}
+
+func recoveryDomainExists(conn *libvirt.Connect, name string) (bool, error) {
+	dom, err := conn.LookupDomainByName(strings.TrimSpace(name))
+	if err == nil {
+		_ = dom.Free()
+		return true, nil
+	}
+	if errors.Is(err, libvirt.ERR_NO_DOMAIN) {
+		return false, nil
+	}
+	return false, fmt.Errorf("lookup recovery target domain %s: %w", name, err)
+}
+
+func cleanupRecoveryTargets(ctx context.Context, conn *libvirt.Connect, targets []recoveryTargetVolume, message string) (domain.DataPlaneRecovery, error) {
+	if len(targets) == 0 {
+		return recoveryNoop("没有需要回收的目标磁盘"), nil
+	}
+	cleaned := 0
+	references := make([]string, 0)
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return domain.DataPlaneRecovery{}, err
+		}
+		pool, err := conn.LookupStoragePoolByName(target.Pool)
+		if err != nil {
+			if errors.Is(err, libvirt.ERR_NO_STORAGE_POOL) {
+				continue
+			}
+			return domain.DataPlaneRecovery{}, fmt.Errorf("lookup recovery target pool %s: %w", target.Pool, err)
+		}
+		info, infoErr := pool.GetInfo()
+		if infoErr != nil {
+			_ = pool.Free()
+			return domain.DataPlaneRecovery{}, fmt.Errorf("read recovery target pool %s: %w", target.Pool, infoErr)
+		}
+		if info.State != libvirt.STORAGE_POOL_RUNNING {
+			_ = pool.Free()
+			return recoveryNeedsAttention("目标存储池未运行，无法确认恢复磁盘引用状态"), nil
+		}
+		volume, lookupErr := pool.LookupStorageVolByName(target.Name)
+		_ = pool.Free()
+		if errors.Is(lookupErr, libvirt.ERR_NO_STORAGE_VOL) {
+			continue
+		}
+		if lookupErr != nil {
+			return domain.DataPlaneRecovery{}, fmt.Errorf("lookup recovery target volume %s/%s: %w", target.Pool, target.Name, lookupErr)
+		}
+		path, pathErr := volume.GetPath()
+		_ = volume.Free()
+		if pathErr != nil {
+			return domain.DataPlaneRecovery{}, fmt.Errorf("read recovery target volume path %s/%s: %w", target.Pool, target.Name, pathErr)
+		}
+		refs, refErr := recoveryDomainsUsingVolume(conn, path, target.Name)
+		if refErr != nil {
+			return domain.DataPlaneRecovery{}, refErr
+		}
+		if len(refs) > 0 {
+			for _, ref := range refs {
+				references = append(references, target.Pool+"/"+target.Name+" -> "+ref.Name)
+			}
+			continue
+		}
+		if err := deleteRecoveryVolumeIfUnreferenced(ctx, conn, target.Pool, target.Name, path); err != nil {
+			return recoveryNeedsAttention(err.Error()), nil
+		}
+		cleaned++
+	}
+	if len(references) > 0 {
+		return recoveryNeedsAttention("恢复目标磁盘仍被虚拟机引用：" + strings.Join(references, ", ")), nil
+	}
+	if cleaned == 0 {
+		return recoveryNoop("未发现需要回收的恢复磁盘"), nil
+	}
+	return recoveryRolledBack(message), nil
 }
 
 func recoverBackupOperation(ctx context.Context, conn *libvirt.Connect, operation domain.DataPlaneOperation) (domain.DataPlaneRecovery, error) {

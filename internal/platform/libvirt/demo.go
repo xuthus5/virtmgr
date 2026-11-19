@@ -295,6 +295,7 @@ func (d *DemoBackend) DefineVMXML(_ context.Context, uuid, xmlText string) (doma
 	vm.AgentConfigured = details.GuestAgent
 	vm.Firmware = details.Firmware
 	vm.SecureBoot = details.SecureBoot
+	vm.Interfaces = details.Interfaces
 	d.vms[uuid] = vm
 	d.xmlConfig[uuid] = xmlText
 	return domain.VMXML{UUID: vm.UUID, Name: vm.Name, Format: domain.VMXMLFormatConfig, XML: xmlText}, nil
@@ -1394,6 +1395,52 @@ func (d *DemoBackend) ListStorageVolumes(_ context.Context, poolName string) ([]
 		return nil, domain.ErrUnavailable
 	}
 	return append([]domain.StorageVolume(nil), d.volumes[poolName]...), nil
+}
+
+func (d *DemoBackend) DownloadStorageVolume(_ context.Context, poolName, volumeName string, writer io.Writer) (domain.StorageVolume, error) {
+	if writer == nil {
+		return domain.StorageVolume{}, domain.ErrInvalidInput
+	}
+	d.mu.RLock()
+	pool, ok := d.pools[poolName]
+	if !ok {
+		d.mu.RUnlock()
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	if pool.State != domain.StoragePoolStateActive {
+		d.mu.RUnlock()
+		return domain.StorageVolume{}, domain.ErrUnavailable
+	}
+	var target domain.StorageVolume
+	found := false
+	for _, volume := range d.volumes[poolName] {
+		if volume.Name == volumeName {
+			target = volume
+			found = true
+			break
+		}
+	}
+	if !found {
+		d.mu.RUnlock()
+		return domain.StorageVolume{}, domain.ErrNotFound
+	}
+	for _, vm := range d.vms {
+		for _, disk := range vm.Disks {
+			if disk.Source == target.Path {
+				d.mu.RUnlock()
+				return domain.StorageVolume{}, fmt.Errorf("%w: attached to %s", domain.ErrVolumeInUse, vm.Name)
+			}
+		}
+	}
+	data := append([]byte(nil), d.volumeData[poolName+"/"+volumeName]...)
+	d.mu.RUnlock()
+	if len(data) == 0 {
+		data = []byte("VirtMgr demo storage volume: " + poolName + "/" + volumeName + "\n")
+	}
+	if _, err := writer.Write(data); err != nil {
+		return domain.StorageVolume{}, err
+	}
+	return target, nil
 }
 
 func (d *DemoBackend) CreateStorageVolume(_ context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error) {

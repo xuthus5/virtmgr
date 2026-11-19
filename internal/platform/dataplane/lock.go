@@ -111,6 +111,38 @@ func (m *LockManager) Block(key, reason string) {
 	m.holders[key] = lockHolder{reason: reason, blocked: true}
 }
 
+// Blocked reports whether the key is held by a crash-recovery guard rather
+// than an active lease.
+func (m *LockManager) Blocked(key string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	holder, exists := m.holders[strings.TrimSpace(key)]
+	return exists && holder.blocked
+}
+
+// Unblock removes a crash-recovery guard. Active leases are never released by
+// this method, even if they target the same resource.
+func (m *LockManager) Unblock(key string) bool {
+	if m == nil {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	holder, exists := m.holders[key]
+	if !exists || !holder.blocked {
+		return false
+	}
+	delete(m.holders, key)
+	return true
+}
+
 func (l *Lease) SetTaskID(id string) {
 	if l == nil || l.manager == nil {
 		return

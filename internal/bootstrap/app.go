@@ -24,6 +24,7 @@ import (
 	configversionsapp "virtmgr/internal/modules/configversions/app"
 	configversionshttp "virtmgr/internal/modules/configversions/http"
 	dataplaneapp "virtmgr/internal/modules/dataplane/app"
+	dataplanehttp "virtmgr/internal/modules/dataplane/http"
 	eventsapp "virtmgr/internal/modules/events/app"
 	eventshttp "virtmgr/internal/modules/events/http"
 	guestagentapp "virtmgr/internal/modules/guestagent/app"
@@ -89,6 +90,10 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+	restoreStatus, err := sqlite.ApplyPendingDatabaseRestore(ctx, cfg.DatabasePath)
+	if err != nil {
+		return nil, fmt.Errorf("apply pending database restore: %w", err)
+	}
 	db, err := sqlite.Open(cfg.DatabasePath)
 	if err != nil {
 		return nil, err
@@ -98,6 +103,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 	store := sqlite.NewStore(db)
+	if restoreStatus.State == domain.DatabaseRestoreApplied {
+		_ = store.RecordAudit(ctx, domain.AuditEvent{
+			OccurredAt: time.Now().UTC(), Actor: "system", Role: domain.RoleAdmin,
+			Action: "system.database.restore.apply", TargetKind: "system", TargetID: "database",
+			Result: "success", Detail: map[string]any{
+				"filename": restoreStatus.Filename, "sizeBytes": restoreStatus.SizeBytes,
+				"schemaVersion": restoreStatus.SchemaVersion, "message": restoreStatus.Message,
+			},
+		})
+	}
 	if err := store.DeleteExpiredSessions(ctx, time.Now()); err != nil {
 		logger.Warn("expired_sessions_cleanup_failed", "error", err)
 	}
@@ -174,6 +189,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			"operations", recoverySummary.Operations, "recovered", recoverySummary.Recovered,
 			"needs_attention", recoverySummary.NeedsAttention, "failed", recoverySummary.Failed)
 	}
+	dataplaneHandler := dataplanehttp.New(recoveryService)
 
 	apiTokenService := apitokensapp.New(store, store)
 	apiTokensHandler := apitokenshttp.New(apiTokenService)
@@ -225,7 +241,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	auditHistoryHandler := audithistoryhttp.New(audithistoryapp.New(store, audithistoryapp.WithAuditRecorder(store)))
 	usersHandler := usershttp.New(usersapp.New(store, store, cfg.ReadOnly, usersapp.WithReadOnlyMode(mode)))
 	settingsHandler := settingshttp.New(settingsapp.New(mode, store, settingsapp.WithAuditRetention(auditRetention)))
-	systemHandler := systemhttp.New(systemapp.New(store, store))
+	systemHandler := systemhttp.New(systemapp.New(store, store, systemapp.WithDatabasePath(cfg.DatabasePath)))
 	handler := buildRouter(routerDependencies{
 		logger:           logger,
 		cfg:              cfg,
@@ -251,6 +267,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		monitoring:       monitoringHandler,
 		backups:          backupsHandler,
 		configVersions:   configVersionsHandler,
+		dataplane:        dataplaneHandler,
 		staticFS:         web.FS(),
 	})
 	server := &stdhttp.Server{
@@ -478,6 +495,7 @@ type routerDependencies struct {
 	monitoring       *monitoringhttp.Handler
 	backups          *backupshttp.Handler
 	configVersions   *configversionshttp.Handler
+	dataplane        *dataplanehttp.Handler
 	staticFS         fs.FS
 }
 
@@ -532,6 +550,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 			deps.monitoring.Mount(protected, deps.auth.RequireCSRF)
 			deps.backups.Mount(protected, deps.auth.RequireCSRF)
 			deps.configVersions.Mount(protected, deps.auth.RequireCSRF)
+			deps.dataplane.Mount(protected, deps.auth.RequireCSRF)
 		})
 	})
 	r.NotFound(spaHandler(deps.staticFS))

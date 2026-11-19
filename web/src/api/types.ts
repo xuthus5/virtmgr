@@ -610,6 +610,10 @@ export type VMNetworkQoSInput = {
   outboundBurstBytes: number;
 };
 
+export type VMNetworkModelInput = {
+  model: VMNICModel;
+};
+
 export type VMMetadata = {
   vmUuid: string;
   tags: string[];
@@ -1092,6 +1096,8 @@ export type MetricSample = {
   memoryTotalBytes: number;
   diskReadBytesPerSecond: number;
   diskWriteBytesPerSecond: number;
+  diskReadIops: number;
+  diskWriteIops: number;
   networkRxBytesPerSecond: number;
   networkTxBytesPerSecond: number;
 };
@@ -1107,6 +1113,40 @@ export type MetricHistoryFilters = {
   from?: string;
   to?: string;
   limit?: number;
+};
+
+export type GuestFilesystemSample = {
+  id: number;
+  vmUuid: string;
+  vmName: string;
+  mountPoint: string;
+  usedBytes: number;
+  totalBytes: number;
+  sampledAt: string;
+};
+
+export type GuestFilesystemSampleList = {
+  items: GuestFilesystemSample[];
+  total: number;
+};
+
+export type CapacityForecast = {
+  scope: "storage_pool";
+  targetId: string;
+  usedBytes: number;
+  totalBytes: number;
+  usagePercent: number;
+  growthBytesPerDay: number;
+  daysToFull?: number;
+  forecastAt?: string;
+  sampleCount: number;
+  windowDays: number;
+};
+
+export type CapacityForecastList = {
+  items: CapacityForecast[];
+  total: number;
+  generatedAt: string;
 };
 
 export type AlertMetric = "host_cpu_percent" | "host_memory_percent" | "vm_cpu_percent" | "vm_memory_percent" | "storage_pool_percent" | "guest_filesystem_percent";
@@ -1142,6 +1182,53 @@ export type SystemInfo = {
     commit: string;
     date: string;
   };
+};
+
+export type DatabaseRestoreStatus = {
+  state: "none" | "pending_restart" | "applied" | "failed";
+  filename?: string;
+  sizeBytes?: number;
+  schemaVersion?: number;
+  uploadedAt?: string;
+  appliedAt?: string;
+  message?: string;
+};
+
+export type DataPlaneOperation = {
+  id: string;
+  kind: string;
+  vmUuid?: string;
+  vmName?: string;
+  taskId?: string;
+  backupId?: string;
+  phase: string;
+  online: boolean;
+  sourcePool?: string;
+  sourceVolume?: string;
+  sourcePath?: string;
+  targetPool?: string;
+  targetName?: string;
+  targetPath?: string;
+  status: "running" | "succeeded" | "failed" | "recovered" | "needs_attention";
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DataPlaneOperationList = {
+  items: DataPlaneOperation[];
+  total: number;
+};
+
+export type DataPlaneRecovery = {
+  status: "completed" | "rolled_back" | "cleaned" | "noop" | "needs_attention";
+  message: string;
+  recoveredAt?: string;
+};
+
+export type DataPlaneOperationResult = {
+  operation: DataPlaneOperation;
+  recovery: DataPlaneRecovery;
 };
 
 export type HostDevice = {

@@ -1311,6 +1311,14 @@ func TestBootCPUAndQoSRoutes(t *testing.T) {
 	if recorder.Code != stdhttp.StatusOK || repository.networkQoSMAC != "52:54:00:01:12:99" {
 		t.Fatalf("encoded network qos status = %d mac=%q body=%s", recorder.Code, repository.networkQoSMAC, recorder.Body.String())
 	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/network-interfaces/52%3A54%3A00%3A01%3A12%3A99", strings.NewReader(`{"model":"e1000"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || !strings.Contains(repository.definedXML, `<model type="e1000">`) {
+		t.Fatalf("network model status = %d xml=%s body=%s", recorder.Code, repository.definedXML, recorder.Body.String())
+	}
 }
 
 func TestSnapshotRoutesRequireSessionCSRFAndMapRiskyRevert(t *testing.T) {

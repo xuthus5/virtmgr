@@ -1,4 +1,4 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkQoSInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, CapacityForecastList, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DataPlaneOperation, DataPlaneOperationList, DataPlaneOperationResult, DatabaseRestoreStatus, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, GuestFilesystemSampleList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkModelInput, VMNetworkQoSInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -115,6 +115,9 @@ export const api = {
   ),
   deleteStoragePool: (name: string) => request<void>(`/api/v1/storage/pools/${encodeURIComponent(name)}`, { method: "DELETE" }),
   storageVolumes: (pool: string) => request<StorageVolumeList>(`/api/v1/storage/pools/${encodeURIComponent(pool)}/volumes`),
+  downloadStorageVolume: (pool: string, name: string) => download(
+    `/api/v1/storage/pools/${encodeURIComponent(pool)}/volumes/${encodeURIComponent(name)}/download`,
+  ),
   createStorageVolume: (pool: string, input: StorageVolumeCreateInput) => request<StorageVolume>(
     `/api/v1/storage/pools/${encodeURIComponent(pool)}/volumes`,
     { method: "POST", body: JSON.stringify(input) },
@@ -407,6 +410,10 @@ export const api = {
     `/api/v1/vms/${encodeURIComponent(uuid)}/network-interfaces/${encodeURIComponent(mac)}/qos`,
     { method: "PATCH", body: JSON.stringify(input) },
   ),
+  updateVMNetworkModel: (uuid: string, mac: string, input: VMNetworkModelInput) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/network-interfaces/${encodeURIComponent(mac)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  ),
   resizeVMDisk: (uuid: string, target: string, input: VMDiskResizeInput) => request<VM>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/disks/${encodeURIComponent(target)}`,
     { method: "PATCH", body: JSON.stringify(input) },
@@ -476,6 +483,18 @@ export const api = {
     if (filters.limit) params.set("limit", String(filters.limit));
     return request<MetricSampleList>(`/api/v1/metrics/history?${params.toString()}`);
   },
+  guestFilesystemHistory: (filters: { vmUuid: string; from?: string; to?: string; limit?: number }) => {
+    const params = new URLSearchParams({ vmUuid: filters.vmUuid });
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.limit) params.set("limit", String(filters.limit));
+    return request<GuestFilesystemSampleList>(`/api/v1/metrics/guest-filesystems?${params.toString()}`);
+  },
+  capacityForecast: (targetId = "") => {
+    const params = new URLSearchParams({ scope: "storage_pool" });
+    if (targetId) params.set("targetId", targetId);
+    return request<CapacityForecastList>(`/api/v1/metrics/capacity-forecast?${params.toString()}`);
+  },
   alertRules: () => request<AlertRuleList>("/api/v1/alert-rules"),
   createAlertRule: (input: AlertRuleInput) => request<AlertRule>("/api/v1/alert-rules", {
     method: "POST",
@@ -487,7 +506,18 @@ export const api = {
   }),
   deleteAlertRule: (id: number) => request<void>(`/api/v1/alert-rules/${id}`, { method: "DELETE" }),
   systemInfo: () => request<SystemInfo>("/api/v1/system/info"),
+  dataPlaneOperations: (limit = 200) => request<DataPlaneOperationList>(`/api/v1/dataplane/operations?limit=${limit}`),
+  dataPlaneOperation: (id: string) => request<DataPlaneOperation>(`/api/v1/dataplane/operations/${encodeURIComponent(id)}`),
+  recheckDataPlaneOperation: (id: string) => request<DataPlaneOperationResult>(`/api/v1/dataplane/operations/${encodeURIComponent(id)}/recheck`, { method: "POST" }),
+  unblockDataPlaneOperation: (id: string) => request<DataPlaneOperationResult>(`/api/v1/dataplane/operations/${encodeURIComponent(id)}/unblock`, { method: "POST" }),
   exportDatabase: () => download("/api/v1/system/database-export", { method: "POST" }),
+  databaseRestoreStatus: () => request<DatabaseRestoreStatus>("/api/v1/system/database-restore"),
+  stageDatabaseRestore: (file: File) => request<DatabaseRestoreStatus>(`/api/v1/system/database-restore?filename=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.sqlite3" },
+    body: file,
+  }),
+  cancelDatabaseRestore: () => request<DatabaseRestoreStatus>("/api/v1/system/database-restore", { method: "DELETE" }),
   auditEvents: (filters: AuditEventFilters = {}) => {
     const params = auditQueryParams(filters, true);
     const suffix = params.toString();

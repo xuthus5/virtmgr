@@ -1,7 +1,10 @@
 package storagehttp
 
 import (
+	"mime"
 	stdhttp "net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -181,6 +184,57 @@ func (h *Handler) DeleteVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
+func (h *Handler) DownloadVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	name := filepath.Base(strings.TrimSpace(chi.URLParam(r, "volume")))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	stream := &downloadWriter{
+		ResponseWriter: w,
+		contentType:    "application/octet-stream",
+		disposition:    mime.FormatMediaType("attachment", map[string]string{"filename": name}),
+	}
+	_, err := h.service.DownloadVolume(r.Context(), storageapp.DownloadVolumeCommand{
+		Pool: chi.URLParam(r, "pool"), Name: name, Writer: stream, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		if !stream.started {
+			httpx.Error(w, r, err)
+		}
+		return
+	}
+	stream.start()
+}
+
+type downloadWriter struct {
+	stdhttp.ResponseWriter
+	started     bool
+	contentType string
+	disposition string
+}
+
+func (w *downloadWriter) start() {
+	if w.started {
+		return
+	}
+	w.started = true
+	w.Header().Set("Content-Type", w.contentType)
+	w.Header().Set("Content-Disposition", w.disposition)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(stdhttp.StatusOK)
+}
+
+func (w *downloadWriter) Write(p []byte) (int, error) {
+	w.start()
+	return w.ResponseWriter.Write(p)
+}
+
 func (h *Handler) ConvertVolume(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.StorageVolumeConvertSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -227,6 +281,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/storage/pools", h.ListPools)
 	r.Get("/storage/pools/{pool}", h.GetPool)
 	r.Get("/storage/pools/{pool}/volumes", h.ListVolumes)
+	r.Get("/storage/pools/{pool}/volumes/{volume}/download", h.DownloadVolume)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
 		mutating.Post("/storage/pools", h.CreatePool)

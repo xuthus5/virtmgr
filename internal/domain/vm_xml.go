@@ -680,6 +680,35 @@ func SetVMNetworkQoSXML(text, mac string, spec VMNetworkQoSSpec) (VMNetworkQoSUp
 	return VMNetworkQoSUpdate{XML: documentXML, DeviceXML: deviceXML}, nil
 }
 
+func SetVMNetworkModelXML(text, mac string, model VMNICModel) (string, error) {
+	mac = strings.TrimSpace(mac)
+	normalized, ok := NormalizeVMNICModel(string(model))
+	if mac == "" || !ok {
+		return "", fmt.Errorf("%w: network interface MAC and model are required", ErrInvalidInput)
+	}
+	root, err := parseVMXMLTree(text)
+	if err != nil {
+		return "", err
+	}
+	domainNode := firstVMXMLChild(root, "domain")
+	devicesNode := firstVMXMLChild(domainNode, "devices")
+	if domainNode == nil || devicesNode == nil {
+		return "", fmt.Errorf("%w: domain XML has no devices element", ErrInvalidInput)
+	}
+	var target *vmXMLNode
+	for _, device := range childrenByName(devicesNode.Children, "interface") {
+		if strings.EqualFold(vmXMLChildText(device, "mac", "address"), mac) {
+			target = device
+			break
+		}
+	}
+	if target == nil {
+		return "", fmt.Errorf("%w: network interface %s was not found", ErrNotFound, mac)
+	}
+	setOrReplaceVMXMLChildAttribute(target, "model", "type", string(normalized))
+	return encodeVMXMLDocument(root)
+}
+
 func qosBandwidthNode(name string, average, peak, burst uint64) *vmXMLNode {
 	attributes := make([]xml.Attr, 0, 3)
 	if average > 0 {

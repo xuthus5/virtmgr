@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,21 @@ func TestSetVMNetworkQoSXMLUpdatesAndClearsBandwidth(t *testing.T) {
 	}
 	if strings.Contains(cleared.XML, "<bandwidth>") {
 		t.Fatalf("bandwidth was not removed:\n%s", cleared.XML)
+	}
+}
+
+func TestSetVMNetworkModelXMLReplacesModel(t *testing.T) {
+	updated, err := SetVMNetworkModelXML(configurationDomainXML, "52:54:00:01:12:99", VMNICModelE1000)
+	if err != nil {
+		t.Fatalf("SetVMNetworkModelXML() error = %v", err)
+	}
+	if !strings.Contains(updated, `<model type="e1000"></model>`) || strings.Contains(updated, `<model type="virtio">`) {
+		t.Fatalf("network model was not replaced:\n%s", updated)
+	}
+	if _, err := SetVMNetworkModelXML(configurationDomainXML, "52:54:00:01:12:00", VMNICModelE1000); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing interface error = %v", err)
+	}
+	if _, err := SetVMNetworkModelXML(configurationDomainXML, "52:54:00:01:12:99", VMNICModel("rtl8139")); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid model error = %v", err)
 	}
 }

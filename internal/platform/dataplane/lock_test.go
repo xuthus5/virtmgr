@@ -78,4 +78,19 @@ func TestLockManagerReleasesAllKeysAndHonorsBlock(t *testing.T) {
 	if strings.Contains(err.Error(), "正在执行") || !strings.Contains(err.Error(), "需要人工处理") {
 		t.Fatalf("blocked key error message = %q", err)
 	}
+	if !manager.Blocked(domain.VMLockKey("vm-2")) {
+		t.Fatal("Blocked() = false for recovery guard")
+	}
+	if !manager.Unblock(domain.VMLockKey("vm-2")) || manager.Blocked(domain.VMLockKey("vm-2")) {
+		t.Fatal("Unblock() did not clear recovery guard")
+	}
+
+	active, err := manager.Acquire(domain.VMLockKey("vm-3"), "备份")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.Unblock(domain.VMLockKey("vm-3")) {
+		t.Fatal("Unblock() released an active lease")
+	}
+	active.Release()
 }

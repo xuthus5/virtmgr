@@ -13,10 +13,12 @@ import (
 )
 
 type alertRepository struct {
-	mu      sync.Mutex
-	rules   []domain.AlertRule
-	samples []domain.MetricSample
-	audits  []domain.AuditEvent
+	mu               sync.Mutex
+	rules            []domain.AlertRule
+	samples          []domain.MetricSample
+	guestFilesystems []domain.GuestFilesystemSample
+	capacitySamples  []domain.CapacitySample
+	audits           []domain.AuditEvent
 }
 
 func (f *alertRepository) ListAlertRules(context.Context) ([]domain.AlertRule, error) {
@@ -83,6 +85,52 @@ func (f *alertRepository) DeleteMetricSamplesBefore(context.Context, time.Time) 
 	return 0, nil
 }
 
+func (f *alertRepository) InsertGuestFilesystemSample(_ context.Context, sample domain.GuestFilesystemSample) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.guestFilesystems = append(f.guestFilesystems, sample)
+	return nil
+}
+
+func (f *alertRepository) ListGuestFilesystemSamples(_ context.Context, vmUUID string, from, to time.Time, _ int) ([]domain.GuestFilesystemSample, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	items := make([]domain.GuestFilesystemSample, 0)
+	for _, sample := range f.guestFilesystems {
+		if sample.VMUUID == vmUUID && !sample.SampledAt.Before(from) && !sample.SampledAt.After(to) {
+			items = append(items, sample)
+		}
+	}
+	return items, nil
+}
+
+func (f *alertRepository) DeleteGuestFilesystemSamplesBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (f *alertRepository) InsertCapacitySample(_ context.Context, sample domain.CapacitySample) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.capacitySamples = append(f.capacitySamples, sample)
+	return nil
+}
+
+func (f *alertRepository) ListCapacitySamples(_ context.Context, scope, targetID string, from, to time.Time, _ int) ([]domain.CapacitySample, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	items := make([]domain.CapacitySample, 0)
+	for _, sample := range f.capacitySamples {
+		if sample.Scope == scope && (targetID == "" || sample.TargetID == targetID) && !sample.SampledAt.Before(from) && !sample.SampledAt.After(to) {
+			items = append(items, sample)
+		}
+	}
+	return items, nil
+}
+
+func (f *alertRepository) DeleteCapacitySamplesBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
 func (f *alertRepository) RecordAudit(_ context.Context, event domain.AuditEvent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -92,26 +140,39 @@ func (f *alertRepository) RecordAudit(_ context.Context, event domain.AuditEvent
 
 type alertMetrics struct {
 	host domain.HostMetrics
+	vm   domain.VMMetrics
 }
 
 func (f alertMetrics) HostNamed(context.Context, string) (domain.HostMetrics, error) {
 	return f.host, nil
 }
 
-func (alertMetrics) VM(context.Context, string) (domain.VMMetrics, error) {
-	return domain.VMMetrics{}, nil
+func (f alertMetrics) VM(context.Context, string) (domain.VMMetrics, error) {
+	return f.vm, nil
 }
 
-type alertHosts struct{ pools []domain.StoragePool }
+type alertHosts struct {
+	pools []domain.StoragePool
+	vms   []domain.VM
+}
 
 func (alertHosts) Host(context.Context) (domain.Host, error) {
 	return domain.Host{Name: "host-a"}, nil
 }
 
-func (alertHosts) ListVMs(context.Context) ([]domain.VM, error) { return nil, nil }
+func (h alertHosts) ListVMs(context.Context) ([]domain.VM, error) { return h.vms, nil }
 
 func (h alertHosts) ListStoragePools(context.Context) ([]domain.StoragePool, error) {
 	return h.pools, nil
+}
+
+type alertGuestAgent struct{}
+
+func (alertGuestAgent) GetGuestAgentInfo(context.Context, string, bool) (domain.GuestAgentInfo, error) {
+	return domain.GuestAgentInfo{Connected: true, Filesystems: []domain.GuestAgentFilesystem{
+		{MountPoint: "/", UsedBytes: 40, TotalBytes: 100},
+		{MountPoint: "/var", UsedBytes: 80, TotalBytes: 100},
+	}}, nil
 }
 
 func TestStoragePoolAlertUsesMostUtilizedActivePool(t *testing.T) {
@@ -195,5 +256,58 @@ func TestAlertRuleTransitionsAndWebhook(t *testing.T) {
 	}
 	if !firing || !recovery {
 		t.Fatalf("alert audit actions = %+v", repository.audits)
+	}
+}
+
+func TestSampleAndEvaluatePersistsIOPSGuestFilesystemsAndCapacity(t *testing.T) {
+	now := time.Date(2026, 11, 19, 8, 0, 0, 0, time.UTC)
+	repository := &alertRepository{}
+	metrics := alertMetrics{
+		host: domain.HostMetrics{ResourceMetrics: domain.ResourceMetrics{CPUPercent: 10}},
+		vm: domain.VMMetrics{UUID: "vm-a", ResourceMetrics: domain.ResourceMetrics{
+			DiskReadOperationsPerSecond: 120, DiskWriteOperationsPerSecond: 80,
+		}},
+	}
+	hosts := alertHosts{
+		vms:   []domain.VM{{UUID: "vm-a", Name: "app-01", State: domain.VMStateRunning}},
+		pools: []domain.StoragePool{{Name: "default", State: domain.StoragePoolStateActive, CapacityBytes: 1000, AllocationBytes: 400}},
+	}
+	service := New(repository, metrics, hosts, repository, WithClock(func() time.Time { return now }), WithGuestAgentSource(alertGuestAgent{}))
+	service.sampleAndEvaluate(context.Background())
+
+	if len(repository.samples) != 2 || repository.samples[1].DiskReadIOPS != 120 || repository.samples[1].DiskWriteIOPS != 80 {
+		t.Fatalf("metric samples = %+v", repository.samples)
+	}
+	if len(repository.guestFilesystems) != 2 || repository.guestFilesystems[0].VMName != "app-01" {
+		t.Fatalf("guest filesystem samples = %+v", repository.guestFilesystems)
+	}
+	if len(repository.capacitySamples) != 1 || repository.capacitySamples[0].TargetID != "default" || repository.capacitySamples[0].UsedBytes != 400 {
+		t.Fatalf("capacity samples = %+v", repository.capacitySamples)
+	}
+}
+
+func TestCapacityForecastUsesLinearGrowth(t *testing.T) {
+	now := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	const gib = uint64(1 << 30)
+	repository := &alertRepository{capacitySamples: []domain.CapacitySample{
+		{Scope: "storage_pool", TargetID: "data", UsedBytes: 2 * gib, TotalBytes: 10 * gib, SampledAt: now.Add(-72 * time.Hour)},
+		{Scope: "storage_pool", TargetID: "data", UsedBytes: 3 * gib, TotalBytes: 10 * gib, SampledAt: now.Add(-48 * time.Hour)},
+		{Scope: "storage_pool", TargetID: "data", UsedBytes: 4 * gib, TotalBytes: 10 * gib, SampledAt: now.Add(-24 * time.Hour)},
+		{Scope: "storage_pool", TargetID: "data", UsedBytes: 5 * gib, TotalBytes: 10 * gib, SampledAt: now},
+	}}
+	service := New(repository, alertMetrics{}, alertHosts{}, repository, WithClock(func() time.Time { return now }))
+	result, err := service.CapacityForecast(context.Background(), CapacityForecastQuery{Scope: "storage_pool"})
+	if err != nil {
+		t.Fatalf("CapacityForecast() error = %v", err)
+	}
+	if result.Total != 1 || result.Items[0].UsagePercent != 50 {
+		t.Fatalf("forecast = %+v", result)
+	}
+	item := result.Items[0]
+	if item.GrowthBytesPerDay < float64(gib)-1 || item.GrowthBytesPerDay > float64(gib)+1 {
+		t.Fatalf("growth = %v", item.GrowthBytesPerDay)
+	}
+	if item.DaysToFull == nil || *item.DaysToFull < 4.99 || *item.DaysToFull > 5.01 {
+		t.Fatalf("days to full = %v", item.DaysToFull)
 	}
 }

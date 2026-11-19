@@ -11,6 +11,7 @@ import (
 
 type fakeStore struct {
 	pending  []domain.DataPlaneOperation
+	items    []domain.DataPlaneOperation
 	finished map[string]string
 	messages map[string]string
 	tasks    map[string]string
@@ -20,6 +21,29 @@ func (f *fakeStore) ListPendingDataPlaneOperations(context.Context) ([]domain.Da
 	return append([]domain.DataPlaneOperation(nil), f.pending...), nil
 }
 
+func (f *fakeStore) ListDataPlaneOperations(context.Context, int) ([]domain.DataPlaneOperation, error) {
+	return append([]domain.DataPlaneOperation(nil), f.items...), nil
+}
+
+func (f *fakeStore) ListUnresolvedDataPlaneOperations(context.Context) ([]domain.DataPlaneOperation, error) {
+	items := make([]domain.DataPlaneOperation, 0)
+	for _, item := range f.items {
+		if item.Status == domain.DataPlaneStatusNeedsAttention || item.Status == domain.DataPlaneStatusFailed {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (f *fakeStore) GetDataPlaneOperation(_ context.Context, id string) (domain.DataPlaneOperation, error) {
+	for _, item := range append(append([]domain.DataPlaneOperation(nil), f.pending...), f.items...) {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return domain.DataPlaneOperation{}, domain.ErrNotFound
+}
+
 func (f *fakeStore) FinishDataPlaneOperation(_ context.Context, id, status, message string, _ time.Time) error {
 	if f.finished == nil {
 		f.finished = make(map[string]string)
@@ -27,6 +51,22 @@ func (f *fakeStore) FinishDataPlaneOperation(_ context.Context, id, status, mess
 	}
 	f.finished[id] = status
 	f.messages[id] = message
+	return nil
+}
+
+func (f *fakeStore) ResolveDataPlaneOperation(_ context.Context, id, status, message string, _ time.Time) error {
+	if f.finished == nil {
+		f.finished = make(map[string]string)
+		f.messages = make(map[string]string)
+	}
+	f.finished[id] = status
+	f.messages[id] = message
+	for index := range f.items {
+		if f.items[index].ID == id {
+			f.items[index].Status = status
+			f.items[index].Error = message
+		}
+	}
 	return nil
 }
 
@@ -79,6 +119,23 @@ func (f *fakeLocker) Block(key, reason string) {
 		f.blocked = make(map[string]string)
 	}
 	f.blocked[key] = reason
+}
+
+func (f *fakeLocker) Blocked(key string) bool {
+	_, ok := f.blocked[key]
+	return ok
+}
+
+func (f *fakeLocker) Unblock(key string) bool {
+	if _, ok := f.blocked[key]; !ok {
+		return false
+	}
+	delete(f.blocked, key)
+	return true
+}
+
+func adminMutation() MutationContext {
+	return MutationContext{Session: domain.Session{User: domain.User{Username: "admin", Role: domain.RoleAdmin}}, RequestID: "req-1", SourceIP: "127.0.0.1"}
 }
 
 func TestRecoverCompletesInterruptedBackup(t *testing.T) {
@@ -184,5 +241,34 @@ func TestRecoverFailureContinuesAndRecordsAudit(t *testing.T) {
 	}
 	if len(audit.events) != 2 || audit.events[0].Result != "failure" || audit.events[1].Result != "success" {
 		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestUnblockRechecksAndOnlyClearsSafeOperation(t *testing.T) {
+	operation := domain.DataPlaneOperation{
+		ID: "op-open", Kind: domain.DataPlaneOperationImport, VMName: "imported",
+		TargetPool: "default", TargetName: "imported.qcow2",
+		Status: domain.DataPlaneStatusNeedsAttention, Error: "目标卷被占用",
+	}
+	store := &fakeStore{items: []domain.DataPlaneOperation{operation}}
+	backend := fakeRecoveryBackend{results: map[string]domain.DataPlaneRecovery{
+		"op-open": {Status: domain.DataPlaneRecoveryNeedsAttention, Message: "仍被虚拟机引用"},
+	}}
+	locker := &fakeLocker{blocked: map[string]string{domain.VMNameLockKey("imported"): "目标卷被占用"}}
+	service := New(store, &fakeBackupRepository{items: map[string]domain.Backup{}}, backend, &fakeAudit{}, locker)
+	if _, err := service.Unblock(context.Background(), OperationCommand{ID: "op-open", Request: adminMutation()}); !errors.Is(err, domain.ErrOperationConflict) {
+		t.Fatalf("Unblock() error = %v, want ErrOperationConflict", err)
+	}
+	if !locker.Blocked(domain.VMNameLockKey("imported")) {
+		t.Fatal("unsafe recheck removed the recovery guard")
+	}
+
+	backend.results["op-open"] = domain.DataPlaneRecovery{Status: domain.DataPlaneRecoveryRolledBack, Message: "孤儿卷已回收"}
+	result, err := service.Unblock(context.Background(), OperationCommand{ID: "op-open", Request: adminMutation()})
+	if err != nil {
+		t.Fatalf("Unblock() after safe recheck error = %v", err)
+	}
+	if result.Operation.Status != domain.DataPlaneStatusRecovered || locker.Blocked(domain.VMNameLockKey("imported")) {
+		t.Fatalf("result=%+v blocked=%+v", result, locker.blocked)
 	}
 }

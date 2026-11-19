@@ -37,6 +37,8 @@ type handlerRepository struct {
 	uploadBytes         []byte
 	deletedPool         string
 	deletedName         string
+	downloadBytes       []byte
+	downloadErr         error
 }
 
 type convertHandlerRepository struct {
@@ -126,6 +128,16 @@ func (f *handlerRepository) DeleteStorageVolume(_ context.Context, poolName, vol
 	return f.err
 }
 
+func (f *handlerRepository) DownloadStorageVolume(_ context.Context, _, volumeName string, writer io.Writer) (domain.StorageVolume, error) {
+	if f.downloadErr != nil {
+		return domain.StorageVolume{}, f.downloadErr
+	}
+	if _, err := writer.Write(f.downloadBytes); err != nil {
+		return domain.StorageVolume{}, err
+	}
+	return domain.StorageVolume{Name: volumeName, Format: "qcow2", CapacityBytes: 10 << 30}, nil
+}
+
 func allowAll(next http.Handler) http.Handler { return next }
 
 func TestStorageRoutes(t *testing.T) {
@@ -141,6 +153,28 @@ func TestStorageRoutes(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s status = %d body=%s", path, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestDownloadStorageVolumeRouteStreamsAttachment(t *testing.T) {
+	repository := &handlerRepository{
+		volumes:       []domain.StorageVolume{{Name: "demo.qcow2", Format: "qcow2", CapacityBytes: 10 << 30}},
+		downloadBytes: []byte("qcow2-image-data"),
+	}
+	router := chi.NewRouter()
+	New(storageapp.New(repository, nil, false)).Mount(router, allowAll)
+	request := httptest.NewRequest(http.MethodGet, "/storage/pools/default/volumes/demo.qcow2/download", nil)
+	request = request.WithContext(authctx.WithSession(request.Context(), domain.Session{User: domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin}}))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "qcow2-image-data" {
+		t.Fatalf("status = %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "demo.qcow2") {
+		t.Fatalf("content disposition = %q", disposition)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache control = %q", recorder.Header().Get("Cache-Control"))
 	}
 }
 

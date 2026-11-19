@@ -247,6 +247,37 @@ func TestDemoBackendDefineVMXMLUpdatesShutoffResources(t *testing.T) {
 	}
 }
 
+func TestDemoBackendDefineVMXMLPersistsNetworkModel(t *testing.T) {
+	backend := NewDemo()
+	ctx := context.Background()
+	const uuid = "44444444-4444-4444-8444-444444444444"
+	config, err := backend.GetVMXML(ctx, uuid, domain.VMXMLFormatConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedXML := strings.Replace(config.XML, "<model type='virtio'/>", "<model type='e1000'/>", 1)
+	if updatedXML == config.XML {
+		t.Fatalf("demo config XML has no virtio NIC model: %s", config.XML)
+	}
+	if _, err := backend.DefineVMXML(ctx, uuid, updatedXML); err != nil {
+		t.Fatalf("DefineVMXML() error = %v", err)
+	}
+	vm, err := backend.GetVM(ctx, uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vm.Interfaces) != 1 || vm.Interfaces[0].Model != "e1000" {
+		t.Fatalf("network interfaces after DefineVMXML = %+v", vm.Interfaces)
+	}
+	reloaded, err := backend.GetVMXML(ctx, uuid, domain.VMXMLFormatConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reloaded.XML, "<model type='e1000'/>") {
+		t.Fatalf("persisted config XML does not contain e1000 model: %s", reloaded.XML)
+	}
+}
+
 func TestDemoBackendDefineLegacyXMLWithChangedVCPU(t *testing.T) {
 	backend := NewDemo()
 	ctx := context.Background()

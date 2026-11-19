@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Database, FolderOpen, HardDrive, Layers3, LoaderCircle, Plus, Repeat2, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Download, FolderOpen, HardDrive, Layers3, LoaderCircle, Plus, Repeat2, Trash2, Upload } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { StoragePoolState, StorageVolume, StorageVolumeCreateInput, StorageVolumeFormat } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
@@ -134,6 +134,19 @@ export function StoragePage() {
     },
   });
 
+  const downloadMutation = useMutation({
+    mutationFn: ({ pool, name }: { pool: string; name: string }) => api.downloadStorageVolume(pool, name),
+    onSuccess: ({ blob, filename }, variables) => {
+      saveBlob(blob, filename);
+      setSuccessMessage(`存储卷 ${variables.name} 已开始下载。`);
+      setSuccessTestId("storage-download-success");
+    },
+    onError: (cause) => {
+      setSuccessMessage(cause instanceof ApiError ? cause.message : "下载存储卷失败，请稍后重试。");
+      setSuccessTestId("storage-download-error");
+    },
+  });
+
   const convertMutation = useMutation({
     mutationFn: ({ pool, volume, targetPool, targetName, targetFormat }: { pool: string; volume: string; targetPool: string; targetName: string; targetFormat: StorageVolumeFormat }) => api.convertStorageVolume(pool, volume, { targetPool, targetName, targetFormat }),
     onSuccess: (task) => {
@@ -195,6 +208,7 @@ export function StoragePage() {
   const readOnly = Boolean(session.data?.readOnly);
   const viewer = session.data?.user.role === "viewer";
   const canManage = Boolean(session.data) && !readOnly && !viewer;
+  const canDownload = Boolean(session.data) && !viewer;
   const selectedActive = selected?.state === "active";
   const manageDisabledReason = !canManage
     ? readOnly ? "系统当前处于只读模式" : "当前账号没有管理存储的权限"
@@ -503,6 +517,18 @@ export function StoragePage() {
                                   ) : null}
                                   <Button
                                     type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    data-testid={`download-volume-${volume.name}`}
+                                    aria-label={`下载存储卷 ${volume.name}`}
+                                    title={inUse ? `被 ${usedBy.map((usage) => usage.vmName).join("、")} 引用，不能下载` : canDownload ? "流式下载存储卷文件" : "当前账号没有下载存储卷的权限"}
+                                    disabled={!canDownload || !selectedActive || inUse || (downloadMutation.isPending && downloadMutation.variables?.name === volume.name)}
+                                    onClick={() => downloadMutation.mutate({ pool: selected.name, name: volume.name })}
+                                  >
+                                    {downloadMutation.isPending && downloadMutation.variables?.name === volume.name ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}下载
+                                  </Button>
+                                  <Button
+                                    type="button"
                                     variant="ghost"
                                     size="sm"
                                     data-testid={`delete-volume-${volume.name}`}
@@ -626,4 +652,15 @@ export function StoragePage() {
 function replaceVolumeExtension(name: string, format: StorageVolumeFormat) {
   const stem = name.replace(/\.(qcow2|raw)$/i, "");
   return `${stem || "volume"}.${format}`;
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }

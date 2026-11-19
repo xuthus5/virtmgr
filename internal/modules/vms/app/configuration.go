@@ -40,6 +40,13 @@ type NetworkQoSCommand struct {
 	Request MutationContext
 }
 
+type NetworkModelCommand struct {
+	UUID    string
+	MAC     string
+	Spec    domain.VMNetworkModelSpec
+	Request MutationContext
+}
+
 var cpuModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$`)
 
 const (
@@ -258,6 +265,75 @@ func (s *Service) UpdateNetworkQoS(ctx context.Context, command NetworkQoSComman
 		return domain.VM{}, fmt.Errorf("record VM network QoS audit: %w", err)
 	}
 	return updated, nil
+}
+
+func (s *Service) UpdateNetworkModel(ctx context.Context, command NetworkModelCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	command.MAC = strings.ToLower(strings.TrimSpace(command.MAC))
+	model, ok := domain.NormalizeVMNICModel(string(command.Spec.Model))
+	detail := map[string]any{"mac": command.MAC, "model": model}
+	if command.UUID == "" || command.MAC == "" || !ok || command.Spec.Model == "" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	command.Spec.Model = model
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, domain.ErrActionNotAllowed)
+	}
+	var networkInterface *domain.NetworkInterface
+	for index := range vm.Interfaces {
+		if strings.EqualFold(vm.Interfaces[index].MAC, command.MAC) {
+			networkInterface = &vm.Interfaces[index]
+			break
+		}
+	}
+	if networkInterface == nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, domain.ErrNotFound)
+	}
+	detail["previousModel"] = networkInterface.Model
+	config, err := s.repository.GetVMXML(ctx, command.UUID, domain.VMXMLFormatConfig)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, err)
+	}
+	updatedXML, err := domain.SetVMNetworkModelXML(config.XML, command.MAC, command.Spec.Model)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, err)
+	}
+	if _, err := s.repository.DefineVMXML(ctx, command.UUID, updatedXML); err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, err)
+	}
+	updated, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.network.model.update", command.UUID, detail, err)
+	}
+	if networkInterface := findNetworkInterfaceByMAC(updated.Interfaces, command.MAC); networkInterface != nil {
+		networkInterface.Model = string(command.Spec.Model)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceManualXML, 0, "修改网卡型号后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.network.model.update", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM network model audit: %w", err)
+	}
+	return updated, nil
+}
+
+func findNetworkInterfaceByMAC(interfaces []domain.NetworkInterface, mac string) *domain.NetworkInterface {
+	for index := range interfaces {
+		if strings.EqualFold(interfaces[index].MAC, mac) {
+			return &interfaces[index]
+		}
+	}
+	return nil
 }
 
 func toStringSlice(devices []domain.VMBootDevice) []string {

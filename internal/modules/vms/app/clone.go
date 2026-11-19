@@ -65,6 +65,14 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, err)
 	}
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationClone, VMUUID: source.UUID,
+		VMName: command.Spec.Name, TaskID: taskID, Phase: "copying",
+		TargetPool: command.Spec.TargetPool,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "vm.clone", command.UUID, detail, err)
+	}
 	now := time.Now().UTC()
 	task := domain.Task{
 		ID: taskID, Kind: "vm.clone", TargetKind: "vm", TargetID: command.UUID,
@@ -88,6 +96,13 @@ func (s *Service) Clone(ctx context.Context, command CloneCommand) (domain.Task,
 
 func (s *Service) runClone(ctx context.Context, taskID string, lease *dataplane.Lease, command CloneCommand, detail map[string]any) {
 	defer lease.Release()
+	journalStatus := domain.DataPlaneStatusFailed
+	journalMessage := "克隆虚拟机失败"
+	defer func() {
+		finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		s.journal.Finish(finalCtx, taskID, journalStatus, journalMessage)
+	}()
 	progress := 0
 	vm, err := s.repository.CloneVM(ctx, command.UUID, command.Spec, func(percent int, step string) {
 		if percent < progress {
@@ -100,10 +115,13 @@ func (s *Service) runClone(ctx context.Context, taskID string, lease *dataplane.
 		_ = s.tasks.Progress(ctx, taskID, progress, step)
 	})
 	if err != nil {
+		journalMessage = err.Error()
 		_ = s.recordMutationAudit(ctx, command.Request, "vm.clone", command.UUID, "failure", detail, err)
 		_ = s.tasks.Fail(ctx, taskID, progress, "克隆虚拟机失败", err)
 		return
 	}
+	journalStatus = domain.DataPlaneStatusSucceeded
+	journalMessage = ""
 	detail["uuid"] = vm.UUID
 	detail["name"] = vm.Name
 	detail["state"] = string(vm.State)

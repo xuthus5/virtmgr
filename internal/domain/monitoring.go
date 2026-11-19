@@ -104,6 +104,8 @@ type MetricSample struct {
 	MemoryTotalBytes        uint64    `json:"memoryTotalBytes"`
 	DiskReadBytesPerSecond  uint64    `json:"diskReadBytesPerSecond"`
 	DiskWriteBytesPerSecond uint64    `json:"diskWriteBytesPerSecond"`
+	DiskReadIOPS            uint64    `json:"diskReadIops"`
+	DiskWriteIOPS           uint64    `json:"diskWriteIops"`
 	NetworkRxBytesPerSecond uint64    `json:"networkRxBytesPerSecond"`
 	NetworkTxBytesPerSecond uint64    `json:"networkTxBytesPerSecond"`
 }
@@ -118,4 +120,46 @@ func MemoryPercent(sample MetricSample) float64 {
 		return 0
 	}
 	return float64(sample.MemoryUsedBytes) / float64(sample.MemoryTotalBytes) * 100
+}
+
+type GuestFilesystemSample struct {
+	ID         int64     `json:"id"`
+	VMUUID     string    `json:"vmUuid"`
+	VMName     string    `json:"vmName"`
+	MountPoint string    `json:"mountPoint"`
+	UsedBytes  uint64    `json:"usedBytes"`
+	TotalBytes uint64    `json:"totalBytes"`
+	SampledAt  time.Time `json:"sampledAt"`
+}
+
+type GuestFilesystemSampleList struct {
+	Items []GuestFilesystemSample `json:"items"`
+	Total int                     `json:"total"`
+}
+
+type CapacitySample struct {
+	Scope      string    `json:"scope"`
+	TargetID   string    `json:"targetId"`
+	UsedBytes  uint64    `json:"usedBytes"`
+	TotalBytes uint64    `json:"totalBytes"`
+	SampledAt  time.Time `json:"sampledAt"`
+}
+
+type CapacityForecast struct {
+	Scope             string     `json:"scope"`
+	TargetID          string     `json:"targetId"`
+	UsedBytes         uint64     `json:"usedBytes"`
+	TotalBytes        uint64     `json:"totalBytes"`
+	UsagePercent      float64    `json:"usagePercent"`
+	GrowthBytesPerDay float64    `json:"growthBytesPerDay"`
+	DaysToFull        *float64   `json:"daysToFull,omitempty"`
+	ForecastAt        *time.Time `json:"forecastAt,omitempty"`
+	SampleCount       int        `json:"sampleCount"`
+	WindowDays        int        `json:"windowDays"`
+}
+
+type CapacityForecastList struct {
+	Items       []CapacityForecast `json:"items"`
+	Total       int                `json:"total"`
+	GeneratedAt time.Time          `json:"generatedAt"`
 }

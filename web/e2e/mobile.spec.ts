@@ -52,7 +52,7 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
 test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await login(page);
-  for (const path of ["/images", "/settings", "/tasks", "/storage", "/networks", "/vms/new"]) {
+  for (const path of ["/images", "/settings", "/tasks", "/storage", "/networks", "/vms/new", "/dataplane"]) {
     await page.goto(path);
     await expect(page.getByRole("main")).toBeVisible();
     for (const width of [320, 390]) {
@@ -140,6 +140,8 @@ test("vTPM、磁盘迁移和在线备份控件在移动端保持可读且无横�
   const migrate = page.getByTestId("vm-disk-migrate-vda");
   await expect(migrate).toBeVisible();
   await expect(migrate).toBeDisabled();
+  await expect(page.getByTestId("vm-network-model-52:54:00:01:00:02")).toBeVisible();
+  await expect(page.getByTestId("vm-network-model-52:54:00:01:00:02")).toBeDisabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
   await page.getByTestId("vm-tab-snapshots").click();

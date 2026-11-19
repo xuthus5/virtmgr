@@ -693,7 +693,7 @@ type PassthroughDevice = {
 
 `/host/devices` 当前已实现：后端枚举 `pci`、`usb`、`usb_device`、`net`、`storage`、`drm` 能力，读取设备 XML、父设备、能力、在线和持久状态。设备热插拔导致单个设备查找或 XML 解析失败时跳过该设备；存在部分结果时仍返回其余设备，全部失败时返回错误。
 
-`/host/metrics` 和 `/vms/{uuid}/metrics` 每次请求读取 libvirt 累计计数，并由进程内采样服务与上一请求对比计算 CPU 使用率和网络字节速率。虚拟机指标还读取每个可写数据盘的 `BlockStats` 和各网卡 `InterfaceStats`，返回累计字节/操作数以及相邻采样的吞吐和 IOPS；分网卡速率按接口 target 名称匹配。首次采样速率为 0；计数器回退时速率降级为 0；CPU 使用率限制在 0-100%。宿主机网卡计数来自 `/proc/net/dev` 的物理接口，虚拟机网卡汇总域 XML 中各接口 target 设备。该实现不在 SQLite 保存历史，前端每 2 秒轮询并保留最近 30 个点，符合首版单进程部署模型。
+`/host/metrics` 和 `/vms/{uuid}/metrics` 每次请求读取 libvirt 累计计数，并由进程内采样服务与上一请求对比计算 CPU 使用率和网络字节速率。虚拟机指标还读取每个可写数据盘的 `BlockStats` 和各网卡 `InterfaceStats`，返回累计字节/操作数以及相邻采样的吞吐和 IOPS；分网卡速率按接口 target 名称匹配。首次采样速率为 0；计数器回退时速率降级为 0；CPU 使用率限制在 0-100%。宿主机网卡计数来自 `/proc/net/dev` 的物理接口，虚拟机网卡汇总域 XML 中各接口 target 设备。监控服务每分钟将宿主机、虚拟机和 Guest Agent 文件系统样本写入 SQLite；磁盘 IOPS 只来自真实 BlockStats，不生成伪造延迟。`GET /metrics/guest-filesystems?vmUuid=...` 返回文件系统使用率历史，`GET /metrics/capacity-forecast?scope=storage_pool[&targetId=...]` 基于最近 7 天活跃存储池容量样本计算每日增长量、剩余天数和预计耗尽时间，样本不足时返回不可预测状态。
 
 ### 5.3 虚拟机
 
@@ -709,6 +709,7 @@ type PassthroughDevice = {
 | `PATCH` | `/vms/{uuid}/disks/{target}` | 扩容 qcow2/raw 数据盘，请求体 `{ "capacityBytes": number }`（已实现，需 CSRF） |
 | `PATCH` | `/vms/{uuid}/disks/{target}/qos` | 设置磁盘吞吐和 IOPS 限制；运行中同步 live/config，清零即移除（已实现，需 CSRF） |
 | `PATCH` | `/vms/{uuid}/network-interfaces/{mac}/qos` | 设置网卡入站/出站 bandwidth；存在峰值或 burst 时必须提供平均值（已实现，需 CSRF） |
+| `PATCH` | `/vms/{uuid}/network-interfaces/{mac}` | 修改关机/异常停止持久域的网卡型号为 `virtio` 或 `e1000`（已实现，需 CSRF） |
 | `POST` | `/vms/{uuid}/actions/{action}` | 白名单动作：start/shutdown/reboot/reset/pause/resume/destroy |
 | `POST` | `/vms/{uuid}/devices` | 直通 PCI/USB 主机设备，请求体 `{ "device": "pci_0000_3b_00_0" }`（已实现） |
 | `DELETE` | `/vms/{uuid}/devices/{device}` | 移除主机设备直通（已实现） |
@@ -810,6 +811,7 @@ type PassthroughDevice = {
 | `POST` | `/storage/pools/{name}/volumes` | 创建 qcow2/raw 卷 |
 | `POST` | `/storage/pools/{name}/volumes/upload` | 流式上传 ISO/qcow2/raw 镜像（已实现同步流式写入） |
 | `POST` | `/storage/pools/{name}/volumes/{volume}/convert` | 空闲 qcow2/raw 格式转换与跨池复制（已实现异步任务；源卷保留） |
+| `GET` | `/storage/pools/{name}/volumes/{volume}/download` | 流式下载未被虚拟机引用的存储卷，响应为附件且禁止缓存（已实现） |
 | `DELETE` | `/storage/pools/{name}/volumes/{volume}` | 删除未挂载卷 |
 | `GET` | `/networks` | 虚拟网络与宿主机桥 |
 | `GET` | `/networks/bridges` | 可用于外部桥接的活跃宿主机网桥 |
@@ -834,8 +836,24 @@ type PassthroughDevice = {
 | `GET` | `/audit-events/export?format=json|csv` | 按相同筛选条件导出最多 50,000 条审计记录并记录 `audit.export`，仅管理员 |
 | `GET` | `/settings` | 可管理设置 |
 | `PUT` | `/settings` | 更新设置（管理员，需 CSRF；当前支持 `readOnly`，已实现） |
+| `GET` | `/system/database-restore` | 查看待重启、已应用或失败的数据库恢复状态（管理员） |
+| `POST` | `/system/database-restore` | 上传并校验最大 1 GiB 的 SQLite 数据库，保存为待重启恢复文件（管理员，需 CSRF） |
+| `DELETE` | `/system/database-restore` | 取消尚未应用的数据库恢复（管理员，需 CSRF） |
 | `GET` | `/healthz` | 进程存活 |
 | `GET` | `/readyz` | libvirt 与数据库就绪 |
+
+### 5.7 数据面操作恢复
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/dataplane/operations?limit=200` | 数据面操作列表；默认 200，最大 500，仅管理员 |
+| `GET` | `/dataplane/operations/{id}` | 操作详情、恢复状态和错误信息，仅管理员 |
+| `POST` | `/dataplane/operations/{id}/recheck` | 对失败或需人工处理操作重新读取 libvirt 状态并更新结果（需 CSRF） |
+| `POST` | `/dataplane/operations/{id}/unblock` | 重新校验通过后解除资源阻塞；未通过时保持阻塞并返回 `409`（需 CSRF） |
+
+数据面操作日志覆盖备份、备份恢复、磁盘迁移、导入、格式转换、展平、克隆和磁盘扩容。服务启动时先执行恢复协调，再监听 HTTP。`Unblock` 不是单纯清除内存锁：它必须再次调用后端恢复逻辑，并在仍有未解决操作引用同一虚拟机或存储卷时保留保护锁。重新校验和解除阻塞都会写入 `dataplane.recheck` / `dataplane.unblock` 审计，系统启动恢复继续写入 `dataplane.recovery`。
+
+数据库恢复使用独立 staged 文件，不修改正在运行的 SQLite 连接。上传阶段校验 SQLite 文件头、完整性、必需表和 schema 版本；启动阶段在 `sqlite.Open` 前完成原子替换并保留带时间戳的旧库备份。恢复不自动重启服务，管理员必须在重启前明确确认待应用状态。
 
 事件结构包含 `id`、`occurredAt`、`source`、`kind`、`severity`、`targetKind`、`targetId`、`targetName`、`message` 和可选 `detail`。当前已映射域定义/删除、启动、停止、关机、暂停、恢复、崩溃和状态变化，以及快照、存储卷和虚拟网络写操作。后续 `scope=vm:{uuid}` 过滤属于目标能力，当前先提供全局流，由前端按目标字段筛选。
 
@@ -866,6 +884,7 @@ type PassthroughDevice = {
 /audit
 /users
 /settings
+/dataplane
 ```
 
 详情页使用 query 参数保留当前 tab，便于刷新、复制链接和从全局搜索结果直达。

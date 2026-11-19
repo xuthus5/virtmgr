@@ -5,6 +5,7 @@ export const queryKeys = {
   overview: ["overview"] as const,
   settings: ["settings"] as const,
   systemInfo: ["system", "info"] as const,
+  databaseRestore: ["system", "database-restore"] as const,
   users: ["users"] as const,
   userSessions: (userId?: number) => ["user-sessions", userId] as const,
   apiTokens: ["api-tokens"] as const,
@@ -61,4 +62,8 @@ export const queryKeys = {
   },
   metricsHistory: (scope: string, targetId: string, hours: number) =>
     ["metrics", "history", scope, targetId, hours] as const,
+  metricsGuestFilesystems: (vmUuid: string, hours: number) =>
+    ["metrics", "guest-filesystems", vmUuid, hours] as const,
+  metricsCapacityForecast: ["metrics", "capacity-forecast"] as const,
+  dataPlaneOperations: ["dataplane", "operations"] as const,
 };

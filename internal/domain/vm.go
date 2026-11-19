@@ -292,6 +292,10 @@ type VMNetworkQoSSpec struct {
 	OutboundBurstBytes   uint64 `json:"outboundBurstBytes"`
 }
 
+type VMNetworkModelSpec struct {
+	Model VMNICModel `json:"model"`
+}
+
 type VMDiskAttachSpec struct {
 	Pool   string    `json:"pool"`
 	Volume string    `json:"volume"`

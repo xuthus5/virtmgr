@@ -121,6 +121,58 @@ func (s *Store) ListPendingDataPlaneOperations(ctx context.Context) ([]domain.Da
 	return items, nil
 }
 
+func (s *Store) ListDataPlaneOperations(ctx context.Context, limit int) ([]domain.DataPlaneOperation, error) {
+	if limit < 1 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+dataPlaneOperationColumns+`
+		FROM data_plane_operations
+		ORDER BY CASE status WHEN 'needs_attention' THEN 0 WHEN 'failed' THEN 1 WHEN 'running' THEN 2 ELSE 3 END,
+			created_at DESC, id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list data plane operations: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.DataPlaneOperation, 0)
+	for rows.Next() {
+		item, err := scanDataPlaneOperation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan data plane operation: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate data plane operations: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) ListUnresolvedDataPlaneOperations(ctx context.Context) ([]domain.DataPlaneOperation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+dataPlaneOperationColumns+`
+		FROM data_plane_operations
+		WHERE status IN (?, ?)
+		ORDER BY created_at ASC, id ASC`, domain.DataPlaneStatusNeedsAttention, domain.DataPlaneStatusFailed)
+	if err != nil {
+		return nil, fmt.Errorf("list unresolved data plane operations: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.DataPlaneOperation, 0)
+	for rows.Next() {
+		item, err := scanDataPlaneOperation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan unresolved data plane operation: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unresolved data plane operations: %w", err)
+	}
+	return items, nil
+}
+
 func (s *Store) GetDataPlaneOperation(ctx context.Context, id string) (domain.DataPlaneOperation, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+dataPlaneOperationColumns+`
@@ -130,6 +182,33 @@ func (s *Store) GetDataPlaneOperation(ctx context.Context, id string) (domain.Da
 		return domain.DataPlaneOperation{}, domain.ErrNotFound
 	}
 	return item, err
+}
+
+func (s *Store) ResolveDataPlaneOperation(ctx context.Context, id, status, message string, at time.Time) error {
+	if !domain.DataPlaneOperationTerminal(status) || status == domain.DataPlaneStatusRunning {
+		return domain.ErrInvalidInput
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE data_plane_operations
+		SET status = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status IN (?, ?)`,
+		status, message, at.UTC().Unix(), id,
+		domain.DataPlaneStatusNeedsAttention, domain.DataPlaneStatusFailed,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve data plane operation: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count resolved data plane operation: %w", err)
+	}
+	if affected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) UpdateInterruptedTaskDetail(ctx context.Context, id, step, taskError string, at time.Time) error {

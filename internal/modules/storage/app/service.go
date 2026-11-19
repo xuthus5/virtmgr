@@ -37,6 +37,10 @@ type VolumeFlattener interface {
 	FlattenStorageVolume(ctx context.Context, spec domain.StorageVolumeFlattenSpec) (domain.StorageVolume, error)
 }
 
+type VolumeDownloader interface {
+	DownloadStorageVolume(ctx context.Context, poolName, volumeName string, writer io.Writer) (domain.StorageVolume, error)
+}
+
 type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
@@ -146,6 +150,13 @@ type FlattenVolumeCommand struct {
 	Pool    string
 	Name    string
 	Spec    domain.StorageVolumeFlattenSpec
+	Request MutationContext
+}
+
+type DownloadVolumeCommand struct {
+	Pool    string
+	Name    string
+	Writer  io.Writer
 	Request MutationContext
 }
 
@@ -462,6 +473,59 @@ func (s *Service) DeleteVolume(ctx context.Context, command DeleteVolumeCommand)
 		return fmt.Errorf("record storage volume delete audit: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) GetDownloadVolume(ctx context.Context, command DownloadVolumeCommand) (domain.StorageVolume, error) {
+	command.Pool = strings.TrimSpace(command.Pool)
+	command.Name = strings.TrimSpace(command.Name)
+	detail := map[string]any{"pool": command.Pool, "name": command.Name}
+	if !domain.CanManageStorage(command.Request.Session.User.Role) {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, domain.ErrForbidden)
+	}
+	if !poolNamePattern.MatchString(command.Pool) || !validVolumeName(command.Name) {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, domain.ErrInvalidInput)
+	}
+	if _, ok := s.repository.(VolumeDownloader); !ok {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, domain.ErrUnavailable)
+	}
+	volumes, err := s.repository.ListStorageVolumes(ctx, command.Pool)
+	if err != nil {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, err)
+	}
+	for _, volume := range volumes {
+		if volume.Name != command.Name {
+			continue
+		}
+		if len(volume.UsedBy) > 0 {
+			return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail,
+				fmt.Errorf("%w: storage volume is attached to a VM", domain.ErrVolumeInUse))
+		}
+		return volume, nil
+	}
+	return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, domain.ErrNotFound)
+}
+
+func (s *Service) DownloadVolume(ctx context.Context, command DownloadVolumeCommand) (domain.StorageVolume, error) {
+	if command.Writer == nil {
+		return domain.StorageVolume{}, domain.ErrInvalidInput
+	}
+	if _, err := s.GetDownloadVolume(ctx, command); err != nil {
+		return domain.StorageVolume{}, err
+	}
+	downloader := s.repository.(VolumeDownloader)
+	command.Pool = strings.TrimSpace(command.Pool)
+	command.Name = strings.TrimSpace(command.Name)
+	detail := map[string]any{"pool": command.Pool, "name": command.Name}
+	downloaded, err := downloader.DownloadStorageVolume(ctx, command.Pool, command.Name, command.Writer)
+	if err != nil {
+		return domain.StorageVolume{}, s.mutationFailure(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, detail, err)
+	}
+	detail["format"] = downloaded.Format
+	detail["capacityBytes"] = downloaded.CapacityBytes
+	if err := s.recordMutationAudit(ctx, command.Request, "storage.volume.download", command.Pool+"/"+command.Name, "success", detail, nil); err != nil {
+		return domain.StorageVolume{}, fmt.Errorf("record storage volume download audit: %w", err)
+	}
+	return downloaded, nil
 }
 
 func (s *Service) ConvertVolume(ctx context.Context, command ConvertVolumeCommand) (domain.Task, error) {

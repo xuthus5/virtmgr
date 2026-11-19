@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, DatabaseBackup, Info, LoaderCircle, LockKeyhole, ShieldCheck, Unlock } from "lucide-react";
+import { AlertTriangle, Archive, DatabaseBackup, FileUp, Info, LoaderCircle, LockKeyhole, ShieldCheck, Unlock, XCircle } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,9 @@ export function SettingsPage() {
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [retentionDays, setRetentionDays] = useState(30);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const systemQuery = useQuery({ queryKey: queryKeys.systemInfo, queryFn: api.systemInfo, staleTime: 60_000 });
+  const restoreQuery = useQuery({ queryKey: queryKeys.databaseRestore, queryFn: api.databaseRestoreStatus, staleTime: 10_000 });
 
   useEffect(() => {
     if (settings.data?.auditRetentionDays) setRetentionDays(settings.data.auditRetentionDays);
@@ -67,6 +69,25 @@ export function SettingsPage() {
     onError: (error) => setNotice({ tone: "error", text: error instanceof ApiError ? error.message : "数据库导出失败，请稍后重试。" }),
   });
 
+  const stageRestoreMutation = useMutation({
+    mutationFn: (file: File) => api.stageDatabaseRestore(file),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.databaseRestore, result);
+      setRestoreFile(null);
+      setNotice({ tone: "success", text: `${result.filename ?? "数据库"} 已通过校验，重启 VirtMgr 后完成恢复。` });
+    },
+    onError: (error) => setNotice({ tone: "error", text: error instanceof ApiError ? error.message : "数据库恢复文件校验失败。" }),
+  });
+
+  const cancelRestoreMutation = useMutation({
+    mutationFn: api.cancelDatabaseRestore,
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.databaseRestore, result);
+      setNotice({ tone: "success", text: "待恢复数据库已取消，当前数据库保持不变。" });
+    },
+    onError: (error) => setNotice({ tone: "error", text: error instanceof ApiError ? error.message : "取消待恢复数据库失败。" }),
+  });
+
   const retentionMutation = useMutation({
     mutationFn: (days: number) => api.updateAuditRetention(days),
     onSuccess: (result) => {
@@ -85,6 +106,7 @@ export function SettingsPage() {
   }
 
   const readOnly = settings.data.readOnly;
+  const restore = restoreQuery.data;
 
   return (
     <div data-testid="settings-page">
@@ -159,6 +181,30 @@ export function SettingsPage() {
             <Button data-testid="settings-database-export-button" disabled={exportMutation.isPending} onClick={() => { setNotice(null); exportMutation.mutate(); }}>
               {exportMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseBackup className="h-4 w-4" />}{exportMutation.isPending ? "正在导出..." : "下载数据库快照"}
             </Button>
+          </CardContent>
+        </Card>
+        <Card data-testid="settings-database-restore">
+          <CardHeader><CardTitle className="flex items-center gap-2"><FileUp className="h-4 w-4 text-primary" />数据库恢复向导</CardTitle><CardDescription>上传 VirtMgr 导出的 SQLite 快照。系统会先校验完整性、所需表和 schema 版本，校验通过后仅在服务重启时原子替换数据库。</CardDescription></CardHeader>
+          <CardContent className="space-y-3">
+            {restoreQuery.isLoading ? <p className="text-xs text-muted-foreground">正在读取恢复状态…</p> : null}
+            {restoreQuery.isError ? <p className="text-xs text-destructive">{restoreQuery.error instanceof Error ? restoreQuery.error.message : "无法读取恢复状态"}</p> : null}
+            {restore?.state === "pending_restart" ? (
+              <div className="space-y-3 rounded-md border border-warning/35 bg-warning/10 p-3" data-testid="settings-database-restore-pending">
+                <div><Badge variant="warning">等待重启</Badge><p className="mt-2 break-all text-sm font-medium">{restore.filename}</p><p className="mt-1 text-xs text-muted-foreground">Schema v{restore.schemaVersion} · 重启服务后自动应用，当前数据库仍可正常使用。</p></div>
+                <Button size="sm" variant="outline" data-testid="settings-database-restore-cancel" disabled={cancelRestoreMutation.isPending} onClick={() => { setNotice(null); cancelRestoreMutation.mutate(); }}>{cancelRestoreMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}取消待恢复任务</Button>
+              </div>
+            ) : null}
+            {restore?.state === "applied" ? <div className="rounded-md border border-success/30 bg-success/10 p-3 text-xs text-success" data-testid="settings-database-restore-applied"><p className="font-medium">数据库恢复已应用</p><p className="mt-1 break-all">{restore.filename}</p><p className="mt-1 opacity-80">{restore.message}</p></div> : null}
+            {restore?.state === "failed" ? <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive" data-testid="settings-database-restore-failed"><p className="font-medium">最近一次恢复未应用</p><p className="mt-1 break-words">{restore.message}</p></div> : null}
+            {restore?.state !== "pending_restart" ? (
+              <div className="space-y-2">
+                <label htmlFor="database-restore-file" className="block text-xs font-medium">选择 SQLite 数据库文件（最大 1 GiB）</label>
+                <input id="database-restore-file" data-testid="settings-database-restore-file" type="file" accept=".db,application/vnd.sqlite3,application/octet-stream" onChange={(event) => setRestoreFile(event.target.files?.[0] ?? null)} className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-card file:px-3 file:py-2 file:text-xs file:font-medium file:text-foreground" />
+                {restoreFile ? <p className="break-all text-[11px] text-muted-foreground">已选择 {restoreFile.name} · {(restoreFile.size / 1024 / 1024).toFixed(1)} MiB</p> : null}
+                <Button size="sm" data-testid="settings-database-restore-upload" disabled={!restoreFile || stageRestoreMutation.isPending || (restoreFile?.size ?? 0) > 1024 * 1024 * 1024} onClick={() => { if (restoreFile) { setNotice(null); stageRestoreMutation.mutate(restoreFile); } }}>{stageRestoreMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}{stageRestoreMutation.isPending ? "正在校验..." : "上传并校验"}</Button>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">校验过程不会修改当前数据库。上传成功后需要从宿主机重启 VirtMgr；原数据库会保留带时间戳的备份。</p>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
         <Card data-testid="settings-audit-retention">

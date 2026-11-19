@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, KeyRound, Layers3, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, Sun, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ChevronsLeft, ChevronsRight, Cpu, HardDrive, KeyRound, Layers3, LayoutDashboard, LayoutTemplate, ListChecks, LogOut, Menu, Moon, Network as NetworkIcon, ScrollText, Server, Settings2, ShieldCheck, Sun, Users, X, type LucideIcon } from "lucide-react";
 import { ApiError, api, unauthorizedEvent } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ const navigation: Array<{ href: string; label: string; icon: LucideIcon; match: 
   { href: "/tasks", label: "任务中心", icon: ListChecks, match: (path) => path.startsWith("/tasks") },
   { href: "/events", label: "事件", icon: Activity, match: (path) => path.startsWith("/events") },
   { href: "/audit", label: "审计日志", icon: ScrollText, match: (path) => path.startsWith("/audit"), adminOnly: true },
+  { href: "/dataplane", label: "数据面运维", icon: ShieldCheck, match: (path) => path.startsWith("/dataplane"), adminOnly: true },
   { href: "/users", label: "用户管理", icon: Users, match: (path) => path.startsWith("/users"), adminOnly: true },
   { href: "/settings", label: "系统设置", icon: Settings2, match: (path) => path.startsWith("/settings"), adminOnly: true },
 ];

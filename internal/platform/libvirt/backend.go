@@ -69,6 +69,7 @@ type Backend interface {
 	PerformStoragePoolAction(ctx context.Context, name string, action domain.StoragePoolAction) error
 	DeleteStoragePool(ctx context.Context, name string) error
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
+	DownloadStorageVolume(ctx context.Context, poolName, volumeName string, writer io.Writer) (domain.StorageVolume, error)
 	CreateStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec) (domain.StorageVolume, error)
 	UploadStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec, reader io.Reader) (domain.StorageVolume, error)
 	CloneStorageVolume(ctx context.Context, sourcePool, sourceVolume, targetPool, targetName string) (domain.StorageVolume, error)

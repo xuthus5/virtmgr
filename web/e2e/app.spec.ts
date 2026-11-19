@@ -187,6 +187,8 @@ test("物理主机展示实时资源趋势", async ({ page }) => {
   await expect(page.getByTestId("host-metrics-network")).toContainText("↓");
   await expect.poll(async () => Number(await page.getByTestId("host-metrics-cpu-chart").getAttribute("data-samples")), { timeout: 8_000 }).toBeGreaterThanOrEqual(2);
   await expect(page.getByTestId("host-metrics-cpu")).not.toContainText("0.0%");
+  await expect(page.getByTestId("capacity-forecast")).toBeVisible();
+  await expect(page.getByTestId("capacity-forecast")).toContainText("7 天线性回归");
 });
 
 test("存储页展示存储池和卷", async ({ page }) => {
@@ -557,6 +559,47 @@ test("虚拟机详情展示实时资源趋势", async ({ page }) => {
   await expect(page.getByTestId("vm-metrics-network")).toContainText("↓");
   await expect.poll(async () => Number(await page.getByTestId("vm-metrics-cpu-chart").getAttribute("data-samples")), { timeout: 8_000 }).toBeGreaterThanOrEqual(2);
   await expect(page.getByTestId("vm-metrics-cpu")).not.toContainText("0.0%");
+  await expect(page.getByTestId("guest-filesystem-history")).toBeVisible();
+  await expect(page.getByTestId("guest-filesystem-history")).toContainText("客户机文件系统趋势");
+});
+
+test("存储页支持流式下载空闲存储卷", async ({ page }) => {
+  await login(page);
+  await page.goto("/storage");
+  await page.getByRole("button", { name: "iso-store", exact: true }).click();
+  const downloadButton = page.getByTestId("download-volume-debian-13-netinst.iso");
+  await expect(downloadButton).toBeEnabled();
+  const downloadPromise = page.waitForEvent("download");
+  await downloadButton.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("debian-13-netinst.iso");
+  await expect(page.getByTestId("storage-download-success")).toContainText("已开始下载");
+});
+
+test("管理员可查看数据面异常操作中心", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "数据面运维", exact: true }).click();
+  await expect(page).toHaveURL(/\/dataplane$/);
+  await expect(page.getByRole("heading", { name: "数据面运维", exact: true })).toBeVisible();
+  await expect(page.getByTestId("dataplane-empty")).toContainText("没有数据面操作记录");
+});
+
+test("数据库恢复向导可校验、暂存并取消待恢复文件", async ({ page }) => {
+  await login(page);
+  await page.goto("/settings");
+  await expect(page.getByTestId("settings-database-restore")).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("settings-database-export-button").click();
+  const download = await downloadPromise;
+  const databasePath = await download.path();
+  if (!databasePath) throw new Error("database export path is unavailable");
+  await page.getByTestId("settings-database-restore-file").setInputFiles(databasePath);
+  await page.getByTestId("settings-database-restore-upload").click();
+  await expect(page.getByTestId("settings-database-restore-pending")).toBeVisible();
+  await expect(page.getByTestId("settings-database-restore-pending")).toContainText("等待重启");
+  await page.getByTestId("settings-database-restore-cancel").click();
+  await expect(page.getByTestId("settings-database-restore-pending")).toHaveCount(0);
+  await expect(page.getByTestId("settings-database-restore-upload")).toBeVisible();
 });
 
 test("虚拟机详情磁盘数据源保持单行且不会纵向撑高表格", async ({ page }) => {
@@ -765,16 +808,17 @@ test("只读模式展示备份中心并禁用写操作", async ({ page }) => {
   await expect(defaultRepository).toContainText("默认");
 });
 
-test("管理员可查看空的审计日志并筛选", async ({ page }) => {
+test("管理员可查看审计日志并筛选", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "审计日志", exact: true }).click();
   await expect(page).toHaveURL(/\/audit$/);
   await expect(page.getByRole("heading", { name: "审计日志", exact: true })).toBeVisible();
+  await expect(page.getByTestId("audit-total")).toHaveText(/共 [1-9]\d* 条审计记录/);
+  await expect(page.locator('[data-testid^="audit-row-"]').first()).toBeVisible();
+
+  await page.getByTestId("audit-target-filter").fill("e2e-no-such-audit-target");
   await expect(page.getByTestId("audit-total")).toHaveText("共 0 条审计记录");
   await expect(page.getByTestId("audit-empty")).toContainText("没有匹配的审计记录");
-
-  await page.getByTestId("audit-action-filter").selectOption("vm.start");
-  await expect(page.getByTestId("audit-total")).toHaveText("共 0 条审计记录");
   await page.getByTestId("audit-result-filter").selectOption("failure");
   await expect(page.getByTestId("audit-empty")).toBeVisible();
 });

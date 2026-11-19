@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Gauge, LoaderCircle, Network, RefreshCw, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Gauge, LoaderCircle, Network, Pencil, RefreshCw, Unplug } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { NetworkInterface, VM, VMNetworkQoSInput, VMNICModel } from "@/api/types";
 import {
@@ -44,6 +44,9 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
   const [qosOutboundPeak, setQosOutboundPeak] = useState("");
   const [qosOutboundBurst, setQosOutboundBurst] = useState("");
   const [qosError, setQosError] = useState("");
+  const [modelInterface, setModelInterface] = useState<NetworkInterface | null>(null);
+  const [modelEditValue, setModelEditValue] = useState<VMNICModel>("virtio");
+  const [modelError, setModelError] = useState("");
 
   const selectedNetwork = network || networks[0]?.name || "";
 
@@ -82,6 +85,17 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
       setNotice({ tone: "success", text: `网卡 ${variables.mac} 的带宽限制已更新。` });
     },
     onError: (cause) => setQosError(cause instanceof ApiError ? cause.message : "更新网卡带宽限制失败，请稍后重试。"),
+  });
+
+  const modelMutation = useMutation({
+    mutationFn: ({ mac, nextModel }: { mac: string; nextModel: VMNICModel }) => api.updateVMNetworkModel(vm.uuid, mac, { model: nextModel }),
+    onSuccess: (updated, variables) => {
+      invalidate(updated);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.vm(vm.uuid).configVersions });
+      setModelInterface(null);
+      setNotice({ tone: "success", text: `网卡 ${variables.mac} 的型号已更新为 ${variables.nextModel}。` });
+    },
+    onError: (cause) => setModelError(cause instanceof ApiError ? cause.message : "更新网卡型号失败，请稍后重试。"),
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -137,6 +151,21 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
       outboundAverageBytes: outbound ?? 0, outboundPeakBytes: outboundPeak ?? 0, outboundBurstBytes: outboundBurst ?? 0,
     } });
   }
+
+  function openModel(networkInterface: NetworkInterface) {
+    setModelInterface(networkInterface);
+    setModelEditValue((networkInterface.model as VMNICModel | undefined) ?? "virtio");
+    setModelError("");
+    setNotice(null);
+  }
+
+  function submitModel() {
+    if (!modelInterface?.mac) return;
+    setModelError("");
+    modelMutation.mutate({ mac: modelInterface.mac, nextModel: modelEditValue });
+  }
+
+  const modelEditAllowed = vm.persistent && (vm.state === "shutoff" || vm.state === "crashed");
 
   return (
     <Card className="mt-4" data-testid="vm-network-interfaces-card">
@@ -196,6 +225,9 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
                     <Button type="button" variant={item.qos ? "outline" : "ghost"} size="sm" aria-label={`配置网卡 ${item.mac || index} 带宽`} data-testid={`vm-network-qos-${item.mac || index}`} disabled={!canMutate || !item.mac || qosMutation.isPending} title={!item.mac ? "网卡没有 MAC 地址" : disabledReason || "配置入站和出站带宽限制"} onClick={() => openQoS(item)}>
                       <Gauge className="h-3.5 w-3.5" />带宽
                     </Button>
+                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`修改网卡 ${item.mac || index} 型号`} data-testid={`vm-network-model-${item.mac || index}`} disabled={!canMutate || !modelEditAllowed || !item.mac || modelMutation.isPending} title={!modelEditAllowed ? "仅支持修改已关机或异常停止的持久虚拟机网卡型号" : !item.mac ? "网卡没有 MAC 地址" : disabledReason || "修改网卡型号"} onClick={() => openModel(item)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     <Button type="button" variant="ghost" size="icon-sm" aria-label={`移除网卡 ${item.mac || index}`} data-testid={`vm-network-detach-${item.mac || index}`} disabled={!canMutate || !item.mac || vm.interfaces.length <= 1 || detachMutation.isPending} title={vm.interfaces.length <= 1 ? "至少保留一个网络接口" : !item.mac ? "网卡没有 MAC 地址" : disabledReason || "移除网卡"} onClick={() => setDetachMAC(item.mac || null)}>
                       <Unplug className="h-4 w-4" />
                     </Button>
@@ -235,6 +267,20 @@ export function VMNetworkInterfacesCard({ vm, canMutate, disabledReason }: {
             <div className="space-y-2"><Label htmlFor="vm-network-qos-out-burst">突发缓冲 (MiB)</Label><Input id="vm-network-qos-out-burst" data-testid="vm-network-qos-out-burst" type="number" min={0} step="any" value={qosOutboundBurst} onChange={(event) => setQosOutboundBurst(event.target.value)} disabled={qosMutation.isPending} /></div>
           </div></section>
           {qosError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{qosError}</p> : null}
+        </div>
+      </Modal>
+
+      <Modal open={modelInterface !== null} onClose={() => { if (!modelMutation.isPending) setModelInterface(null); }} title={`修改网卡型号 · ${modelInterface?.mac || ""}`} description="网卡型号会写入虚拟机持久配置，重启后生效。当前仅支持 virtio 与 e1000。" testId="vm-network-model-modal" footer={<><Button variant="ghost" disabled={modelMutation.isPending} onClick={() => setModelInterface(null)}>取消</Button><Button data-testid="vm-network-model-submit" disabled={modelMutation.isPending || !modelInterface?.mac} onClick={submitModel}>{modelMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}{modelMutation.isPending ? "正在保存..." : "保存型号"}</Button></>}>
+        <div className="space-y-4">
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm"><span className="text-muted-foreground">当前型号：</span><span className="font-mono">{modelInterface?.model || "virtio"}</span></div>
+          <div className="space-y-2">
+            <Label htmlFor="vm-network-model-value">新网卡型号</Label>
+            <select id="vm-network-model-value" data-testid="vm-network-model-value" value={modelEditValue} onChange={(event) => setModelEditValue(event.target.value as VMNICModel)} disabled={modelMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+              <option value="virtio">virtio（推荐，性能更好）</option>
+              <option value="e1000">e1000（兼容旧操作系统）</option>
+            </select>
+          </div>
+          {modelError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{modelError}</p> : null}
         </div>
       </Modal>
     </Card>

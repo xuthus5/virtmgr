@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"virtmgr/internal/domain"
 	"virtmgr/internal/platform/dataplane"
@@ -209,6 +210,15 @@ func (s *Service) Restore(ctx context.Context, command RestoreCommand) (domain.T
 	if err != nil {
 		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.restore", command.ID, detail, err)
 	}
+	if err := s.journal.Start(ctx, domain.DataPlaneOperation{
+		ID: taskID, Kind: domain.DataPlaneOperationBackupRestore, BackupID: item.ID,
+		VMName: command.Spec.Name, TaskID: taskID, Phase: "restoring",
+		SourcePool: item.TargetPool, SourceVolume: item.ManifestVolume,
+		TargetPool: command.Spec.TargetPool,
+	}); err != nil {
+		_ = s.tasks.Fail(ctx, taskID, 0, "写入数据面操作日志失败", err)
+		return domain.Task{}, s.mutationFailure(ctx, command.Request, "backup.restore", command.ID, detail, err)
+	}
 	now := s.now().UTC()
 	task := domain.Task{
 		ID: taskID, Kind: "vm.backup.restore", TargetKind: "backup", TargetID: command.ID,
@@ -230,6 +240,13 @@ func (s *Service) Restore(ctx context.Context, command RestoreCommand) (domain.T
 
 func (s *Service) executeRestore(ctx context.Context, taskID string, lease *dataplane.Lease, item domain.Backup, command RestoreCommand, detail map[string]any) {
 	defer lease.Release()
+	journalStatus := domain.DataPlaneStatusFailed
+	journalMessage := "从备份恢复虚拟机失败"
+	defer func() {
+		finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		s.journal.Finish(finalCtx, taskID, journalStatus, journalMessage)
+	}()
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	progress := 0
@@ -244,10 +261,13 @@ func (s *Service) executeRestore(ctx context.Context, taskID string, lease *data
 		_ = s.tasks.Progress(ctx, taskID, progress, step)
 	})
 	if err != nil {
+		journalMessage = err.Error()
 		_ = s.recordAudit(ctx, command.Request, "backup.restore", item.ID, "failure", detail, err)
 		_ = s.tasks.Fail(ctx, taskID, progress, "从备份恢复虚拟机失败", err)
 		return
 	}
+	journalStatus = domain.DataPlaneStatusSucceeded
+	journalMessage = ""
 	detail["restoredVmUuid"] = vm.UUID
 	detail["restoredVmName"] = vm.Name
 	if s.configVersions != nil {
