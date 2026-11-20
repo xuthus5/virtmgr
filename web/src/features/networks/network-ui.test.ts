@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialHostForm, leaseIsExpired, leaseReservationIssue } from "@/features/networks/network-ui";
+import { createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialHostForm, leaseIsExpired, leaseReservationIssue, mtuInputError } from "@/features/networks/network-ui";
 
 describe("network ui model", () => {
   it("builds IPv6-only DHCPv6 input without requiring IPv4", () => {
@@ -27,6 +27,7 @@ describe("network ui model", () => {
       natIpv6: undefined,
       dnsDomain: "lab.example.com",
       dnsServers: ["1.1.1.1", "2606:4700:4700::1111"],
+      mtu: undefined,
       autostart: false,
       start: false,
     });
@@ -56,6 +57,16 @@ describe("network ui model", () => {
       autostart: false,
       start: true,
     });
+  });
+
+  it("validates IPv6-aware network MTU", () => {
+    expect(mtuInputError("", true)).toBe("");
+    expect(mtuInputError("9000", true)).toBe("");
+    expect(mtuInputError("1200", true)).toContain("1280");
+    expect(mtuInputError("1200", false)).toBe("");
+    expect(mtuInputError("500", false)).toContain("576-9000");
+    expect(mtuInputError("abc", false)).toContain("整数");
+    expect(mtuInputError("1e3", false)).toContain("整数");
   });
 
   it("uses DUID, MAC, IP or hostname as a stable host key", () => {

@@ -1157,6 +1157,7 @@ Tab 内容：
 - 控制台使用一次性 token，不在 URL 中暴露长期会话 Cookie。
 - 失败登录按用户名和来源地址持久化限流：15 分钟内同一用户名/IP 失败 5 次或同一用户名跨来源失败 20 次后返回 `429 TOO_MANY_ATTEMPTS`，成功登录清除失败计数；未知用户和禁用账号执行相同 Argon2id 成本以降低账号枚举信号。
 - 反向代理部署时，只有 `server.yaml` 的 `trusted_proxies` 列出的 IP/CIDR 才能提供 `X-Forwarded-For` / `X-Real-IP`；直连客户端伪造这些请求头不会影响审计或限流来源地址。
+- `server.yaml` 的 `management_allowed_networks` 可进一步限制管理面来源，支持 IPv4/IPv6 CIDR；检查发生在受信代理地址解析之后，空列表表示不限制。
 - 原生 TLS 或 `cookie_secure: true` 的部署会返回 `Strict-Transport-Security: max-age=31536000`，其余响应头包含 CSP、`X-Content-Type-Options`、`X-Frame-Options`、Referrer Policy 和 Permissions Policy。
 
 ### 9.3 审计

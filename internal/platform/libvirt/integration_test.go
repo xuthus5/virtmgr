@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -270,6 +271,7 @@ func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
 		DHCPStart: ipv4 + ".2", DHCPEnd: ipv4 + ".254",
 		IPv6Address: ipv6 + "::1", IPv6Prefix: 64, IPv6Mode: "dhcpv6",
 		IPv6DHCPStart: ipv6 + "::2", IPv6DHCPEnd: ipv6 + "::ff", NATIPv6: true,
+		MTU: 1500, MTUPresent: true,
 		DNSDomain: "it.example.com", DNSServers: []string{"1.1.1.1", "2606:4700:4700::1111"},
 		Start: true,
 	}
@@ -281,7 +283,7 @@ func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
 		_ = client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop)
 		_ = client.DeleteNetwork(ctx, created.Name)
 	}()
-	if !created.Active || created.ForwardMode != "nat" || !created.NATIPv6 || created.DNSDomain != "it.example.com" || len(created.DNSServers) != 2 {
+	if !created.Active || created.ForwardMode != "nat" || !created.NATIPv6 || created.MTU != 1500 || created.DNSDomain != "it.example.com" || len(created.DNSServers) != 2 {
 		t.Fatalf("created IPv6 network = %+v", created)
 	}
 	if len(created.Addresses) != 2 {
@@ -296,9 +298,17 @@ func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
 	if ipv6Address == nil || ipv6Address.IPv6Mode != "dhcpv6" || ipv6Address.DHCPStart == "" || ipv6Address.DHCPEnd == "" {
 		t.Fatalf("created DHCPv6 address = %+v", ipv6Address)
 	}
+	dnsHost := domain.NetworkDNSHost{IP: ipv6 + "::60", Hostnames: []string{"it-dns.it.example.com", "it-dns"}}
+	updated, err := client.AddNetworkDNSHost(ctx, created.Name, dnsHost)
+	if err != nil {
+		t.Fatalf("AddNetworkDNSHost() error = %v", err)
+	}
+	if !containsDNSHost(updated.DNSHosts, dnsHost) {
+		t.Fatalf("IPv6 DNS host not found: %+v", updated.DNSHosts)
+	}
 
 	host := domain.NetworkDHCPHost{ID: "00:03:00:01:52:54:00:ab:cd:ef", IP: ipv6 + "::50", Name: "it-ipv6-host"}
-	updated, err := client.AddNetworkDHCPHost(ctx, created.Name, host)
+	updated, err = client.AddNetworkDHCPHost(ctx, created.Name, host)
 	if err != nil {
 		t.Fatalf("AddNetworkDHCPHost() error = %v", err)
 	}
@@ -330,7 +340,7 @@ func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
 			break
 		}
 	}
-	if restarted == nil || !containsDHCPHost(staticHostsOf(*restarted), host) || !containsDHCPHost(staticHostsOf(*restarted), secondHost) {
+	if restarted == nil || !containsDHCPHost(staticHostsOf(*restarted), host) || !containsDHCPHost(staticHostsOf(*restarted), secondHost) || !containsDNSHost(restarted.DNSHosts, dnsHost) {
 		t.Fatalf("IPv6 reservations did not survive restart: %+v", restarted)
 	}
 	updated, err = client.DeleteNetworkDHCPHost(ctx, created.Name, host)
@@ -347,12 +357,19 @@ func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
 	if containsDHCPHost(staticHostsOf(updated), secondHost) {
 		t.Fatalf("second IPv6 static host still present: %+v", updated.Addresses)
 	}
+	updated, err = client.DeleteNetworkDNSHost(ctx, created.Name, dnsHost)
+	if err != nil {
+		t.Fatalf("DeleteNetworkDNSHost() error = %v", err)
+	}
+	if containsDNSHost(updated.DNSHosts, dnsHost) {
+		t.Fatalf("IPv6 DNS host still present: %+v", updated.DNSHosts)
+	}
 
 	diagnostics, err := client.NetworkDiagnostics(ctx, created.Name)
 	if err != nil {
 		t.Fatalf("NetworkDiagnostics() error = %v", err)
 	}
-	if !diagnostics.Active || !diagnostics.BridgeReady || !diagnostics.NATIPv6 || !diagnostics.DHCPv6Range || len(diagnostics.Checks) == 0 {
+	if !diagnostics.Active || !diagnostics.BridgeReady || !diagnostics.NATIPv6 || !diagnostics.DHCPv6Range || diagnostics.MTU != 1500 || len(diagnostics.Checks) == 0 {
 		t.Fatalf("IPv6 diagnostics = %+v", diagnostics)
 	}
 	if diagnostics.RuntimeDrift || len(diagnostics.DriftDetails) != 0 {
@@ -574,6 +591,25 @@ func staticHostsOf(network domain.VirtualNetwork) []domain.NetworkDHCPHost {
 func containsDHCPHost(hosts []domain.NetworkDHCPHost, want domain.NetworkDHCPHost) bool {
 	for _, host := range hosts {
 		if strings.EqualFold(host.MAC, want.MAC) && host.IP == want.IP && host.Name == want.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDNSHost(hosts []domain.NetworkDNSHost, want domain.NetworkDNSHost) bool {
+	for _, host := range hosts {
+		if host.IP != want.IP || len(host.Hostnames) != len(want.Hostnames) {
+			continue
+		}
+		matched := true
+		for _, hostname := range want.Hostnames {
+			if !slices.Contains(host.Hostnames, hostname) {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return true
 		}
 	}

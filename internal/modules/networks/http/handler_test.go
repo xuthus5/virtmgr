@@ -15,19 +15,21 @@ import (
 )
 
 type handlerRepository struct {
-	networks    []domain.VirtualNetwork
-	bridges     []domain.HostBridge
-	err         error
-	created     domain.VirtualNetworkDefinition
-	updated     domain.VirtualNetworkDefinition
-	actionFor   string
-	action      domain.VirtualNetworkAction
-	addedHost   domain.NetworkDHCPHost
-	deletedHost domain.NetworkDHCPHost
-	deleted     string
-	leaseFor    string
-	leases      []domain.DHCPLease
-	diagnostics domain.NetworkDiagnostics
+	networks       []domain.VirtualNetwork
+	bridges        []domain.HostBridge
+	err            error
+	created        domain.VirtualNetworkDefinition
+	updated        domain.VirtualNetworkDefinition
+	actionFor      string
+	action         domain.VirtualNetworkAction
+	addedHost      domain.NetworkDHCPHost
+	deletedHost    domain.NetworkDHCPHost
+	addedDNSHost   domain.NetworkDNSHost
+	deletedDNSHost domain.NetworkDNSHost
+	deleted        string
+	leaseFor       string
+	leases         []domain.DHCPLease
+	diagnostics    domain.NetworkDiagnostics
 }
 
 func (f *handlerRepository) ListNetworks(context.Context) ([]domain.VirtualNetwork, error) {
@@ -80,6 +82,16 @@ func (f *handlerRepository) DeleteNetworkDHCPHost(_ context.Context, name string
 		return domain.VirtualNetwork{}, f.err
 	}
 	f.deletedHost = host
+	return domain.VirtualNetwork{Name: name}, nil
+}
+
+func (f *handlerRepository) AddNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	f.addedDNSHost = host
+	return domain.VirtualNetwork{Name: name, DNSHosts: []domain.NetworkDNSHost{host}}, nil
+}
+
+func (f *handlerRepository) DeleteNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	f.deletedDNSHost = host
 	return domain.VirtualNetwork{Name: name}, nil
 }
 
@@ -387,6 +399,30 @@ func TestNetworkDHCPHostIPv6DUIDRoutes(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || repository.deletedHost.ID != "00:03:00:01:52:54:00:12:34:56" || repository.deletedHost.IP != "fd00:86::50" {
 		t.Fatalf("delete IPv6 host status = %d body=%s host=%+v", recorder.Code, recorder.Body.String(), repository.deletedHost)
+	}
+}
+
+func TestNetworkDNSHostIPv6Routes(t *testing.T) {
+	network := domain.VirtualNetwork{
+		Name: "dns-net", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{{Family: "ipv6", Address: "fd00:87::1", Prefix: 64}},
+		DNSHosts:  []domain.NetworkDNSHost{{IP: "fd00:87::50", Hostnames: []string{"db.lab.example"}}},
+	}
+	repository := &handlerRepository{networks: []domain.VirtualNetwork{network}}
+	router := newTestRouter(repository)
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/dns-net/dns/hosts", strings.NewReader(`{"ip":"fd00:87::51","hostnames":["Web.Lab.Example.","web.lab.example"]}`)), domain.RoleOperator)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || repository.addedDNSHost.IP != "fd00:87::51" || len(repository.addedDNSHost.Hostnames) != 1 || repository.addedDNSHost.Hostnames[0] != "web.lab.example" {
+		t.Fatalf("add DNS host status = %d body=%s host=%+v", recorder.Code, recorder.Body.String(), repository.addedDNSHost)
+	}
+
+	request = withSession(httptest.NewRequest(http.MethodDelete, "/networks/dns-net/dns/hosts/fd00%3A87%3A%3A50", nil), domain.RoleAdmin)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || repository.deletedDNSHost.IP != "fd00:87::50" {
+		t.Fatalf("delete DNS host status = %d body=%s host=%+v", recorder.Code, recorder.Body.String(), repository.deletedDNSHost)
 	}
 }
 

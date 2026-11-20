@@ -36,6 +36,8 @@ type Repository interface {
 	UpdateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	AddNetworkDHCPHost(ctx context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error)
 	DeleteNetworkDHCPHost(ctx context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error)
+	AddNetworkDNSHost(ctx context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error)
+	DeleteNetworkDNSHost(ctx context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error)
 	PerformNetworkAction(ctx context.Context, name string, action domain.VirtualNetworkAction) error
 	DeleteNetwork(ctx context.Context, name string) error
 }
@@ -91,6 +93,18 @@ type AddNetworkDHCPHostCommand struct {
 type DeleteNetworkDHCPHostCommand struct {
 	Name    string
 	Key     string
+	Request MutationContext
+}
+
+type AddNetworkDNSHostCommand struct {
+	Name    string
+	Spec    domain.NetworkDNSHostCreateSpec
+	Request MutationContext
+}
+
+type DeleteNetworkDNSHostCommand struct {
+	Name    string
+	IP      string
 	Request MutationContext
 }
 
@@ -213,7 +227,7 @@ func (s *Service) Create(ctx context.Context, command CreateNetworkCommand) (dom
 		"ipv6Subnet": command.Spec.IPv6Subnet, "ipv6Address": definition.IPv6Address, "ipv6Prefix": definition.IPv6Prefix,
 		"ipv6Mode":      definition.IPv6Mode,
 		"ipv6DhcpStart": definition.IPv6DHCPStart, "ipv6DhcpEnd": definition.IPv6DHCPEnd,
-		"natIpv6": definition.NATIPv6, "dnsDomain": definition.DNSDomain, "dnsServers": definition.DNSServers,
+		"natIpv6": definition.NATIPv6, "mtu": definition.MTU, "dnsDomain": definition.DNSDomain, "dnsServers": definition.DNSServers,
 		"bridge":    definition.Bridge,
 		"autostart": definition.Autostart, "start": definition.Start,
 	}
@@ -236,7 +250,7 @@ func (s *Service) Update(ctx context.Context, command UpdateNetworkCommand) (dom
 	}
 	definition, err := normalizeNetworkSpec(command.Name, command.Spec.Mode, command.Spec.Subnet, command.Spec.DHCPStart, command.Spec.DHCPEnd,
 		command.Spec.IPv6Subnet, command.Spec.IPv6Mode, command.Spec.IPv6DHCPStart, command.Spec.IPv6DHCPEnd,
-		command.Spec.NATIPv6, command.Spec.DNSDomain, command.Spec.DNSServers, command.Spec.Bridge, command.Spec.Autostart)
+		command.Spec.NATIPv6, command.Spec.MTU, command.Spec.DNSDomain, command.Spec.DNSServers, command.Spec.Bridge, command.Spec.Autostart)
 	if err != nil {
 		return domain.VirtualNetwork{}, err
 	}
@@ -257,7 +271,7 @@ func (s *Service) Update(ctx context.Context, command UpdateNetworkCommand) (dom
 		"ipv6Subnet": strings.TrimSpace(command.Spec.IPv6Subnet), "ipv6Address": definition.IPv6Address, "ipv6Prefix": definition.IPv6Prefix,
 		"ipv6Mode":      definition.IPv6Mode,
 		"ipv6DhcpStart": definition.IPv6DHCPStart, "ipv6DhcpEnd": definition.IPv6DHCPEnd,
-		"natIpv6": definition.NATIPv6, "dnsDomain": definition.DNSDomain, "dnsServers": definition.DNSServers,
+		"natIpv6": definition.NATIPv6, "mtu": definition.MTU, "dnsDomain": definition.DNSDomain, "dnsServers": definition.DNSServers,
 		"bridge":    definition.Bridge,
 		"autostart": definition.Autostart,
 	}
@@ -421,6 +435,73 @@ func (s *Service) DeleteDHCPHost(ctx context.Context, command DeleteNetworkDHCPH
 	return updated, nil
 }
 
+func (s *Service) AddDNSHost(ctx context.Context, command AddNetworkDNSHostCommand) (domain.VirtualNetwork, error) {
+	if !domain.CanManageNetworks(command.Request.Session.User.Role) {
+		return domain.VirtualNetwork{}, domain.ErrForbidden
+	}
+	if s.isReadOnly() {
+		return domain.VirtualNetwork{}, domain.ErrReadOnly
+	}
+	command.Name = strings.TrimSpace(command.Name)
+	if !networkNamePattern.MatchString(command.Name) {
+		return domain.VirtualNetwork{}, domain.ErrInvalidInput
+	}
+	host, err := normalizeNetworkDNSHost(command.Spec)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	network, err := s.findNetwork(ctx, command.Name)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	if err := validateNetworkDNSHost(network, host); err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	updated, err := s.repository.AddNetworkDNSHost(ctx, command.Name, host)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	detail := map[string]any{"ip": host.IP, "hostnames": host.Hostnames}
+	if err := s.recordAudit(ctx, command.Request, "network.dns.host.add", command.Name, detail); err != nil {
+		return domain.VirtualNetwork{}, fmt.Errorf("record network DNS host creation audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) DeleteDNSHost(ctx context.Context, command DeleteNetworkDNSHostCommand) (domain.VirtualNetwork, error) {
+	if !domain.CanManageNetworks(command.Request.Session.User.Role) {
+		return domain.VirtualNetwork{}, domain.ErrForbidden
+	}
+	if s.isReadOnly() {
+		return domain.VirtualNetwork{}, domain.ErrReadOnly
+	}
+	command.Name = strings.TrimSpace(command.Name)
+	if !networkNamePattern.MatchString(command.Name) {
+		return domain.VirtualNetwork{}, domain.ErrInvalidInput
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(command.IP))
+	if err != nil || !address.IsValid() {
+		return domain.VirtualNetwork{}, domain.ErrInvalidInput
+	}
+	address = address.Unmap()
+	network, err := s.findNetwork(ctx, command.Name)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	host, err := findNetworkDNSHost(network, address)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	updated, err := s.repository.DeleteNetworkDNSHost(ctx, command.Name, host)
+	if err != nil {
+		return domain.VirtualNetwork{}, err
+	}
+	if err := s.recordAudit(ctx, command.Request, "network.dns.host.delete", command.Name, map[string]any{"ip": host.IP, "hostnames": host.Hostnames}); err != nil {
+		return domain.VirtualNetwork{}, fmt.Errorf("record network DNS host deletion audit: %w", err)
+	}
+	return updated, nil
+}
+
 func (s *Service) findNetwork(ctx context.Context, name string) (domain.VirtualNetwork, error) {
 	networks, err := s.repository.ListNetworks(ctx)
 	if err != nil {
@@ -542,6 +623,103 @@ func validateNetworkDHCPHost(network domain.VirtualNetwork, host domain.NetworkD
 	return domain.NetworkAddress{}, domain.ErrNetworkUnsupported
 }
 
+func normalizeNetworkDNSHost(spec domain.NetworkDNSHostCreateSpec) (domain.NetworkDNSHost, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(spec.IP))
+	if err != nil || !address.IsValid() || !address.IsGlobalUnicast() || address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
+		return domain.NetworkDNSHost{}, fmt.Errorf("%w: DNS host IP must be a unicast IPv4 or IPv6 address", domain.ErrInvalidInput)
+	}
+	hostnames := make([]string, 0, len(spec.Hostnames))
+	seen := map[string]bool{}
+	for _, value := range spec.Hostnames {
+		name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+		if name == "" || len(name) > 253 || !dnsDomainPattern.MatchString(name) {
+			return domain.NetworkDNSHost{}, fmt.Errorf("%w: invalid DNS hostname", domain.ErrInvalidInput)
+		}
+		if !seen[name] {
+			seen[name] = true
+			hostnames = append(hostnames, name)
+		}
+	}
+	if len(hostnames) == 0 || len(hostnames) > 8 {
+		return domain.NetworkDNSHost{}, fmt.Errorf("%w: a DNS host entry requires between 1 and 8 hostnames", domain.ErrInvalidInput)
+	}
+	return domain.NetworkDNSHost{IP: address.Unmap().String(), Hostnames: hostnames}, nil
+}
+
+func validateNetworkDNSHost(network domain.VirtualNetwork, host domain.NetworkDNSHost) error {
+	if !network.Persistent && !network.Active {
+		return domain.ErrNetworkUnsupported
+	}
+	hostIP := net.ParseIP(host.IP)
+	if hostIP == nil {
+		return fmt.Errorf("%w: invalid DNS host IP", domain.ErrInvalidInput)
+	}
+	found := false
+	for _, address := range network.Addresses {
+		if networkAddressFamily(address) == ipFamilyFromNetIP(hostIP) && addressBelongsToNetworkAddress(address, hostIP) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("%w: DNS host IP must be inside one of the network subnets", domain.ErrInvalidInput)
+	}
+	for _, existing := range network.DNSHosts {
+		if existing.IP == host.IP {
+			return domain.ErrConflict
+		}
+		for _, left := range existing.Hostnames {
+			for _, right := range host.Hostnames {
+				if strings.EqualFold(left, right) {
+					return domain.ErrConflict
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func findNetworkDNSHost(network domain.VirtualNetwork, address netip.Addr) (domain.NetworkDNSHost, error) {
+	for _, host := range network.DNSHosts {
+		value, err := netip.ParseAddr(host.IP)
+		if err == nil && value.Unmap() == address.Unmap() {
+			return host, nil
+		}
+	}
+	return domain.NetworkDNSHost{}, domain.ErrNotFound
+}
+
+func ipFamilyFromNetIP(address net.IP) string {
+	if address.To4() == nil && address.To16() != nil {
+		return "ipv6"
+	}
+	return "ipv4"
+}
+
+func addressBelongsToNetworkAddress(address domain.NetworkAddress, host net.IP) bool {
+	if host == nil {
+		return false
+	}
+	if networkAddressFamily(address) == "ipv6" {
+		gateway, err := netip.ParseAddr(address.Address)
+		hostAddress, hostErr := netip.ParseAddr(host.String())
+		if err != nil || hostErr != nil || !gateway.Is6() || !hostAddress.Is6() || !hostAddress.IsGlobalUnicast() || hostAddress.IsLoopback() || hostAddress.IsLinkLocalUnicast() || address.Prefix < 1 || address.Prefix > 128 {
+			return false
+		}
+		prefix := netip.PrefixFrom(gateway, address.Prefix).Masked()
+		return prefix.Contains(hostAddress) && hostAddress != prefix.Addr() && hostAddress.Compare(lastIPv6Address(prefix)) < 0
+	}
+	gateway := net.ParseIP(address.Address).To4()
+	hostAddress := host.To4()
+	if gateway == nil || hostAddress == nil || address.Prefix < 1 || address.Prefix > 32 {
+		return false
+	}
+	mask := net.CIDRMask(address.Prefix, 32)
+	subnet := gateway.Mask(mask)
+	broadcast := ipv4Broadcast(subnet, address.Prefix)
+	return hostAddress.Mask(mask).Equal(subnet) && !hostAddress.Equal(subnet) && !hostAddress.Equal(broadcast)
+}
+
 func networkAddressFamily(address domain.NetworkAddress) string {
 	if strings.EqualFold(strings.TrimSpace(address.Family), "ipv6") {
 		return "ipv6"
@@ -649,7 +827,7 @@ func normalizeCreateSpec(spec domain.VirtualNetworkCreateSpec) (domain.VirtualNe
 	}
 	definition, err := normalizeNetworkSpec(spec.Name, spec.Mode, spec.Subnet, spec.DHCPStart, spec.DHCPEnd,
 		spec.IPv6Subnet, spec.IPv6Mode, spec.IPv6DHCPStart, spec.IPv6DHCPEnd,
-		spec.NATIPv6, spec.DNSDomain, spec.DNSServers, spec.Bridge, spec.Autostart)
+		spec.NATIPv6, spec.MTU, spec.DNSDomain, spec.DNSServers, spec.Bridge, spec.Autostart)
 	if err != nil {
 		return domain.VirtualNetworkDefinition{}, err
 	}
@@ -657,14 +835,14 @@ func normalizeCreateSpec(spec domain.VirtualNetworkCreateSpec) (domain.VirtualNe
 	return definition, nil
 }
 
-func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText, ipv6SubnetText, ipv6ModeText, ipv6DHCPStartText, ipv6DHCPEndText string, natIPv6 *bool, dnsDomainText string, dnsServerValues []string, bridgeText string, autostart bool) (domain.VirtualNetworkDefinition, error) {
+func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText, ipv6SubnetText, ipv6ModeText, ipv6DHCPStartText, ipv6DHCPEndText string, natIPv6 *bool, mtu *int, dnsDomainText string, dnsServerValues []string, bridgeText string, autostart bool) (domain.VirtualNetworkDefinition, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "bridge" {
 		bridge := strings.TrimSpace(bridgeText)
 		if !hostBridgeNamePattern.MatchString(bridge) {
 			return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: host bridge name is invalid", domain.ErrInvalidInput)
 		}
-		if strings.TrimSpace(subnetText) != "" || strings.TrimSpace(dhcpStartText) != "" || strings.TrimSpace(dhcpEndText) != "" ||
+		if mtu != nil || strings.TrimSpace(subnetText) != "" || strings.TrimSpace(dhcpStartText) != "" || strings.TrimSpace(dhcpEndText) != "" ||
 			strings.TrimSpace(ipv6SubnetText) != "" || strings.TrimSpace(ipv6ModeText) != "" || strings.TrimSpace(ipv6DHCPStartText) != "" || strings.TrimSpace(ipv6DHCPEndText) != "" ||
 			(natIPv6 != nil && *natIPv6) || strings.TrimSpace(dnsDomainText) != "" || len(dnsServerValues) > 0 {
 			return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: bridge networks use addressing and DNS supplied by the upstream network", domain.ErrInvalidInput)
@@ -687,6 +865,10 @@ func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText, ip
 	if ipv4Address == "" && ipv6Address == "" {
 		return domain.VirtualNetworkDefinition{}, fmt.Errorf("%w: an IPv4 or IPv6 subnet is required", domain.ErrInvalidInput)
 	}
+	mtuValue, mtuPresent, err := normalizeNetworkMTU(mtu, ipv6Address != "")
+	if err != nil {
+		return domain.VirtualNetworkDefinition{}, err
+	}
 	dnsDomain, dnsServers, err := normalizeNetworkDNS(dnsDomainText, dnsServerValues)
 	if err != nil {
 		return domain.VirtualNetworkDefinition{}, err
@@ -700,8 +882,26 @@ func normalizeNetworkSpec(name, mode, subnetText, dhcpStartText, dhcpEndText, ip
 		DHCPStart: dhcpStart, DHCPEnd: dhcpEnd,
 		IPv6Address: ipv6Address, IPv6Prefix: ipv6Prefix, IPv6Mode: ipv6Mode,
 		IPv6DHCPStart: ipv6DHCPStart, IPv6DHCPEnd: ipv6DHCPEnd,
-		NATIPv6: natIPv6Enabled, DNSDomain: dnsDomain, DNSServers: dnsServers, Autostart: autostart,
+		NATIPv6: natIPv6Enabled, MTU: mtuValue, MTUPresent: mtuPresent,
+		DNSDomain: dnsDomain, DNSServers: dnsServers, Autostart: autostart,
 	}, nil
+}
+
+func normalizeNetworkMTU(value *int, hasIPv6 bool) (int, bool, error) {
+	if value == nil {
+		return 0, false, nil
+	}
+	mtu := *value
+	if mtu == 0 {
+		return 0, true, nil
+	}
+	if mtu < 576 || mtu > 9000 {
+		return 0, false, fmt.Errorf("%w: network MTU must be between 576 and 9000", domain.ErrInvalidInput)
+	}
+	if hasIPv6 && mtu < 1280 {
+		return 0, false, fmt.Errorf("%w: IPv6 networks require an MTU of at least 1280", domain.ErrInvalidInput)
+	}
+	return mtu, true, nil
 }
 
 func normalizeIPv4Subnet(subnetText, dhcpStartText, dhcpEndText string) (string, int, string, string, error) {
@@ -885,6 +1085,22 @@ func (s *Service) validateNetworkUpdateHosts(ctx context.Context, name string, d
 	network, err := s.findNetwork(ctx, name)
 	if err != nil {
 		return err
+	}
+	for _, host := range network.DNSHosts {
+		hostIP := net.ParseIP(host.IP)
+		if hostIP == nil {
+			return fmt.Errorf("%w: DNS host %s has an invalid address; remove it before changing the network", domain.ErrConflict, host.IP)
+		}
+		family := ipFamilyFromNetIP(hostIP)
+		target := domain.NetworkAddress{}
+		if family == "ipv6" {
+			target = domain.NetworkAddress{Family: "ipv6", Address: definition.IPv6Address, Prefix: definition.IPv6Prefix}
+		} else {
+			target = domain.NetworkAddress{Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix}
+		}
+		if target.Address == "" || !addressBelongsToNetworkAddress(target, hostIP) {
+			return fmt.Errorf("%w: DNS host %s is outside the new %s subnet; remove or migrate the DNS record first", domain.ErrConflict, host.IP, family)
+		}
 	}
 	for _, address := range network.Addresses {
 		if len(address.Hosts) == 0 {

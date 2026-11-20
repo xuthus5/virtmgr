@@ -68,6 +68,26 @@ func TestManagedNetworkConfigIgnoresHostOrder(t *testing.T) {
 	}
 }
 
+func TestManagedNetworkConfigDetectsDNSHostAndMTUDrift(t *testing.T) {
+	persistent := `<network><name>dns</name><forward mode='isolated'/><mtu size='9000'/><dns><host ip='fd00:91::50'><hostname>db.lab.example</hostname><hostname>db-v6.lab.example</hostname></host></dns><ip family='ipv6' address='fd00:91::1' prefix='64'/></network>`
+	active := strings.Replace(strings.Replace(persistent, `<mtu size='9000'/>`, `<mtu size='1500'/>`, 1), `db-v6.lab.example`, `web.lab.example`, 1)
+	persistentConfig, err := parseManagedNetworkConfig(persistent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeConfig, err := parseManagedNetworkConfig(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistentConfig.MTU != 9000 || activeConfig.MTU != 1500 {
+		t.Fatalf("parsed MTU persistent=%d active=%d", persistentConfig.MTU, activeConfig.MTU)
+	}
+	details := compareManagedNetworkConfig(activeConfig, persistentConfig)
+	if len(details) != 2 || !strings.Contains(strings.Join(details, ","), "MTU") || !strings.Contains(strings.Join(details, ","), "DNS") {
+		t.Fatalf("drift details = %v", details)
+	}
+}
+
 func TestParseVersionSupportsLibvirtAndDnsmasqFormats(t *testing.T) {
 	tests := []struct {
 		name  string

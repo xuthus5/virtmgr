@@ -245,6 +245,8 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await expect(defaultRow).toContainText("fd00:122::1/64");
   await expect(defaultRow).toContainText("DHCP 192.168.122.2 - 192.168.122.254");
   await expect(defaultRow).toContainText("DHCP fd00:122::2 - fd00:122::ffff");
+  await expect(defaultRow).toContainText("MTU 1500");
+  await expect(defaultRow).toContainText("静态 DNS 记录 1 条");
   const bridgeRow = page.getByTestId("network-row-br-prod");
   await expect(bridgeRow).toContainText("bridge");
   await expect(bridgeRow).toContainText("br0");
@@ -286,6 +288,11 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await expect(page.getByTestId("network-hosts-export-default")).toBeEnabled();
   await expect(page.getByTestId("network-hosts-import-default")).toBeDisabled();
   await expect(page.getByTestId("network-host-delete-52:54:00:12:34:56")).toBeDisabled();
+  await expect(page.getByTestId("network-dns-hosts-card")).toContainText("静态 DNS A/AAAA 记录 · default");
+  await expect(page.getByTestId("network-dns-host-row-fd00:122::50")).toContainText("demo-db-01.lab.example");
+  await expect(page.getByTestId("network-dns-host-row-fd00:122::50")).toContainText("AAAA");
+  await expect(page.getByTestId("network-dns-host-form")).toHaveCount(0);
+  await expect(page.getByTestId("network-dns-host-delete-fd00:122::50")).toBeDisabled();
 });
 
 test("网络诊断展示真实检查项并适配移动端", async ({ page }) => {
@@ -300,6 +307,7 @@ test("网络诊断展示真实检查项并适配移动端", async ({ page }) => 
   await expect(page.getByTestId("network-diagnostics-summary")).toContainText("DHCPv6 运行");
   await expect(page.getByTestId("network-diagnostics-summary")).toContainText("RA 运行");
   await expect(page.getByTestId("network-diagnostics-summary")).toContainText("DNS 有响应");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("静态记录 1");
   await expect(page.getByTestId("network-diagnostics-summary")).toContainText("网关 可达");
   await expect(page.getByTestId("network-diagnostics-summary")).toContainText("出网 可达");
   await expect(page.getByTestId("network-diagnostic-compatibility")).toContainText("满足受支持基线");
@@ -518,6 +526,9 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
   await page.getByTestId("template-use-secure-uefi").click();
   const editor = page.getByTestId("vm-cloud-init-editor");
   await expect(editor).toBeVisible();
+  await expect(page.getByTestId("vm-cloud-init-network-source")).toContainText("IPv6 fd00:122::1/64 · DHCP");
+  await expect(page.getByTestId("vm-cloud-init-network-ipv6-mode")).toHaveValue("dhcpv6");
+  await expect(page.getByTestId("vm-cloud-init-network-fill-source")).toBeDisabled();
 
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });

@@ -5,7 +5,7 @@ import {
   Code2,
   Copy,
   FileCode2,
-  Network,
+  Network as NetworkIcon,
   Package,
   Settings2,
   Terminal,
@@ -19,15 +19,19 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   cloudInitCombinedByteLength,
   cloudInitDraftIssues,
+  cloudInitNetworkConfigIssues,
+  cloudInitNetworkDraftFromNetwork,
   cloudInitNetworkIssues,
   emptyCloudInitDraft,
   emptyCloudInitNetworkDraft,
   maxCloudInitBytes,
   parseCloudInitUserData,
+  parseNetworkConfig,
   serializeCloudInit,
   serializeNetworkConfig,
   type CloudInitDraft,
   type CloudInitNetworkDraft,
+  type CloudInitNetworkSource,
 } from "@/features/cloud-init/cloud-init-model";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +49,7 @@ type CloudInitEditorProps = {
   disabled?: boolean;
   prefix?: string;
   className?: string;
+  network?: CloudInitNetworkSource;
 };
 
 function initialEditorState(value: string): { mode: "visual" | "source"; draft: CloudInitDraft } {
@@ -56,13 +61,36 @@ function initialEditorState(value: string): { mode: "visual" | "source"; draft: 
   };
 }
 
-export function CloudInitEditor({ value, onChange, networkConfig = "", onNetworkConfigChange, vendorData = "", onVendorDataChange, disabled = false, prefix = "cloud-init", className }: CloudInitEditorProps) {
+function initialNetworkDraft(networkConfig: string, network?: CloudInitNetworkSource): CloudInitNetworkDraft {
+  const parsed = parseNetworkConfig(networkConfig);
+  if (parsed.visualizable) return parsed.draft;
+  if (network) return cloudInitNetworkDraftFromNetwork(network);
+  return { ...emptyCloudInitNetworkDraft };
+}
+
+function networkSummary(network: CloudInitNetworkSource): string {
+  const parts: string[] = [];
+  for (const address of network.addresses) {
+    const family = address.family === "ipv4" ? "IPv4" : "IPv6";
+    const method = address.family === "ipv6" && address.ipv6Mode === "slaac"
+      ? "SLAAC"
+      : address.dhcpEnabled || address.dhcpStart
+        ? "DHCP"
+        : "静态";
+    parts.push(`${family} ${address.address}/${address.prefix} · ${method}`);
+  }
+  if (network.mtu) parts.push(`MTU ${network.mtu}`);
+  return parts.length ? parts.join("；") : "未配置 L3 子网（按外部 DHCP 生成）";
+}
+
+export function CloudInitEditor({ value, onChange, networkConfig = "", onNetworkConfigChange, vendorData = "", onVendorDataChange, disabled = false, prefix = "cloud-init", className, network }: CloudInitEditorProps) {
   const initialState = useMemo(() => initialEditorState(value), []); // Initialize once; external edits are synchronized below.
   const [mode, setMode] = useState<"visual" | "source">(initialState.mode);
   const [draft, setDraft] = useState<CloudInitDraft>(initialState.draft);
   const [modeNotice, setModeNotice] = useState("");
   const [copied, setCopied] = useState(false);
-  const [networkDraft, setNetworkDraft] = useState<CloudInitNetworkDraft>(() => ({ ...emptyCloudInitNetworkDraft }));
+  const [networkDraft, setNetworkDraft] = useState<CloudInitNetworkDraft>(() => initialNetworkDraft(networkConfig, network));
+  const [networkNotice, setNetworkNotice] = useState("");
   const parsed = useMemo(() => parseCloudInitUserData(value), [value]);
   const preview = useMemo(() => serializeCloudInit(draft), [draft]);
   const issues = cloudInitDraftIssues(draft);
@@ -70,11 +98,22 @@ export function CloudInitEditor({ value, onChange, networkConfig = "", onNetwork
   const combinedBytes = cloudInitCombinedByteLength(value, networkConfig, vendorData);
   const tooLarge = combinedBytes > maxCloudInitBytes;
   const networkPreview = useMemo(() => serializeNetworkConfig(networkDraft), [networkDraft]);
-  const networkIssues = cloudInitNetworkIssues(networkDraft);
+  const networkIssues = cloudInitNetworkIssues(networkDraft, network);
+  const networkConfigIssues = cloudInitNetworkConfigIssues(networkConfig, network);
 
   useEffect(() => {
     if (parsed.visualizable) setDraft(parsed.draft);
   }, [parsed]);
+
+  useEffect(() => {
+    const parsedNetwork = parseNetworkConfig(networkConfig);
+    if (parsedNetwork.visualizable) setNetworkDraft(parsedNetwork.draft);
+  }, [networkConfig]);
+
+  useEffect(() => {
+    if (networkConfig.trim() || !network) return;
+    setNetworkDraft(cloudInitNetworkDraftFromNetwork(network));
+  }, [network, networkConfig]);
 
   function updateDraft<K extends keyof CloudInitDraft>(key: K, nextValue: CloudInitDraft[K]) {
     const next = { ...draft, [key]: nextValue };
@@ -85,6 +124,20 @@ export function CloudInitEditor({ value, onChange, networkConfig = "", onNetwork
 
   function updateNetworkDraft<K extends keyof CloudInitNetworkDraft>(key: K, nextValue: CloudInitNetworkDraft[K]) {
     setNetworkDraft((current) => ({ ...current, [key]: nextValue }));
+    setNetworkNotice("");
+  }
+
+  function fillNetworkFromSource() {
+    if (!network || !onNetworkConfigChange) return;
+    const next = cloudInitNetworkDraftFromNetwork(network);
+    const nextIssues = cloudInitNetworkIssues(next, network);
+    setNetworkDraft(next);
+    if (nextIssues.length) {
+      setNetworkNotice(`已带入 ${network.name} 的网关、MTU 和 IPv6 模式；请补全静态地址后再应用。`);
+      return;
+    }
+    onNetworkConfigChange(serializeNetworkConfig(next));
+    setNetworkNotice(`已按虚拟网络 ${network.name} 生成 network-config。`);
   }
 
   function showVisualEditor() {
@@ -346,14 +399,26 @@ export function CloudInitEditor({ value, onChange, networkConfig = "", onNetwork
       {onNetworkConfigChange || onVendorDataChange ? (
         <div className="space-y-4 border-t bg-muted/10 p-3 sm:p-4" data-testid={`${prefix}-network-vendor`}>
           <div className="flex items-start gap-2">
-            <Network className="mt-0.5 h-4 w-4 text-primary" />
+            <NetworkIcon className="mt-0.5 h-4 w-4 text-primary" />
             <div>
               <p className="text-sm font-medium">网络与 vendor-data</p>
-              <p className="text-xs text-muted-foreground">生成 Netplan v2 <code className="font-mono">network-config</code>，支持静态 IPv4/IPv6；vendor-data 会原样写入 NoCloud seed ISO。</p>
+              <p className="text-xs text-muted-foreground">生成 Netplan v2 <code className="font-mono">network-config</code>，覆盖 IPv4-only、IPv6-only（DHCPv6/SLAAC）和双栈，也支持静态 IPv4/IPv6；vendor-data 会原样写入 NoCloud seed ISO。</p>
             </div>
           </div>
           {onNetworkConfigChange ? (
             <div className="space-y-3 rounded-lg border bg-card p-3">
+              {network ? (
+                <div className="flex flex-col gap-2 rounded-md border bg-muted/25 p-2.5 sm:flex-row sm:items-center" data-testid={`${prefix}-network-source`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">当前网络</Badge>
+                      <span className="text-xs font-medium">{network.name}</span>
+                    </div>
+                    <p className="mt-1 break-words text-[11px] text-muted-foreground">{networkSummary(network)}</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="w-full shrink-0 sm:w-auto" disabled={disabled} onClick={fillNetworkFromSource} data-testid={`${prefix}-network-fill-source`}>按当前网络生成</Button>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <Label>网络模式</Label>
                 {(["disabled", "dhcp", "static"] as const).map((networkMode) => (
@@ -365,6 +430,26 @@ export function CloudInitEditor({ value, onChange, networkConfig = "", onNetwork
               {networkDraft.mode !== "disabled" ? (
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5"><Label htmlFor={`${prefix}-network-interface`}>网卡名称</Label><Input id={`${prefix}-network-interface`} value={networkDraft.interface} onChange={(event) => updateNetworkDraft("interface", event.target.value)} disabled={disabled} placeholder="ens3" /></div>
+                  <div className="space-y-1.5"><Label htmlFor={`${prefix}-network-mtu`}>MTU（可选）</Label><Input id={`${prefix}-network-mtu`} data-testid={`${prefix}-network-mtu`} inputMode="numeric" value={networkDraft.mtu ?? ""} onChange={(event) => updateNetworkDraft("mtu", event.target.value)} disabled={disabled} placeholder="1500" /></div>
+                  {networkDraft.mode === "dhcp" ? (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`${prefix}-network-ipv4-mode`}>IPv4 自动配置</Label>
+                        <select id={`${prefix}-network-ipv4-mode`} data-testid={`${prefix}-network-ipv4-mode`} value={networkDraft.ipv4Mode ?? "dhcp"} onChange={(event) => updateNetworkDraft("ipv4Mode", event.target.value as "off" | "dhcp")} disabled={disabled} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                          <option value="dhcp">DHCPv4</option>
+                          <option value="off">关闭</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`${prefix}-network-ipv6-mode`}>IPv6 自动配置</Label>
+                        <select id={`${prefix}-network-ipv6-mode`} data-testid={`${prefix}-network-ipv6-mode`} value={networkDraft.ipv6Mode ?? "dhcpv6"} onChange={(event) => updateNetworkDraft("ipv6Mode", event.target.value as "off" | "dhcpv6" | "slaac")} disabled={disabled} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50">
+                          <option value="dhcpv6">DHCPv6（有状态）</option>
+                          <option value="slaac">SLAAC / RA（无状态）</option>
+                          <option value="off">关闭</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : null}
                   <div className="space-y-1.5"><Label htmlFor={`${prefix}-network-dns`}>DNS（逗号或换行分隔）</Label><Input id={`${prefix}-network-dns`} value={networkDraft.dnsServers} onChange={(event) => updateNetworkDraft("dnsServers", event.target.value)} disabled={disabled} placeholder="1.1.1.1, 2606:4700:4700::1111" /></div>
                   {networkDraft.mode === "static" ? (
                     <>
@@ -376,13 +461,15 @@ export function CloudInitEditor({ value, onChange, networkConfig = "", onNetwork
                   ) : null}
                 </div>
               ) : null}
+              {networkNotice ? <p className="rounded-md border border-success/25 bg-success/5 px-3 py-2 text-xs text-success" role="status" data-testid={`${prefix}-network-notice`}>{networkNotice}</p> : null}
               {networkIssues.length ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{networkIssues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
-              {networkDraft.mode === "static" ? <pre className="max-h-56 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-[11px] text-slate-200" data-testid={`${prefix}-network-preview`}>{networkPreview}</pre> : null}
+              {networkDraft.mode !== "disabled" ? <pre className="max-h-56 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-[11px] text-slate-200" data-testid={`${prefix}-network-preview`}>{networkPreview}</pre> : null}
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" size="sm" disabled={disabled || networkIssues.length > 0} onClick={() => onNetworkConfigChange(networkPreview)}>应用网络配置</Button>
                 {networkConfig ? <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => { updateNetworkDraft("mode", "disabled"); onNetworkConfigChange(""); }}>清除 network-config</Button> : null}
                 <span className="text-xs text-muted-foreground">{networkBytes} bytes</span>
               </div>
+              {networkConfigIssues.length ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert" data-testid={`${prefix}-network-config-issues`}>{networkConfigIssues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
               <Textarea aria-label="Cloud-init network-config YAML" data-testid={`${prefix}-network-config`} value={networkConfig} onChange={(event) => onNetworkConfigChange(event.target.value)} disabled={disabled} rows={5} spellCheck={false} className="font-mono text-xs" placeholder="留空则不写入 network-config；也可直接粘贴自定义 Netplan YAML。" />
             </div>
           ) : null}

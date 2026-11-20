@@ -17,6 +17,14 @@ trusted_proxies:
   - 127.0.0.1/32
   - ::1/128
 
+# Optional management-plane source allowlist. Empty means allow all sources.
+# Supports IPv4 and IPv6 addresses/CIDRs and is evaluated after trusted proxy
+# header processing. Keep an IPv6 entry here when the UI is reached over IPv6.
+management_allowed_networks: []
+# management_allowed_networks:
+#   - 192.0.2.0/24
+#   - 2001:db8:42::/64
+
 # Optional native TLS. Set both paths to enable HTTPS, or leave both empty when
 # TLS is terminated by nginx, Caddy or Cloudflare Tunnel.
 tls_cert_file: ""

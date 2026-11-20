@@ -29,6 +29,7 @@ func (c *Client) NetworkDiagnostics(ctx context.Context, name string) (domain.Ne
 	record := snapshot.network
 	result := domain.NetworkDiagnostics{
 		Network: name, CheckedAt: time.Now().UTC(), Active: record.Active, Bridge: record.Bridge,
+		MTU: record.MTU, DNSHostCount: len(record.DNSHosts),
 		IPv4Forward: readForwarding("/proc/sys/net/ipv4/ip_forward"),
 		IPv6Forward: readForwarding("/proc/sys/net/ipv6/conf/all/forwarding"), NATIPv6: record.NATIPv6,
 		IPv6Configured: hasIPv6(record),
@@ -41,6 +42,7 @@ func (c *Client) NetworkDiagnostics(ctx context.Context, name string) (domain.Ne
 	result.Checks = append(result.Checks, checkNetworkActive(record))
 	result.Checks = append(result.Checks, checkNetworkCompatibility(result.LibvirtVersion, result.DnsmasqVersion))
 	result.Checks = append(result.Checks, checkNetworkBridge(record, &result))
+	result.Checks = append(result.Checks, checkNetworkMTU(record, result.BridgeMTU))
 	result.Checks = append(result.Checks, checkNetworkForwarding(record, result.IPv4Forward, result.IPv6Forward))
 	result.Checks = append(result.Checks, checkNetworkIPv6DHCP(record, &result))
 	result.Checks = append(result.Checks, checkNetworkDHCPv6Service(record, dnsmasqRunning, &result))
@@ -164,12 +166,35 @@ func checkNetworkBridge(network domain.VirtualNetwork, result *domain.NetworkDia
 		return domain.NetworkCheck{ID: "bridge", Status: "error", Title: "桥接口", Detail: "无法找到桥接口 " + network.Bridge + "：" + err.Error()}
 	}
 	result.BridgeReady = true
+	result.BridgeMTU = iface.MTU
 	addresses, _ := iface.Addrs()
 	values := make([]string, 0, len(addresses))
 	for _, address := range addresses {
 		values = append(values, address.String())
 	}
 	return domain.NetworkCheck{ID: "bridge", Status: "ok", Title: "桥接口", Detail: fmt.Sprintf("桥接口 %s 已就绪，地址：%s。", network.Bridge, defaultDiagnosticValue(strings.Join(values, ", "), "无（等待 RA/DHCPv6）"))}
+}
+
+func checkNetworkMTU(network domain.VirtualNetwork, bridgeMTU int) domain.NetworkCheck {
+	if !network.Active {
+		detail := "网络未激活；"
+		if network.MTU > 0 {
+			detail += fmt.Sprintf("持久配置 MTU %d，启动后校验桥接口。", network.MTU)
+		} else {
+			detail += "未固定 MTU，启动后使用 libvirt/上游默认值。"
+		}
+		return domain.NetworkCheck{ID: "mtu", Status: "ok", Title: "网络 MTU", Detail: detail}
+	}
+	if bridgeMTU <= 0 {
+		return domain.NetworkCheck{ID: "mtu", Status: "warning", Title: "网络 MTU", Detail: "无法读取桥接口 MTU；请确认桥接口仍存在且诊断进程有权限读取网络接口。"}
+	}
+	if network.MTU > 0 && bridgeMTU != network.MTU {
+		return domain.NetworkCheck{ID: "mtu", Status: "error", Title: "网络 MTU", Detail: fmt.Sprintf("持久配置 MTU %d，桥接口实际 MTU %d；重启网络或检查上游配置。", network.MTU, bridgeMTU)}
+	}
+	if network.MTU > 0 {
+		return domain.NetworkCheck{ID: "mtu", Status: "ok", Title: "网络 MTU", Detail: fmt.Sprintf("桥接口实际 MTU %d，与网络配置一致。", bridgeMTU)}
+	}
+	return domain.NetworkCheck{ID: "mtu", Status: "ok", Title: "网络 MTU", Detail: fmt.Sprintf("未固定 MTU，桥接口使用 %d。", bridgeMTU)}
 }
 
 func checkNetworkForwarding(network domain.VirtualNetwork, ipv4, ipv6 bool) domain.NetworkCheck {
@@ -578,8 +603,10 @@ type managedNetworkConfig struct {
 	Bridge     string   `json:"bridge"`
 	Forward    string   `json:"forward"`
 	NATIPv6    bool     `json:"natIpv6"`
+	MTU        int      `json:"mtu"`
 	DNSDomain  string   `json:"dnsDomain"`
 	DNSServers []string `json:"dnsServers"`
+	DNSHosts   []string `json:"dnsHosts"`
 	Addresses  []string `json:"addresses"`
 }
 
@@ -591,6 +618,7 @@ func parseManagedNetworkConfig(xmlText string) (managedNetworkConfig, error) {
 	result := managedNetworkConfig{
 		Bridge: parsed.Bridge.Name, Forward: parsed.Forward.Mode,
 		NATIPv6: parsed.Forward.NAT != nil && parsed.Forward.NAT.IPv6 == "yes",
+		MTU:     networkMTU(parsed),
 	}
 	if parsed.Domain != nil {
 		result.DNSDomain = strings.ToLower(parsed.Domain.Name)
@@ -599,8 +627,14 @@ func parseManagedNetworkConfig(xmlText string) (managedNetworkConfig, error) {
 		for _, forwarder := range parsed.DNS.Forwarders {
 			result.DNSServers = append(result.DNSServers, forwarder.Addr)
 		}
+		for _, host := range parsed.DNS.Hosts {
+			names := append([]string(nil), host.Hostnames...)
+			sort.Strings(names)
+			result.DNSHosts = append(result.DNSHosts, host.IP+"|"+strings.Join(names, ","))
+		}
 	}
 	sort.Strings(result.DNSServers)
+	sort.Strings(result.DNSHosts)
 	for _, item := range parsed.IPs {
 		family := item.Family
 		if family == "" {
@@ -640,11 +674,17 @@ func compareManagedNetworkConfig(active, persistent managedNetworkConfig) []stri
 	if active.NATIPv6 != persistent.NATIPv6 {
 		details = append(details, "NAT66 开关不一致")
 	}
+	if active.MTU != persistent.MTU {
+		details = append(details, fmt.Sprintf("网络 MTU 运行态 %d、持久态 %d", active.MTU, persistent.MTU))
+	}
 	if active.DNSDomain != persistent.DNSDomain {
 		details = append(details, fmt.Sprintf("DNS 域运行态 %s、持久态 %s", active.DNSDomain, persistent.DNSDomain))
 	}
 	if strings.Join(active.DNSServers, ",") != strings.Join(persistent.DNSServers, ",") {
 		details = append(details, "DNS 上游服务器不一致")
+	}
+	if strings.Join(active.DNSHosts, ",") != strings.Join(persistent.DNSHosts, ",") {
+		details = append(details, "静态 DNS A/AAAA 记录不一致")
 	}
 	if strings.Join(active.Addresses, ",") != strings.Join(persistent.Addresses, ",") {
 		details = append(details, "IPv4/IPv6 地址、DHCP 地址池或静态主机不一致")
@@ -662,6 +702,9 @@ func networkWarnings(network domain.VirtualNetwork) []string {
 	}
 	if address, ok := ipv6Address(network); ok && address.IPv6Mode == "dhcpv6" && (address.DHCPStart == "" || address.DHCPEnd == "") {
 		warnings = append(warnings, "DHCPv6 模式缺少地址范围，IPv6 静态主机和有状态客户端无法分配地址。")
+	}
+	if hasIPv6(network) && network.MTU > 0 && network.MTU < 1280 {
+		warnings = append(warnings, "IPv6 网络 MTU 小于 1280，不符合 IPv6 最小链路 MTU。")
 	}
 	return warnings
 }

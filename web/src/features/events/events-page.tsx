@@ -38,6 +38,8 @@ const kindLabels: Record<string, string> = {
   "storage.volume.uploaded": "存储卷上传",
   "storage.volume.deleted": "存储卷删除",
   "network.created": "虚拟网络创建",
+  "network.dns.host.added": "静态 DNS 记录添加",
+  "network.dns.host.deleted": "静态 DNS 记录删除",
   "network.started": "虚拟网络启动",
   "network.stopped": "虚拟网络停止",
   "network.deleted": "虚拟网络删除",

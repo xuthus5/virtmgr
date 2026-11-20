@@ -105,6 +105,9 @@ func updateNetworkXML(xmlText string, definition domain.VirtualNetworkDefinition
 	if err := setNetworkForward(network, definition); err != nil {
 		return "", err
 	}
+	if err := setNetworkMTU(network, definition); err != nil {
+		return "", err
+	}
 	if definition.Mode == "bridge" {
 		setNetworkBridge(network, definition.Bridge)
 		removeXMLChildren(network, "ip")
@@ -241,6 +244,30 @@ func setNetworkBridge(network *networkXMLNode, name string) {
 	setXMLAttribute(bridge, "name", name)
 }
 
+func setNetworkMTU(network *networkXMLNode, definition domain.VirtualNetworkDefinition) error {
+	if definition.Mode == "bridge" {
+		if definition.MTUPresent {
+			return fmt.Errorf("%w: bridge networks use the upstream MTU", domain.ErrInvalidInput)
+		}
+		removeXMLChild(network, "mtu")
+		return nil
+	}
+	if !definition.MTUPresent {
+		return nil
+	}
+	if definition.MTU == 0 {
+		removeXMLChild(network, "mtu")
+		return nil
+	}
+	mtu := firstXMLChild(network, "mtu")
+	if mtu == nil {
+		mtu = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "mtu"}}}
+		insertXMLChildBefore(network, mtu, "mac", "domain", "dns", "ip")
+	}
+	setXMLAttribute(mtu, "size", strconv.Itoa(definition.MTU))
+	return nil
+}
+
 func setNetworkIPv4(network *networkXMLNode, definition domain.VirtualNetworkDefinition) error {
 	if definition.IPv4Address == "" {
 		for _, child := range append([]*networkXMLNode(nil), network.Children...) {
@@ -325,11 +352,14 @@ func setNetworkDomainAndDNS(network *networkXMLNode, definition domain.VirtualNe
 	} else {
 		removeXMLChild(network, "domain")
 	}
+	dnsNode := firstXMLChild(network, "dns")
 	if len(definition.DNSServers) == 0 {
-		removeXMLChild(network, "dns")
+		if dnsNode != nil {
+			removeXMLChildren(dnsNode, "forwarder")
+			removeNetworkDNSIfEmpty(network, dnsNode)
+		}
 		return
 	}
-	dnsNode := firstXMLChild(network, "dns")
 	if dnsNode == nil {
 		dnsNode = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "dns"}}}
 		insertXMLChildBefore(network, dnsNode, "bridge", "mac", "ip")
@@ -340,6 +370,15 @@ func setNetworkDomainAndDNS(network *networkXMLNode, definition domain.VirtualNe
 		setXMLAttribute(forwarder, "addr", server)
 		dnsNode.Children = append(dnsNode.Children, forwarder)
 	}
+}
+
+func removeNetworkDNSIfEmpty(network, dnsNode *networkXMLNode) {
+	for _, child := range dnsNode.Children {
+		if _, ok := child.Token.(xml.StartElement); ok {
+			return
+		}
+	}
+	removeNetworkXMLChild(network, dnsNode)
 }
 
 func removeNetworkXMLChild(parent, target *networkXMLNode) {

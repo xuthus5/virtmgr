@@ -67,9 +67,17 @@ export function NetworkCreateCard({ form, error, canManage, pending, onChange, o
                 <Label htmlFor="network-dhcp-end">DHCP 结束地址（可选）</Label>
                 <Input id="network-dhcp-end" value={form.dhcpEnd} onChange={(event) => onChange("dhcpEnd", event.target.value)} placeholder="10.20.30.200" disabled={!canManage} />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="network-mtu">网络 MTU（可选）</Label>
+                <Input id="network-mtu" data-testid="network-mtu" type="number" min={576} max={9000} value={form.mtu} onChange={(event) => onChange("mtu", event.target.value)} placeholder="留空使用默认值" disabled={!canManage} />
+                <p className="text-[11px] text-muted-foreground">范围 576-9000；启用 IPv6 时至少 1280。留空表示不固定 MTU。</p>
+              </div>
               <div className="space-y-2 md:col-span-2 xl:col-span-4">
                 <div className="rounded-md border border-dashed bg-muted/20 p-3">
-                  <p className="mb-3 text-xs font-medium text-foreground">IPv6 双栈（可选）</p>
+                  <div className="mb-3 space-y-1">
+                    <p className="text-xs font-medium text-foreground">IPv6 网络（可选）</p>
+                    <p className="text-[11px] text-muted-foreground">仅填 IPv4 子网为 IPv4-only；仅填 IPv6 子网为 IPv6-only；两者同时填写为双栈。</p>
+                  </div>
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <div className="space-y-2">
                       <Label htmlFor="network-ipv6-subnet">IPv6 子网</Label>

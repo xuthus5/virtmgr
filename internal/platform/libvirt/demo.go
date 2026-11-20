@@ -1656,7 +1656,7 @@ func (d *DemoBackend) NetworkDiagnostics(_ context.Context, networkName string) 
 	ipv6Forward := readForwarding("/proc/sys/net/ipv6/conf/all/forwarding")
 	result := domain.NetworkDiagnostics{
 		Network: network.Name, CheckedAt: time.Now().UTC(), Active: network.Active, Bridge: network.Bridge,
-		BridgeReady: network.Bridge != "", IPv4Forward: ipv4Forward, IPv6Forward: ipv6Forward,
+		BridgeReady: network.Bridge != "", MTU: network.MTU, DNSHostCount: len(network.DNSHosts), IPv4Forward: ipv4Forward, IPv6Forward: ipv6Forward,
 		IPv6Configured: networkHasIPv6(network),
 		NATIPv6:        network.NATIPv6, NAT66Firewall: network.NATIPv6, FirewallBackend: "nftables",
 		DHCPv6Service: network.Active && networkHasIPv6Mode(network, "dhcpv6"), RAService: network.Active && networkHasIPv6(network),
@@ -1667,6 +1667,12 @@ func (d *DemoBackend) NetworkDiagnostics(_ context.Context, networkName string) 
 	result.Checks = append(result.Checks, checkNetworkActive(network))
 	result.Checks = append(result.Checks, checkNetworkCompatibility(result.LibvirtVersion, result.DnsmasqVersion))
 	result.Checks = append(result.Checks, domain.NetworkCheck{ID: "bridge", Status: "ok", Title: "桥接口", Detail: "演示桥接口 " + network.Bridge + " 已就绪。"})
+	if network.MTU > 0 {
+		result.BridgeMTU = network.MTU
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "mtu", Status: "ok", Title: "网络 MTU", Detail: fmt.Sprintf("演示桥接口 MTU %d，与网络配置一致。", network.MTU)})
+	} else {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "mtu", Status: "ok", Title: "网络 MTU", Detail: "未固定 MTU，演示桥接口使用上游默认值。"})
+	}
 	if network.ForwardMode == "bridge" {
 		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "forwarding", Status: "ok", Title: "转发策略", Detail: "外部桥接网络使用上游转发策略。"})
 	} else {
@@ -1742,6 +1748,44 @@ func (d *DemoBackend) DeleteNetworkDHCPHost(_ context.Context, name string, host
 	return cloneNetwork(network), nil
 }
 
+func (d *DemoBackend) AddNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	network, ok := d.networks[name]
+	if !ok {
+		return domain.VirtualNetwork{}, domain.ErrNotFound
+	}
+	network.DNSHosts = append(network.DNSHosts, domain.NetworkDNSHost{IP: host.IP, Hostnames: append([]string(nil), host.Hostnames...)})
+	d.networks[name] = network
+	d.publish("network.dns.host.added", "info", "network", name, name, "虚拟网络 "+name+" 已添加 DNS 记录 "+strings.Join(host.Hostnames, ", "))
+	return cloneNetwork(network), nil
+}
+
+func (d *DemoBackend) DeleteNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	network, ok := d.networks[name]
+	if !ok {
+		return domain.VirtualNetwork{}, domain.ErrNotFound
+	}
+	hosts := network.DNSHosts[:0]
+	found := false
+	for _, existing := range network.DNSHosts {
+		if existing.IP == host.IP {
+			found = true
+			continue
+		}
+		hosts = append(hosts, existing)
+	}
+	if !found {
+		return domain.VirtualNetwork{}, domain.ErrNotFound
+	}
+	network.DNSHosts = hosts
+	d.networks[name] = network
+	d.publish("network.dns.host.deleted", "warning", "network", name, name, "虚拟网络 "+name+" 已删除 DNS 记录 "+host.IP)
+	return cloneNetwork(network), nil
+}
+
 func (d *DemoBackend) CreateNetwork(_ context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1762,7 +1806,7 @@ func (d *DemoBackend) CreateNetwork(_ context.Context, definition domain.Virtual
 	network := domain.VirtualNetwork{
 		Name: definition.Name, UUID: uuid, Bridge: d.nextDemoBridgeLocked(), Active: definition.Start,
 		Persistent: true, Autostart: definition.Autostart, ForwardMode: definition.Mode,
-		NATIPv6: definition.NATIPv6, DNSDomain: definition.DNSDomain, DNSServers: append([]string(nil), definition.DNSServers...),
+		NATIPv6: definition.NATIPv6, MTU: definition.MTU, DNSDomain: definition.DNSDomain, DNSServers: append([]string(nil), definition.DNSServers...),
 		Addresses: []domain.NetworkAddress{},
 	}
 	if definition.IPv4Address != "" {
@@ -1811,10 +1855,14 @@ func (d *DemoBackend) UpdateNetwork(_ context.Context, definition domain.Virtual
 	network.Autostart = definition.Autostart
 	network.ForwardMode = definition.Mode
 	network.NATIPv6 = definition.NATIPv6
+	if definition.MTUPresent {
+		network.MTU = definition.MTU
+	}
 	network.DNSDomain = definition.DNSDomain
 	network.DNSServers = append([]string(nil), definition.DNSServers...)
 	if definition.Mode == "bridge" {
 		network.Bridge = definition.Bridge
+		network.MTU = 0
 		network.Addresses = []domain.NetworkAddress{}
 		d.networks[definition.Name] = network
 		d.publish("network.updated", "info", "network", network.Name, network.Name, "虚拟网络 "+network.Name+" 配置已更新")
@@ -1944,6 +1992,12 @@ func cloneNetwork(network domain.VirtualNetwork) domain.VirtualNetwork {
 		network.Addresses[index].Hosts = append([]domain.NetworkDHCPHost(nil), network.Addresses[index].Hosts...)
 	}
 	network.DNSServers = append([]string(nil), network.DNSServers...)
+	dnsHosts := make([]domain.NetworkDNSHost, len(network.DNSHosts))
+	copy(dnsHosts, network.DNSHosts)
+	for index := range dnsHosts {
+		dnsHosts[index].Hostnames = append([]string(nil), dnsHosts[index].Hostnames...)
+	}
+	network.DNSHosts = dnsHosts
 	network.Warnings = networkWarnings(network)
 	return network
 }
@@ -1990,8 +2044,9 @@ func demoNetworks() []domain.VirtualNetwork {
 	return []domain.VirtualNetwork{
 		{
 			Name: "default", UUID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", Bridge: "virbr0",
-			Active: true, Persistent: true, Autostart: true, ForwardMode: "nat", NATIPv6: true,
+			Active: true, Persistent: true, Autostart: true, ForwardMode: "nat", NATIPv6: true, MTU: 1500,
 			DNSDomain: "lab.example", DNSServers: []string{"2001:4860:4860::8888"},
+			DNSHosts: []domain.NetworkDNSHost{{IP: "fd00:122::50", Hostnames: []string{"demo-db-01.lab.example"}}},
 			Addresses: []domain.NetworkAddress{
 				{
 					Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,

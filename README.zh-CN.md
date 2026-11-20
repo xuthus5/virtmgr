@@ -62,7 +62,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 备份中心 | 集中管理冷备份和运行中虚拟机在线备份、Guest Agent 静默、一致性/vTPM 状态、恢复为新虚拟机、固定间隔/每日计划、保留清理、固定保留、失败重试和任务 SSE 状态 |
 | 镜像库 | 登记已有 qcow2/raw 卷及 OS 元数据；按需刷新容量和 SHA-256；模板可绑定镜像；从镜像全量克隆，或对同存储池 qcow2 镜像创建链接克隆；移除登记不会删除底层卷 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；流式上传 ISO、qcow2 和 raw 镜像；阻止删除仍在使用的卷 |
-| 网络 | NAT、隔离和外部桥接网络；IPv4-only、双栈和 IPv6-only 管理型网络；DHCP、SLAAC、有状态 DHCPv6、NAT66、DNS；宿主机网桥发现、实时租约、IPv4/IPv6 静态主机及 CSV 批量导入/导出、网络诊断，以及创建、编辑、启停和删除 |
+| 网络 | NAT、隔离和外部桥接网络；IPv4-only、双栈和 IPv6-only 管理型网络；DHCP、SLAAC、有状态 DHCPv6、NAT66、网络 MTU、DNS 转发与静态 A/AAAA 记录；宿主机网桥发现、实时租约、IPv4/IPv6 静态主机及 CSV 批量导入/导出、网络诊断，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
 | 可观测性 | SSE 实时事件与任务状态、任务失败重试、宿主机和运行中 VM 的 7 天历史指标、Prometheus `/metrics`、CPU/内存阈值 Webhook 告警、结构化日志和健康检查 |
 | 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、带作用域且可撤销的 Bearer API Token、OpenAPI 3.1、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选/导出/按保留期清理的审计、CSP 和安全响应头 |
@@ -236,7 +236,7 @@ cookie_secure: true
 
 **IPv6 管理面访问**
 
-将 `listen` 设置为 `"[::]:8443"` 可监听 Linux 双栈通配地址。使用 `X-Forwarded-For` 或 `X-Real-IP` 时，应把反向代理的 IPv6 地址加入 `trusted_proxies`。通过字面 IPv6 地址访问浏览器时，证书 SAN 必须包含当前地址；由于运营商分配的 IPv6 前缀可能变化，生产环境应优先使用稳定 DNS 名称和证书。原生 TLS 证书和私钥文件变化后会自动热重载，系统设置页会展示 SAN 不匹配、到期时间和热重载错误。客户机网络的 IPv6 转发和 NAT66 依赖宿主机 `net.ipv6.conf.all.forwarding` 与防火墙策略，NAT66 仅提供出站访问；暴露业务前请先使用网络诊断页确认，并在每个受支持发行版上运行 `scripts/ipv6-compat-check.sh`。已验证矩阵与剩余边界见 `docs/ipv6-commercial-readiness.md`，证书轮换和回滚见 `docs/tls-rotation-runbook.md`。
+将 `listen` 设置为 `"[::]:8443"` 可监听 Linux 双栈通配地址。使用 `X-Forwarded-For` 或 `X-Real-IP` 时，应把反向代理的 IPv6 地址加入 `trusted_proxies`；如需限制管理面来源，可用 `management_allowed_networks` 配置 IPv4/IPv6 CIDR 白名单，该限制在受信代理地址解析之后执行。通过字面 IPv6 地址访问浏览器时，证书 SAN 必须包含当前地址；由于运营商分配的 IPv6 前缀可能变化，生产环境应优先使用稳定 DNS 名称和证书。启用白名单前务必保留当前管理入口所在的 IPv6 前缀，避免把管理员锁在系统外。原生 TLS 证书和私钥文件变化后会自动热重载，系统设置页会展示 SAN 不匹配、到期时间和热重载错误。客户机网络的 IPv6 转发和 NAT66 依赖宿主机 `net.ipv6.conf.all.forwarding` 与防火墙策略，NAT66 仅提供出站访问；暴露业务前请先使用网络诊断页确认，并在每个受支持发行版上运行 `scripts/ipv6-compat-check.sh`。已验证矩阵与剩余边界见 `docs/ipv6-commercial-readiness.md`，证书轮换和回滚见 `docs/tls-rotation-runbook.md`。
 
 不要在没有 TLS、防火墙和强管理员密码的情况下，将可写模式的 VirtMgr 直接暴露到公网。
 
@@ -274,6 +274,7 @@ podman compose up -d --build
 | `session_ttl` | `8h` | 登录会话有效期，必须为正的 Go Duration |
 | `cookie_secure` | `false` | 将会话 Cookie 标记为 `Secure`；HTTPS 部署应开启 |
 | `trusted_proxies` | 空列表 | 允许提供 `X-Forwarded-For` 和 `X-Real-IP` 的反向代理 IP/CIDR 列表 |
+| `management_allowed_networks` | 空列表 | 管理面来源 IP/CIDR 白名单，支持 IPv6；空列表表示不限制 |
 | `read_only` | `false` | 初始全局只读状态；首次启动后以 SQLite 持久化值为准 |
 | `demo_mode` | `false` | 使用 demo 后端，仅用于界面开发，生产环境禁止开启 |
 

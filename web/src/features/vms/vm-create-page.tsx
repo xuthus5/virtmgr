@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { CloudInitEditor } from "@/features/cloud-init/cloud-init-editor";
-import { cloudInitBundleValidationError, defaultCloudInitUserData } from "@/features/cloud-init/cloud-init-model";
+import { cloudInitBundleValidationError, cloudInitNetworkDraftFromNetwork, cloudInitNetworkIssues, defaultCloudInitUserData, serializeNetworkConfig } from "@/features/cloud-init/cloud-init-model";
 import { useImagesQuery } from "@/features/images/use-images-query";
 import { useHostQuery } from "@/features/host/use-host-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
@@ -95,6 +95,7 @@ export function VMCreatePage() {
   const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
   const presetApplied = useRef(false);
   const activeNetworks = (networksQuery.data?.items ?? []).filter((network) => network.active);
+  const selectedNetwork = activeNetworks.find((network) => network.name === form.network);
   const activePools = (poolsQuery.data?.items ?? []).filter((pool) => pool.state === "active");
   const volumesQuery = useStorageVolumesQuery(diskPool);
   const isoVolumesQuery = useStorageVolumesQuery(isoPool);
@@ -232,7 +233,7 @@ export function VMCreatePage() {
       setError("请选择基础镜像和目标存储池。");
       return;
     }
-    const cloudInitError = form.cloudInit ? cloudInitBundleValidationError(form.cloudInitUserData, form.cloudInitNetworkConfig, form.cloudInitVendorData) : "";
+    const cloudInitError = form.cloudInit ? cloudInitBundleValidationError(form.cloudInitUserData, form.cloudInitNetworkConfig, form.cloudInitVendorData, selectedNetwork) : "";
     if (cloudInitError) {
       setError(cloudInitError);
       return;
@@ -548,13 +549,23 @@ export function VMCreatePage() {
                     type="checkbox"
                     className="mt-0.5 h-4 w-4"
                     checked={form.cloudInit}
-                    onChange={(event) => setForm((current) => ({
-                      ...current,
-                      cloudInit: event.target.checked,
-                      cloudInitUserData: event.target.checked && !current.cloudInitUserData.trim()
-                        ? defaultCloudInitUserData()
-                        : current.cloudInitUserData,
-                    }))}
+                    onChange={(event) => setForm((current) => {
+                      const enabled = event.target.checked;
+                      let cloudInitNetworkConfig = current.cloudInitNetworkConfig;
+                      const network = activeNetworks.find((candidate) => candidate.name === current.network);
+                      if (enabled && !cloudInitNetworkConfig.trim() && network) {
+                        const draft = cloudInitNetworkDraftFromNetwork(network);
+                        if (cloudInitNetworkIssues(draft, network).length === 0) cloudInitNetworkConfig = serializeNetworkConfig(draft);
+                      }
+                      return {
+                        ...current,
+                        cloudInit: enabled,
+                        cloudInitUserData: enabled && !current.cloudInitUserData.trim()
+                          ? defaultCloudInitUserData()
+                          : current.cloudInitUserData,
+                        cloudInitNetworkConfig,
+                      };
+                    })}
                     disabled={!canCreate}
                   />
                   <span>
@@ -569,6 +580,7 @@ export function VMCreatePage() {
                     onChange={(value) => update("cloudInitUserData", value)}
                     networkConfig={form.cloudInitNetworkConfig}
                     onNetworkConfigChange={(value) => update("cloudInitNetworkConfig", value)}
+                    network={selectedNetwork}
                     vendorData={form.cloudInitVendorData}
                     onVendorDataChange={(value) => update("cloudInitVendorData", value)}
                     disabled={!canCreate}

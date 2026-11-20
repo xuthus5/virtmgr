@@ -72,6 +72,28 @@ func RealIP(trustedProxies []netip.Prefix) func(stdhttp.Handler) stdhttp.Handler
 	}
 }
 
+func RequireAllowedNetworks(prefixes []netip.Prefix) func(stdhttp.Handler) stdhttp.Handler {
+	return func(next stdhttp.Handler) stdhttp.Handler {
+		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if len(prefixes) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			address, err := netip.ParseAddr(SourceIP(r))
+			if err == nil {
+				address = address.Unmap().WithZone("")
+			}
+			if err != nil || !prefixContainsAny(prefixes, address) {
+				JSON(w, stdhttp.StatusForbidden, errorBody{Error: errorDetail{
+					Code: "SOURCE_NOT_ALLOWED", Message: "当前来源地址不在管理面允许访问的网络范围内", RequestID: middleware.GetReqID(r.Context()),
+				}})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func trustedPeer(remoteAddr string, trustedProxies []netip.Prefix) bool {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
 	if err != nil {

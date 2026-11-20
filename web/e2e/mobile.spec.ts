@@ -49,6 +49,43 @@ test("Cloud-init 编辑器在移动端保持可读且不产生横向溢出", asy
   await expect(page.getByTestId("vm-cloud-init-mode-source")).toBeDisabled();
 });
 
+test("Cloud-init IPv6 网络配置在移动端可读且不产生横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/templates");
+  await page.getByTestId("template-use-secure-uefi").click();
+
+  const editor = page.getByTestId("vm-cloud-init-editor");
+  const source = page.getByTestId("vm-cloud-init-network-source");
+  const ipv6Mode = page.getByTestId("vm-cloud-init-network-ipv6-mode");
+  await expect(editor).toBeVisible();
+  await expect(source).toContainText("IPv6 fd00:122::1/64 · DHCP");
+  await expect(ipv6Mode).toHaveValue("dhcpv6");
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => {
+      const source = document.querySelector('[data-testid="vm-cloud-init-network-source"]') as HTMLElement;
+      const ipv6 = document.querySelector('[data-testid="vm-cloud-init-network-ipv6-mode"]') as HTMLElement;
+      const sourceBox = source.getBoundingClientRect();
+      const ipv6Box = ipv6.getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        sourceLeft: sourceBox.left,
+        sourceRight: sourceBox.right,
+        ipv6Left: ipv6Box.left,
+        ipv6Right: ipv6Box.right,
+      };
+    });
+    expect(layout.documentWidth, `${width}px: 页面不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.sourceLeft, `${width}px: 网络来源卡片应留在视口内`).toBeGreaterThanOrEqual(0);
+    expect(layout.sourceRight, `${width}px: 网络来源卡片应留在视口内`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.ipv6Left, `${width}px: IPv6 选择器应留在视口内`).toBeGreaterThanOrEqual(0);
+    expect(layout.ipv6Right, `${width}px: IPv6 选择器应留在视口内`).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+});
+
 test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await login(page);
@@ -72,6 +109,32 @@ test("镜像库、API Token 和任务中心在窄屏无页面级横向溢出", a
   await page.goto("/networks");
   await expect(page.getByTestId("network-row-br-prod")).toContainText("br0");
   await expect(page.getByTestId("network-leases-br-prod")).toBeDisabled();
+});
+
+test("IPv6 MTU 与静态 DNS 记录卡片在移动端可读且不产生页面级溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/networks");
+  await expect(page.getByTestId("network-row-default")).toContainText("MTU 1500");
+  await page.getByTestId("network-hosts-default").click();
+
+  const dnsCard = page.getByTestId("network-dns-hosts-card");
+  await expect(dnsCard).toBeVisible();
+  await expect(dnsCard).toContainText("demo-db-01.lab.example");
+  await expect(page.getByTestId("network-dns-host-delete-fd00:122::50")).toBeDisabled();
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px 网络 DNS 页面 document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px 网络 DNS 页面 body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    const box = await dnsCard.boundingBox();
+    expect(box?.width ?? width + 1, `${width}px DNS 卡片应适应视口`).toBeLessThanOrEqual(width);
+  }
 });
 
 test("移动端账号安全入口可访问且无横向溢出", async ({ page }) => {

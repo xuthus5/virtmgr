@@ -8,13 +8,13 @@
 
 | 能力域 | 当前结论 | 边界 |
 |---|---|---|
-| 管理面 IPv6 接入 | 可用 | 支持双栈通配监听、IPv6 字面地址访问、IPv6 trusted proxy 和原生 TLS；生产应使用稳定 DNS 名称 |
-| 客户机 IPv6 数据面 | 可用 | 支持双栈和 IPv6-only；IPv6-only 下 SLAAC 或有状态 DHCPv6；NAT 网络默认 NAT66 |
-| 网络运维诊断 | 可用 | 覆盖桥、转发、DHCPv6、RA、DNS、NAT66、网关、出网和运行态漂移；无 `CAP_NET_ADMIN` 时如实告警 |
+| 管理面 IPv6 接入 | 可用 | 支持双栈通配监听、IPv6 字面地址访问、IPv6 trusted proxy、来源 CIDR 白名单和原生 TLS；生产应使用稳定 DNS 名称 |
+| 客户机 IPv6 数据面 | 可用 | 支持双栈和 IPv6-only；IPv6-only 下 SLAAC 或有状态 DHCPv6；NAT 网络默认 NAT66；支持网络 MTU 与静态 A/AAAA 记录 |
+| 网络运维诊断 | 可用 | 覆盖桥、MTU、转发、DHCPv6、RA、DNS、NAT66、网关、出网和运行态漂移；无 `CAP_NET_ADMIN` 时如实告警 |
 | 浏览器兼容 | 可用 | Chromium、Firefox、WebKit 均通过 IPv6 字面地址和移动宽度布局验收 |
 | TLS 证书轮换 | 可用 | 支持在线重载、SAN/到期/私钥权限诊断和失败保留旧证书；不负责签发外部 CA 证书 |
 | NAT66 公网入站 | 不支持 | 当前只承诺客户机出站；端口映射、安全组和入站防火墙策略不在本阶段范围 |
-| 高级 IPv6 网络编排 | 部分支持 | 尚无前缀委派、精细 RA 标志/生存期、MTU、策略路由和 DNS 记录级管理 |
+| 高级 IPv6 网络编排 | 部分支持 | 已支持固定 MTU 和静态 A/AAAA 记录；尚无前缀委派、精细 RA 标志/生存期、策略路由、CNAME/PTR 和递归策略管理 |
 
 因此：
 
@@ -27,6 +27,7 @@
 
 - 支持监听 `[::]:8443`，已通过 IPv6 字面地址访问 `/healthz` 和登录页面。
 - `trusted_proxies` 支持 IPv4/IPv6 CIDR；`X-Forwarded-For` 的 IPv6 客户端链已有边界测试。
+- `management_allowed_networks` 支持 IPv4/IPv6 来源 CIDR；在受信代理地址解析后执行，空列表保持兼容放行。
 - 原生 TLS 使用动态 `GetCertificate`；证书或私钥文件变化后，新连接自动加载，无需重启。
 - 重载失败时继续提供上一份有效证书，并在 `/api/v1/system/info` 和系统设置页展示错误。
 - TLS 状态包含 subject、issuer、有效期、剩余天数、DNS/IP SAN、当前请求主机匹配、私钥权限和重载错误。
@@ -37,6 +38,9 @@
 - NAT/isolated 网络支持 IPv4-only、双栈和 IPv6-only。
 - IPv6 支持 SLAAC（`/64`）和有状态 DHCPv6（`/64` 至 `/124`）；NAT 网络默认启用 NAT66，可显式关闭。
 - 支持 IPv4/IPv6 DNS 上游、DNS domain、静态 IPv6 主机和网络配置告警。
+- 支持 IPv4/IPv6 静态 DNS A/AAAA 记录，可为一地址绑定多个主机名；增删实时同步 live/config，并纳入运行态漂移检查。
+- 支持网络 MTU 576-9000；启用 IPv6 时强制不低于 1280，并在诊断中校验桥接口实际 MTU。
+- Cloud-init 可从所选虚拟网络生成 Netplan v2 `network-config`：双栈 DHCP、IPv6-only DHCPv6、SLAAC、静态 IPv4/IPv6、DNS 与 MTU；支持已有 Netplan 反显，并校验地址/前缀、网关、DNS 和 MTU 是否属于所选网络。客户机镜像仍需内置 Cloud-init 与 Netplan。
 - IPv4 静态主机使用 MAC；IPv6 静态主机使用 DUID/Client ID 或主机名，拒绝跨地址族误用身份字段。
 - DHCPv6 租约可保留为静态主机；重复身份、重复 IP、缺少身份和地址越界均拒绝并记录审计。
 - 活跃网络上的静态主机增删实时生效；修改前缀、移除网段或关闭 DHCPv6 时阻止导致主机失联的变更。
@@ -100,13 +104,11 @@ scripts/ipv6-distro-matrix.sh all
 2. **IPv6 安全组/入站策略**：按网络或虚拟机管理允许的协议、端口和来源前缀，并支持默认拒绝；不能靠宿主机手工 nftables 长期维护。工作量 M-L。
 3. **RA/DHCPv6 高级参数**：M/O 标志、RA lifetime、最大/最小间隔、DNS RA、多前缀和前缀委派。工作量 M，企业网络接入时价值高。
 4. **IPv6 路由和 MTU 配置**：静态路由、策略路由、桥/虚拟网络 MTU 和 PMTU 诊断；对隧道、Overlay 和跨网段部署必要。工作量 M。
-5. **管理面 IPv6 访问控制**：源 IPv6 CIDR allowlist、登录/API 速率限制、管理员会话审计统一使用规范化 `netip.Addr`。工作量 S-M，公网暴露前价值高。
-
 ### P2：商用运维增强
 
-6. **DNS 记录级管理**：A/AAAA/PTR/CNAME、搜索域、递归/转发策略和记录冲突检查；当前只管理 domain 与 forwarder。工作量 M。
+6. **DNS 记录级管理增强**：在 A/AAAA 基础上补充 PTR/CNAME、搜索域、递归/转发策略和批量导入；当前已管理 domain、forwarder、静态 A/AAAA。工作量 M。
 7. **DHCPv6 租约生命周期**：历史、导出、地址使用率、重复 DUID/冲突趋势和容量告警。工作量 S-M。
-8. **双栈 Cloud-init 自动生成**：从所选网络生成 Netplan/network-config，并同步静态 IPv4/IPv6、网关、DNS 和 MTU。工作量 S-M。
+8. ~~**双栈 Cloud-init 自动生成**~~：已支持从所选网络生成 DHCP/DHCPv6/SLAAC/静态双栈 Netplan，并同步网关、DNS 和 MTU，同时提供反显与子网边界校验。
 9. **IPv6 可观测性**：把诊断结果、租约使用率、RA/DHCPv6 服务状态和 NAT66 规则状态纳入历史指标与告警。工作量 S-M。
 10. **自动证书/DDNS 编排**：ACME/DNS-01、稳定 DNS 名称、前缀变化后的地址更新；当前只做证书热重载和 SAN 诊断。工作量 M。
 11. **网络模板与 ULA 自动规划**：自动选择不冲突的 ULA 前缀、按项目分配 `/64`、导入现有 IPv6 网络定义。工作量 S-M。
@@ -122,6 +124,7 @@ scripts/ipv6-distro-matrix.sh all
 可将当前版本作为**单机、受控网络、出站 NAT66**场景的商用候选版交付。交付说明必须写明：
 
 - 管理面优先使用稳定 DNS 名称和受信证书；IPv6 字面地址只作为受控入口。
+- 如启用 `management_allowed_networks`，需同时保留 IPv4/IPv6 管理入口前缀，避免前缀变化或代理地址调整后失去访问。
 - NAT66 只承诺出站访问；公网入站、端口映射和安全组尚未实现。
 - 每个目标发行版必须执行 `scripts/ipv6-compat-check.sh` 并保存原始报告。
 - 网络诊断出现 error 时不得承载生产业务；warning 需结合边界确认。

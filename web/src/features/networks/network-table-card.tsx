@@ -77,7 +77,9 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                         </div>
                       )) : <span className="text-xs text-muted-foreground">{network.forwardMode === "bridge" ? "由上游网桥分配" : "未配置地址"}</span>}
                       {network.natIpv6 ? <p className="mt-1 text-[10px] text-muted-foreground" title="NAT66 仅提供客户机出站访问，不含 IPv6 入站端口映射">NAT66 已启用（仅出站）</p> : null}
+                      {network.mtu ? <p className="mt-1 font-mono text-[10px] text-muted-foreground">MTU {network.mtu}</p> : null}
                       {network.dnsDomain || network.dnsServers?.length ? <p className="mt-1 truncate text-[10px] text-muted-foreground" title={[network.dnsDomain, ...(network.dnsServers ?? [])].filter(Boolean).join(" · ")}>DNS {[network.dnsDomain, ...(network.dnsServers ?? [])].filter(Boolean).join(" · ")}</p> : null}
+                      {network.dnsHosts?.length ? <p className="text-[10px] text-muted-foreground">静态 DNS 记录 {network.dnsHosts.length} 条</p> : null}
                       {network.warnings?.length ? <p className="mt-1 flex items-start gap-1 text-[10px] text-warning" title={network.warnings.join("\n")}><Info className="mt-0.5 h-3 w-3 shrink-0" />{network.warnings.length} 条配置警告</p> : null}
                     </TableCell>
                     <TableCell>{network.autostart ? "是" : "否"}</TableCell>
@@ -106,8 +108,8 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                           <Button type="button" variant={leasesNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-leases-${network.name}`} aria-label={`查看网络 ${network.name} 的 DHCP 租约`} title={network.forwardMode === "bridge" ? "外部桥接网络的 DHCP 由宿主机上游网络管理" : "查看 DHCP 租约"} disabled={network.forwardMode === "bridge"} onClick={() => onLeases(network)}>
                             <ScrollText className="h-3.5 w-3.5" />租约
                           </Button>
-                          <Button type="button" variant={hostsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-hosts-${network.name}`} aria-label={`管理网络 ${network.name} 的静态主机`} title={network.forwardMode === "bridge" ? "外部桥接网络不提供 libvirt DHCP 静态主机配置" : staticHostCount(network) ? `管理静态主机（${staticHostCount(network)} 条）` : "管理静态主机条目"} disabled={network.forwardMode === "bridge"} onClick={() => onHosts(network)}>
-                            <ListPlus className="h-3.5 w-3.5" />静态主机
+                          <Button type="button" variant={hostsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-hosts-${network.name}`} aria-label={`管理网络 ${network.name} 的静态主机和 DNS 记录`} title={network.forwardMode === "bridge" ? "外部桥接网络不提供 libvirt DHCP/DNS 静态配置" : staticHostCount(network) || network.dnsHosts?.length ? `管理静态主机与 DNS 记录（${staticHostCount(network)} / ${network.dnsHosts?.length ?? 0} 条）` : "管理静态主机和 DNS 记录"} disabled={network.forwardMode === "bridge"} onClick={() => onHosts(network)}>
+                            <ListPlus className="h-3.5 w-3.5" />主机 / DNS
                           </Button>
                           <Button type="button" variant={diagnosticsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-diagnostics-${network.name}`} aria-label={`诊断网络 ${network.name}`} title="检查 IPv6、转发、DHCPv6、NAT66 与 DNS 状态" onClick={() => onDiagnostics(network)}>
                             <Stethoscope className="h-3.5 w-3.5" />诊断

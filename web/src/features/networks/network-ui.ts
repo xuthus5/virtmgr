@@ -1,5 +1,5 @@
 import { ApiError } from "@/api/client";
-import type { DHCPLease, NetworkAddress, NetworkDHCPHost, VirtualNetwork, VirtualNetworkCreateInput } from "@/api/types";
+import type { DHCPLease, NetworkAddress, NetworkDHCPHost, NetworkDNSHost, VirtualNetwork, VirtualNetworkCreateInput } from "@/api/types";
 
 export type CreateFormState = {
   name: string;
@@ -15,6 +15,7 @@ export type CreateFormState = {
   dnsDomain: string;
   dnsServers: string;
   bridge: string;
+  mtu: string;
   autostart: boolean;
   start: boolean;
 };
@@ -24,6 +25,11 @@ export type HostFormState = {
   id: string;
   ip: string;
   name: string;
+};
+
+export type DNSHostFormState = {
+  ip: string;
+  hostnames: string;
 };
 
 export const initialCreateForm: CreateFormState = {
@@ -40,14 +46,20 @@ export const initialCreateForm: CreateFormState = {
   dnsDomain: "",
   dnsServers: "",
   bridge: "",
+  mtu: "",
   autostart: false,
   start: false,
 };
 
 export const initialHostForm: HostFormState = { mac: "", id: "", ip: "", name: "" };
+export const initialDNSHostForm: DNSHostFormState = { ip: "", hostnames: "" };
 
 export function splitDNSServers(value: string): string[] {
   return value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+export function splitDNSHostnames(value: string): string[] {
+  return splitDNSServers(value);
 }
 
 export function hostIdentity(host: NetworkDHCPHost): string {
@@ -76,6 +88,7 @@ export function createNetworkInput(form: CreateFormState): VirtualNetworkCreateI
     natIpv6: form.mode === "nat" && Boolean(ipv6Subnet) ? form.natIpv6 : undefined,
     dnsDomain: form.dnsDomain.trim() || undefined,
     dnsServers: splitDNSServers(form.dnsServers),
+    mtu: parseMTU(form.mtu),
     autostart: form.autostart,
     start: form.start,
   };
@@ -98,6 +111,27 @@ export function staticHosts(network?: VirtualNetwork): NetworkDHCPHost[] {
 
 export function staticHostCount(network: VirtualNetwork) {
   return network.addresses.reduce((total, address) => total + (address.hosts?.length ?? 0), 0);
+}
+
+export function staticDNSHosts(network?: VirtualNetwork): NetworkDNSHost[] {
+  return [...(network?.dnsHosts ?? [])].sort((left, right) => left.ip.localeCompare(right.ip, undefined, { numeric: true }));
+}
+
+export function parseMTU(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+export function mtuInputError(value: string, hasIPv6: boolean): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const parsed = parseMTU(trimmed);
+  if (parsed === undefined) return "MTU 必须是整数。";
+  if (parsed !== 0 && (parsed < 576 || parsed > 9000)) return "MTU 必须为 0（默认）或 576-9000。";
+  if (hasIPv6 && parsed !== 0 && parsed < 1280) return "启用 IPv6 时，MTU 不能小于 1280。";
+  return "";
 }
 
 export function networkHasIPv6(network?: VirtualNetwork): boolean {

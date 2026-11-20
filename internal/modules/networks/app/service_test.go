@@ -11,21 +11,23 @@ import (
 )
 
 type fakeRepository struct {
-	networks    []domain.VirtualNetwork
-	bridges     []domain.HostBridge
-	created     domain.VirtualNetworkDefinition
-	updated     domain.VirtualNetworkDefinition
-	addedHost   domain.NetworkDHCPHost
-	addedHosts  []domain.NetworkDHCPHost
-	deletedHost domain.NetworkDHCPHost
-	action      domain.VirtualNetworkAction
-	actionFor   string
-	deleted     string
-	leaseFor    string
-	leases      []domain.DHCPLease
-	diagnostics domain.NetworkDiagnostics
-	err         error
-	called      bool
+	networks       []domain.VirtualNetwork
+	bridges        []domain.HostBridge
+	created        domain.VirtualNetworkDefinition
+	updated        domain.VirtualNetworkDefinition
+	addedHost      domain.NetworkDHCPHost
+	addedHosts     []domain.NetworkDHCPHost
+	deletedHost    domain.NetworkDHCPHost
+	addedDNSHost   domain.NetworkDNSHost
+	deletedDNSHost domain.NetworkDNSHost
+	action         domain.VirtualNetworkAction
+	actionFor      string
+	deleted        string
+	leaseFor       string
+	leases         []domain.DHCPLease
+	diagnostics    domain.NetworkDiagnostics
+	err            error
+	called         bool
 }
 
 func (f *fakeRepository) ListNetworks(context.Context) ([]domain.VirtualNetwork, error) {
@@ -87,6 +89,24 @@ func (f *fakeRepository) DeleteNetworkDHCPHost(_ context.Context, name string, h
 	return domain.VirtualNetwork{Name: name}, nil
 }
 
+func (f *fakeRepository) AddNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	f.called = true
+	f.addedDNSHost = host
+	if f.err != nil {
+		return domain.VirtualNetwork{}, f.err
+	}
+	return domain.VirtualNetwork{Name: name}, nil
+}
+
+func (f *fakeRepository) DeleteNetworkDNSHost(_ context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error) {
+	f.called = true
+	f.deletedDNSHost = host
+	if f.err != nil {
+		return domain.VirtualNetwork{}, f.err
+	}
+	return domain.VirtualNetwork{Name: name}, nil
+}
+
 func (f *fakeRepository) PerformNetworkAction(_ context.Context, name string, action domain.VirtualNetworkAction) error {
 	f.called = true
 	f.actionFor = name
@@ -137,6 +157,108 @@ func TestServiceUsesDynamicReadOnlyMode(t *testing.T) {
 		t.Fatalf("writable error = %v", err)
 	}
 }
+
+func TestNetworkMTUValidation(t *testing.T) {
+	mtu9000 := 9000
+	repository := &fakeRepository{}
+	_, err := New(repository, nil, false).Create(context.Background(), CreateNetworkCommand{
+		Spec: domain.VirtualNetworkCreateSpec{
+			Name: "dual-mtu", Mode: "isolated", IPv6Subnet: "fd00:91::/64", IPv6Mode: "slaac", MTU: &mtu9000,
+		},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if repository.created.MTU != 9000 || !repository.created.MTUPresent {
+		t.Fatalf("created MTU = %d present=%v", repository.created.MTU, repository.created.MTUPresent)
+	}
+
+	mtu1200 := 1200
+	for _, test := range []struct {
+		name string
+		spec domain.VirtualNetworkCreateSpec
+	}{
+		{name: "IPv6 below minimum", spec: domain.VirtualNetworkCreateSpec{Name: "ipv6-small", Mode: "isolated", IPv6Subnet: "fd00:92::/64", MTU: &mtu1200}},
+		{name: "outside range", spec: domain.VirtualNetworkCreateSpec{Name: "mtu-large", Mode: "isolated", Subnet: "10.92.0.0/24", MTU: intPointer(9001)}},
+		{name: "bridge MTU", spec: domain.VirtualNetworkCreateSpec{Name: "bridge-mtu", Mode: "bridge", Bridge: "br0", MTU: &mtu1200}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := New(&fakeRepository{}, nil, false).Create(context.Background(), CreateNetworkCommand{Spec: test.spec, Request: adminRequest()}); !errors.Is(err, domain.ErrInvalidInput) {
+				t.Fatalf("Create() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestDNSHostValidationAndMutation(t *testing.T) {
+	network := domain.VirtualNetwork{
+		Name: "dns-net", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{
+			{Family: "ipv4", Address: "10.93.0.1", Prefix: 24},
+			{Family: "ipv6", Address: "fd00:93::1", Prefix: 64},
+		},
+		DNSHosts: []domain.NetworkDNSHost{{IP: "fd00:93::50", Hostnames: []string{"db.lab.example"}}},
+	}
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{network}}
+	service := New(repository, nil, false)
+	updated, err := service.AddDNSHost(context.Background(), AddNetworkDNSHostCommand{
+		Name:    network.Name,
+		Spec:    domain.NetworkDNSHostCreateSpec{IP: "10.93.0.50", Hostnames: []string{"Web.Lab.Example.", "web.lab.example"}},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("AddDNSHost() error = %v", err)
+	}
+	if updated.Name != network.Name || repository.addedDNSHost.IP != "10.93.0.50" || !reflect.DeepEqual(repository.addedDNSHost.Hostnames, []string{"web.lab.example"}) {
+		t.Fatalf("added DNS host = %+v updated=%+v", repository.addedDNSHost, updated)
+	}
+	for _, test := range []struct {
+		name string
+		spec domain.NetworkDNSHostCreateSpec
+		want error
+	}{
+		{name: "outside subnet", spec: domain.NetworkDNSHostCreateSpec{IP: "10.94.0.50", Hostnames: []string{"outside.lab"}}, want: domain.ErrInvalidInput},
+		{name: "duplicate IP", spec: domain.NetworkDNSHostCreateSpec{IP: "fd00:93::50", Hostnames: []string{"other.lab"}}, want: domain.ErrConflict},
+		{name: "duplicate hostname", spec: domain.NetworkDNSHostCreateSpec{IP: "fd00:93::51", Hostnames: []string{"DB.LAB.EXAMPLE"}}, want: domain.ErrConflict},
+		{name: "invalid hostname", spec: domain.NetworkDNSHostCreateSpec{IP: "fd00:93::51", Hostnames: []string{"bad_name"}}, want: domain.ErrInvalidInput},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &fakeRepository{networks: []domain.VirtualNetwork{network}}
+			_, err := New(repository, nil, false).AddDNSHost(context.Background(), AddNetworkDNSHostCommand{Name: network.Name, Spec: test.spec, Request: adminRequest()})
+			if !errors.Is(err, test.want) || repository.called {
+				t.Fatalf("error = %v called=%v", err, repository.called)
+			}
+		})
+	}
+
+	updated, err = service.DeleteDNSHost(context.Background(), DeleteNetworkDNSHostCommand{Name: network.Name, IP: "FD00:93:0:0:0:0:0:50", Request: adminRequest()})
+	if err != nil {
+		t.Fatalf("DeleteDNSHost() error = %v", err)
+	}
+	if updated.Name != network.Name || repository.deletedDNSHost.IP != "fd00:93::50" {
+		t.Fatalf("deleted DNS host = %+v updated=%+v", repository.deletedDNSHost, updated)
+	}
+}
+
+func TestNetworkUpdateRejectsRemovingSubnetWithDNSHosts(t *testing.T) {
+	network := domain.VirtualNetwork{
+		Name: "dns-net", Active: false, Persistent: true,
+		Addresses: []domain.NetworkAddress{{Family: "ipv6", Address: "fd00:95::1", Prefix: 64, IPv6Mode: "slaac"}},
+		DNSHosts:  []domain.NetworkDNSHost{{IP: "fd00:95::50", Hostnames: []string{"db.lab"}}},
+	}
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{network}}
+	_, err := New(repository, nil, false).Update(context.Background(), UpdateNetworkCommand{
+		Name:    network.Name,
+		Spec:    domain.VirtualNetworkUpdateSpec{Mode: "isolated", Subnet: "10.95.0.0/24"},
+		Request: adminRequest(),
+	})
+	if !errors.Is(err, domain.ErrConflict) || repository.called {
+		t.Fatalf("error = %v called=%v", err, repository.called)
+	}
+}
+
+func intPointer(value int) *int { return &value }
 
 func TestListSortsNetworks(t *testing.T) {
 	service := New(&fakeRepository{networks: []domain.VirtualNetwork{{Name: "prod"}, {Name: "Default"}, {Name: "archive"}}}, nil, false)

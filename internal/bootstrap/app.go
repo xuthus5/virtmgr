@@ -523,6 +523,7 @@ func buildRouter(deps routerDependencies) stdhttp.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(securityHeaders(deps.cfg.TLSEnabled() || deps.cfg.CookieSecure))
 	r.Use(requestLogger(deps.logger))
+	r.Use(httpx.RequireAllowedNetworks(deps.cfg.AllowedNetworks))
 
 	r.Get("/healthz", func(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

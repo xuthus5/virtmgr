@@ -81,6 +81,8 @@ const actions = [
   { value: "network.update", label: "编辑虚拟网络" },
   { value: "network.dhcp.host.add", label: "添加静态主机" },
   { value: "network.dhcp.host.delete", label: "删除静态主机" },
+  { value: "network.dns.host.add", label: "添加静态 DNS 记录" },
+  { value: "network.dns.host.delete", label: "删除静态 DNS 记录" },
   { value: "network.start", label: "启动虚拟网络" },
   { value: "network.stop", label: "停止虚拟网络" },
   { value: "network.delete", label: "删除虚拟网络" },

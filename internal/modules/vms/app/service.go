@@ -17,6 +17,8 @@ import (
 	"virtmgr/internal/domain"
 	backupsapp "virtmgr/internal/modules/backups/app"
 	"virtmgr/internal/platform/dataplane"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Repository interface {
@@ -1715,6 +1717,9 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 		if !cloudInitPoolPattern.MatchString(pool) {
 			return domain.VMCreateSpec{}, fmt.Errorf("%w: invalid cloud-init storage pool", domain.ErrInvalidInput)
 		}
+		if err := validateCloudInitNetworkConfig(networkConfig); err != nil {
+			return domain.VMCreateSpec{}, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err)
+		}
 		spec.CloudInit = &domain.CloudInitSpec{UserData: userData, NetworkConfig: networkConfig, VendorData: vendorData, Pool: pool}
 	}
 	firmware, ok := domain.NormalizeVMFirmware(string(spec.Firmware))
@@ -1735,6 +1740,33 @@ func containsCloudInitNUL(values ...string) bool {
 		}
 	}
 	return false
+}
+
+func validateCloudInitNetworkConfig(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var config map[string]any
+	if err := yaml.Unmarshal([]byte(value), &config); err != nil {
+		return fmt.Errorf("cloud-init network-config is not valid YAML: %w", err)
+	}
+	version, ok := config["version"].(int)
+	if !ok || version != 2 {
+		return errors.New("cloud-init network-config must use Netplan version 2")
+	}
+	ethernets, ok := config["ethernets"].(map[string]any)
+	if !ok || len(ethernets) == 0 {
+		return errors.New("cloud-init network-config must contain an ethernets mapping")
+	}
+	for name, value := range ethernets {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("cloud-init network-config contains an empty ethernet name")
+		}
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("cloud-init network-config ethernet %s must be a mapping", name)
+		}
+	}
+	return nil
 }
 
 func validAbsolutePath(path string) bool {

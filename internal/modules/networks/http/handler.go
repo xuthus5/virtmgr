@@ -172,6 +172,52 @@ func (h *Handler) DeleteDHCPHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, network)
 }
 
+func (h *Handler) AddDNSHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.NetworkDNSHostCreateSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	network, err := h.service.AddDNSHost(r.Context(), networksapp.AddNetworkDNSHostCommand{
+		Name:    chi.URLParam(r, "name"),
+		Spec:    spec,
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, network)
+}
+
+func (h *Handler) DeleteDNSHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	address, err := url.PathUnescape(chi.URLParam(r, "ip"))
+	if err != nil {
+		httpx.Error(w, r, domain.ErrInvalidInput)
+		return
+	}
+	network, err := h.service.DeleteDNSHost(r.Context(), networksapp.DeleteNetworkDNSHostCommand{
+		Name:    chi.URLParam(r, "name"),
+		IP:      address,
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, network)
+}
+
 func (h *Handler) ReserveLease(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.NetworkLeaseReservationSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -280,8 +326,10 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Patch("/networks/{name}", h.Update)
 		mutating.Post("/networks/{name}/hosts/import", h.ImportDHCPHosts)
 		mutating.Post("/networks/{name}/hosts", h.AddDHCPHost)
+		mutating.Post("/networks/{name}/dns/hosts", h.AddDNSHost)
 		mutating.Post("/networks/{name}/leases/reserve", h.ReserveLease)
 		mutating.Delete("/networks/{name}/hosts/{host}", h.DeleteDHCPHost)
+		mutating.Delete("/networks/{name}/dns/hosts/{ip}", h.DeleteDNSHost)
 		mutating.Post("/networks/{name}/actions/{action}", h.Action)
 		mutating.Delete("/networks/{name}", h.Delete)
 	})

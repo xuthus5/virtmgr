@@ -99,7 +99,7 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
           <AlertTriangle className="h-3.5 w-3.5" />{error}
         </p>
       ) : null}
-      <div className="overflow-hidden rounded-md border">
+      <div className="overflow-x-auto rounded-md border">
         {hosts.length ? (
           <Table className="min-w-[620px]">
             <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>DUID / Client ID</TableHead><TableHead>MAC 地址</TableHead><TableHead className="w-20 text-right">操作</TableHead></TableRow></TableHeader>

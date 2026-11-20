@@ -1,5 +1,5 @@
 import type { Role, VirtualNetwork, VirtualNetworkUpdateInput } from "@/api/types";
-import { splitDNSServers } from "@/features/networks/network-ui";
+import { parseMTU, splitDNSServers } from "@/features/networks/network-ui";
 
 export type NetworkEditFormState = {
   mode: VirtualNetworkUpdateInput["mode"];
@@ -14,6 +14,7 @@ export type NetworkEditFormState = {
   dnsDomain: string;
   dnsServers: string;
   bridge: string;
+  mtu: string;
   autostart: boolean;
 };
 
@@ -33,6 +34,7 @@ export function networkEditForm(network: VirtualNetwork): NetworkEditFormState {
     dnsDomain: network.dnsDomain ?? "",
     dnsServers: (network.dnsServers ?? []).join(", "),
     bridge: network.bridge ?? "",
+    mtu: network.mtu ? String(network.mtu) : "",
     autostart: network.autostart,
   };
 }
@@ -83,6 +85,7 @@ export function networkUpdateInput(form: NetworkEditFormState): VirtualNetworkUp
     natIpv6: form.mode === "nat" && Boolean(ipv6Subnet) ? form.natIpv6 : undefined,
     dnsDomain: form.dnsDomain.trim() || undefined,
     dnsServers: splitDNSServers(form.dnsServers),
+    mtu: parseMTU(form.mtu) ?? 0,
     autostart: form.autostart,
   };
 }

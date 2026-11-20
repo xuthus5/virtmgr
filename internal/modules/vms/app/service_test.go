@@ -867,8 +867,10 @@ func TestCreateVMCloudInit(t *testing.T) {
 	repository := &recordingRepository{fakeVMRepository: fakeVMRepository{}}
 	service := New(repository, audit, false)
 	const userData = "#cloud-config\nruncmd:\n  - echo do-not-audit\n"
+	const networkConfig = "version: 2\nethernets:\n  ens3:\n    dhcp4: true\n    dhcp6: true\n"
+	const vendorData = "#cloud-config\nfinal_message: ready\n"
 	spec := withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
-		spec.CloudInit = &domain.CloudInitSpec{UserData: "  " + userData + "  ", Pool: " default "}
+		spec.CloudInit = &domain.CloudInitSpec{UserData: "  " + userData + "  ", NetworkConfig: "  " + networkConfig + "  ", VendorData: "  " + vendorData + "  ", Pool: " default "}
 	})
 	if _, err := service.Create(context.Background(), CreateCommand{
 		Spec: spec, Request: MutationContext{Session: operatorSession()},
@@ -879,7 +881,7 @@ func TestCreateVMCloudInit(t *testing.T) {
 		t.Fatalf("created specs = %+v", repository.createdSpecs)
 	}
 	created := repository.createdSpecs[0].CloudInit
-	if created.Pool != "default" || created.UserData != strings.TrimSpace(userData) {
+	if created.Pool != "default" || created.UserData != strings.TrimSpace(userData) || created.NetworkConfig != strings.TrimSpace(networkConfig) || created.VendorData != strings.TrimSpace(vendorData) {
 		t.Fatalf("cloud-init spec = %+v", created)
 	}
 	if len(audit.events) != 1 {
@@ -958,6 +960,12 @@ func TestCreateVMRejectsViewerReadOnlyAndInvalidSpec(t *testing.T) {
 		}), want: domain.ErrInvalidInput},
 		{name: "large cloud-init", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
 			spec.CloudInit = &domain.CloudInitSpec{UserData: strings.Repeat("a", maxCloudInitUserDataBytes+1), Pool: "default"}
+		}), want: domain.ErrInvalidInput},
+		{name: "invalid cloud-init network config", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
+			spec.CloudInit = &domain.CloudInitSpec{UserData: "#cloud-config\n", NetworkConfig: "version: 2\nethernets: [", Pool: "default"}
+		}), want: domain.ErrInvalidInput},
+		{name: "wrong cloud-init network config version", session: operatorSession(), spec: withSpec(validCreateSpec(), func(spec *domain.VMCreateSpec) {
+			spec.CloudInit = &domain.CloudInitSpec{UserData: "#cloud-config\n", NetworkConfig: "version: 1\nethernets:\n  ens3: {}\n", Pool: "default"}
 		}), want: domain.ErrInvalidInput},
 	}
 	for _, test := range tests {

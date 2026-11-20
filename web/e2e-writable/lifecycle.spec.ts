@@ -327,6 +327,10 @@ test("可写模式创建并删除虚拟机", async ({ page }) => {
   await page.getByLabel("启用 vTPM 2.0", { exact: true }).check();
   await page.getByLabel("启用 Cloud-init", { exact: true }).check();
   await expect(page.getByTestId("vm-cloud-init-mode-visual")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("vm-cloud-init-network-source")).toContainText("IPv6 fd00:122::1/64 · DHCP");
+  await expect(page.getByTestId("vm-cloud-init-network-ipv6-mode")).toHaveValue("dhcpv6");
+  await expect(page.getByTestId("vm-cloud-init-network-config")).toHaveValue(/dhcp6: true/);
+  await expect(page.getByTestId("vm-cloud-init-network-config")).toHaveValue(/mtu: 1500/);
   await page.getByTestId("vm-cloud-init-runcmd").fill("echo e2e-cloud-init");
   await expect(page.getByTestId("vm-cloud-init-preview")).toContainText("runcmd:");
   await expect(page.getByTestId("vm-cloud-init-preview")).toContainText("echo e2e-cloud-init");
@@ -911,6 +915,7 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await page.getByTestId("network-ipv6-subnet").fill("fd00:99::/64");
   await page.getByTestId("network-ipv6-dhcp-start").fill("fd00:99::100");
   await page.getByTestId("network-ipv6-dhcp-end").fill("fd00:99::1ff");
+  await page.getByTestId("network-mtu").fill("1400");
   await expect(page.getByLabel("创建后立即启动", { exact: true })).not.toBeChecked();
   await page.getByTestId("network-create-submit").click();
 
@@ -923,6 +928,7 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(row).toContainText("fd00:99::1/64");
   await expect(row).toContainText("DHCP 10.99.0.2 - 10.99.0.254");
   await expect(row).toContainText("DHCP fd00:99::100 - fd00:99::1ff");
+  await expect(row).toContainText("MTU 1400");
   await expect(row).toContainText("启动");
   await expect(page.getByTestId("network-stop-e2e-net-01")).toHaveCount(0);
 
@@ -931,6 +937,7 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(page.getByLabel("网络名称", { exact: true }).last()).toHaveValue("e2e-net-01");
   await page.getByLabel("网络模式", { exact: true }).last().selectOption("nat");
   await page.getByTestId("network-edit-subnet").fill("10.99.1.0/24");
+  await page.getByTestId("network-edit-mtu").fill("1500");
   await expect(page.getByTestId("network-edit-ipv6-subnet")).toHaveValue("fd00:99::1/64");
   await page.getByLabel("DHCP 起始地址（可选）", { exact: true }).last().fill("10.99.1.20");
   await page.getByLabel("DHCP 结束地址（可选）", { exact: true }).last().fill("10.99.1.120");
@@ -940,6 +947,7 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(row).toContainText("nat");
   await expect(row).toContainText("10.99.1.1/24");
   await expect(row).toContainText("DHCP 10.99.1.20 - 10.99.1.120");
+  await expect(row).toContainText("MTU 1500");
   await expect(row).toContainText("是");
   await expect(page.getByTestId("network-edit-form")).toHaveCount(0);
 
@@ -972,10 +980,25 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(page.getByTestId("network-host-row-00:03:00:01:52:54:00:aa:bb:cd")).toContainText("fd00:99::50");
   await expect(page.getByTestId("network-host-row-00:03:00:01:52:54:00:aa:bb:cd")).toContainText("e2e-static-ipv6");
 
+  await page.getByTestId("network-dns-host-ip").fill("fd00:99::60");
+  await page.getByTestId("network-dns-hostnames").fill("e2e-dns.lab.example, e2e-dns");
+  await page.getByTestId("network-dns-host-submit").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("DNS 记录已添加");
+  const dnsRow = page.getByTestId("network-dns-host-row-fd00:99::60");
+  await expect(dnsRow).toContainText("e2e-dns.lab.example, e2e-dns");
+  await expect(dnsRow).toContainText("AAAA");
+  await page.getByTestId("network-dns-host-delete-fd00:99::60").click();
+  const dnsDialog = page.getByRole("alertdialog");
+  await expect(dnsDialog).toContainText("删除静态 DNS 记录？");
+  await dnsDialog.getByTestId("confirm-delete-network-dns-host").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("DNS 记录 fd00:99::60 已删除");
+  await expect(page.getByTestId("network-dns-host-row-fd00:99::60")).toHaveCount(0);
+
   await page.getByTestId("network-diagnostics-e2e-net-01").click();
   await expect(page.getByTestId("network-diagnostics-card")).toContainText("NAT66 已启用");
   await expect(page.getByTestId("network-diagnostic-active")).toContainText("libvirt 网络处于活跃状态");
   await expect(page.getByTestId("network-diagnostic-dhcpv6")).toContainText("fd00:99::100 - fd00:99::1ff");
+  await expect(page.getByTestId("network-diagnostic-mtu")).toContainText("MTU 1500");
 
   await page.getByTestId("network-stop-e2e-net-01").click();
   await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-net-01 已停止。");
@@ -996,6 +1019,8 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   for (const [action, label] of [
     ["network.create", "创建虚拟网络"],
     ["network.update", "编辑虚拟网络"],
+    ["network.dns.host.add", "添加静态 DNS 记录"],
+    ["network.dns.host.delete", "删除静态 DNS 记录"],
     ["network.delete", "删除虚拟网络"],
   ] as const) {
     await page.getByTestId("audit-action-filter").selectOption(action);

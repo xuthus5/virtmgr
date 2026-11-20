@@ -24,6 +24,7 @@ type networkXML struct {
 	Bridge struct {
 		Name string `xml:"name,attr"`
 	} `xml:"bridge"`
+	MTU *networkMTUXML `xml:"mtu"`
 	IPs []networkIPXML `xml:"ip"`
 }
 
@@ -55,6 +56,7 @@ type networkDefinitionXML struct {
 	Domain  *networkDomainXML        `xml:"domain,omitempty"`
 	DNS     *networkDNSXML           `xml:"dns,omitempty"`
 	Bridge  *networkBridgeXML        `xml:"bridge,omitempty"`
+	MTU     *networkMTUXML           `xml:"mtu,omitempty"`
 	IPs     []networkIPDefinitionXML `xml:"ip,omitempty"`
 }
 
@@ -73,14 +75,25 @@ type networkDomainXML struct {
 
 type networkDNSXML struct {
 	Forwarders []networkDNSForwarderXML `xml:"forwarder"`
+	Hosts      []networkDNSHostXML      `xml:"host"`
 }
 
 type networkDNSForwarderXML struct {
 	Addr string `xml:"addr,attr"`
 }
 
+type networkDNSHostXML struct {
+	XMLName   xml.Name `xml:"host"`
+	IP        string   `xml:"ip,attr"`
+	Hostnames []string `xml:"hostname"`
+}
+
 type networkBridgeXML struct {
 	Name string `xml:"name,attr"`
+}
+
+type networkMTUXML struct {
+	Size int `xml:"size,attr"`
 }
 
 type interfaceXML struct {
@@ -426,6 +439,9 @@ func networkXMLFromDefinition(definition domain.VirtualNetworkDefinition) (strin
 	if definition.DNSDomain != "" {
 		item.Domain = &networkDomainXML{Name: definition.DNSDomain}
 	}
+	if definition.MTUPresent && definition.MTU > 0 {
+		item.MTU = &networkMTUXML{Size: definition.MTU}
+	}
 	if len(definition.DNSServers) > 0 {
 		item.DNS = &networkDNSXML{Forwarders: make([]networkDNSForwarderXML, 0, len(definition.DNSServers))}
 		for _, server := range definition.DNSServers {
@@ -489,10 +505,22 @@ func networkFromLibvirt(network *libvirt.Network) (domain.VirtualNetwork, error)
 	}
 	natIPv6 := parsed.Forward.Mode == "nat" && parsed.Forward.NAT != nil && parsed.Forward.NAT.IPv6 == "yes"
 	dnsServers := make([]string, 0)
+	dnsHosts := make([]domain.NetworkDNSHost, 0)
 	if parsed.DNS != nil {
 		for _, forwarder := range parsed.DNS.Forwarders {
 			if strings.TrimSpace(forwarder.Addr) != "" {
 				dnsServers = append(dnsServers, forwarder.Addr)
+			}
+		}
+		for _, host := range parsed.DNS.Hosts {
+			hostnames := make([]string, 0, len(host.Hostnames))
+			for _, hostname := range host.Hostnames {
+				if value := strings.TrimSpace(hostname); value != "" {
+					hostnames = append(hostnames, value)
+				}
+			}
+			if strings.TrimSpace(host.IP) != "" && len(hostnames) > 0 {
+				dnsHosts = append(dnsHosts, domain.NetworkDNSHost{IP: host.IP, Hostnames: hostnames})
 			}
 		}
 	}
@@ -503,10 +531,17 @@ func networkFromLibvirt(network *libvirt.Network) (domain.VirtualNetwork, error)
 	result := domain.VirtualNetwork{
 		Name: name, UUID: uuid, Bridge: parsed.Bridge.Name, Active: active,
 		Persistent: persistent, Autostart: autostart, ForwardMode: parsed.Forward.Mode,
-		NATIPv6: natIPv6, DNSDomain: dnsDomain, DNSServers: dnsServers, Addresses: addresses,
+		NATIPv6: natIPv6, MTU: networkMTU(parsed), DNSDomain: dnsDomain, DNSServers: dnsServers, DNSHosts: dnsHosts, Addresses: addresses,
 	}
 	result.Warnings = networkWarnings(result)
 	return result, nil
+}
+
+func networkMTU(parsed networkXML) int {
+	if parsed.MTU == nil {
+		return 0
+	}
+	return parsed.MTU.Size
 }
 
 func prefixFromNetmask(mask string) int {

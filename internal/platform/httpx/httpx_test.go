@@ -149,3 +149,64 @@ func TestRealIPAcceptsIPv6ForwardedClientChain(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 }
+
+func TestRequireAllowedNetworksAcceptsIPv6AndRejectsUnlistedSources(t *testing.T) {
+	allowed := []netip.Prefix{
+		netip.MustParsePrefix("2001:db8:42::/64"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+	}
+	tests := []struct {
+		name       string
+		remoteAddr string
+		status     int
+	}{
+		{name: "IPv6 allowed", remoteAddr: "[2001:db8:42::10]:443", status: http.StatusNoContent},
+		{name: "IPv4 allowed", remoteAddr: "192.0.2.10:443", status: http.StatusNoContent},
+		{name: "mapped IPv4 allowed", remoteAddr: "[::ffff:192.0.2.10]:443", status: http.StatusNoContent},
+		{name: "IPv6 outside prefix", remoteAddr: "[2001:db8:43::10]:443", status: http.StatusForbidden},
+		{name: "malformed source", remoteAddr: "not-an-address", status: http.StatusForbidden},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request.RemoteAddr = test.remoteAddr
+			recorder := httptest.NewRecorder()
+			RequireAllowedNetworks(allowed)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(recorder, request)
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.status, recorder.Body.String())
+			}
+			if test.status == http.StatusForbidden && !strings.Contains(recorder.Body.String(), `"code":"SOURCE_NOT_ALLOWED"`) {
+				t.Fatalf("forbidden body = %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequireAllowedNetworksUsesTrustedProxyClientAddress(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("::1/128")}
+	allowed := []netip.Prefix{netip.MustParsePrefix("2001:db8:42::/64")}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "[::1]:1234"
+	request.Header.Set("X-Forwarded-For", "2001:db8:42::25")
+	recorder := httptest.NewRecorder()
+	RealIP(trusted)(RequireAllowedNetworks(allowed)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRequireAllowedNetworksWithoutConfiguredPrefixesAllowsAll(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "[2001:db8:43::10]:443"
+	recorder := httptest.NewRecorder()
+	RequireAllowedNetworks(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}

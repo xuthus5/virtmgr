@@ -39,6 +39,9 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.TrustedProxies) != 0 {
 		t.Fatalf("TrustedProxies = %v", cfg.TrustedProxies)
 	}
+	if len(cfg.AllowedNetworks) != 0 {
+		t.Fatalf("AllowedNetworks = %v", cfg.AllowedNetworks)
+	}
 }
 
 func TestLoadReadsYAMLOverrides(t *testing.T) {
@@ -59,6 +62,9 @@ trusted_proxies:
   - 127.0.0.1
   - 10.0.0.0/8
   - ::1
+management_allowed_networks:
+  - 2001:db8:42::/64
+  - 192.0.2.0/24
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -86,6 +92,21 @@ trusted_proxies:
 			t.Fatalf("TrustedProxies = %v, missing %s", cfg.TrustedProxies, want)
 		}
 	}
+	for _, want := range []netip.Prefix{
+		netip.MustParsePrefix("2001:db8:42::/64"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+	} {
+		found := false
+		for _, prefix := range cfg.AllowedNetworks {
+			if prefix == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("AllowedNetworks = %v, missing %s", cfg.AllowedNetworks, want)
+		}
+	}
 }
 
 func TestLoadRejectsMissingOrInvalidFile(t *testing.T) {
@@ -100,6 +121,8 @@ func TestLoadRejectsMissingOrInvalidFile(t *testing.T) {
 		"empty admin":        "admin_username: \"\"\n",
 		"empty proxies":      "trusted_proxies: [\"\"]\n",
 		"invalid proxy":      "trusted_proxies: [not-an-ip]\n",
+		"empty allowlist":    "management_allowed_networks: [\"\"]\n",
+		"invalid allowlist":  "management_allowed_networks: [2001:db8::/129]\n",
 		"multiple documents": "listen: 127.0.0.1:8443\n---\nlisten: 127.0.0.1:9443\n",
 	} {
 		t.Run(name, func(t *testing.T) {

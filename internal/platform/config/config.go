@@ -15,35 +15,37 @@ import (
 const DefaultPath = "/etc/virtmgr/server.yaml"
 
 type Config struct {
-	Listen         string
-	TLSCertFile    string
-	TLSKeyFile     string
-	LibvirtURI     string
-	DatabasePath   string
-	HostName       string
-	SessionTTL     time.Duration
-	CookieSecure   bool
-	AdminUsername  string
-	AdminPassword  string
-	ReadOnly       bool
-	DemoMode       bool
-	TrustedProxies []netip.Prefix
+	Listen          string
+	TLSCertFile     string
+	TLSKeyFile      string
+	LibvirtURI      string
+	DatabasePath    string
+	HostName        string
+	SessionTTL      time.Duration
+	CookieSecure    bool
+	AdminUsername   string
+	AdminPassword   string
+	ReadOnly        bool
+	DemoMode        bool
+	TrustedProxies  []netip.Prefix
+	AllowedNetworks []netip.Prefix
 }
 
 type fileConfig struct {
-	Listen         string   `yaml:"listen"`
-	TLSCertFile    string   `yaml:"tls_cert_file"`
-	TLSKeyFile     string   `yaml:"tls_key_file"`
-	LibvirtURI     string   `yaml:"libvirt_uri"`
-	DatabasePath   string   `yaml:"database_path"`
-	HostName       string   `yaml:"host_name"`
-	AdminUsername  string   `yaml:"admin_username"`
-	AdminPassword  string   `yaml:"admin_password"`
-	SessionTTL     string   `yaml:"session_ttl"`
-	CookieSecure   bool     `yaml:"cookie_secure"`
-	TrustedProxies []string `yaml:"trusted_proxies"`
-	ReadOnly       bool     `yaml:"read_only"`
-	DemoMode       bool     `yaml:"demo_mode"`
+	Listen          string   `yaml:"listen"`
+	TLSCertFile     string   `yaml:"tls_cert_file"`
+	TLSKeyFile      string   `yaml:"tls_key_file"`
+	LibvirtURI      string   `yaml:"libvirt_uri"`
+	DatabasePath    string   `yaml:"database_path"`
+	HostName        string   `yaml:"host_name"`
+	AdminUsername   string   `yaml:"admin_username"`
+	AdminPassword   string   `yaml:"admin_password"`
+	SessionTTL      string   `yaml:"session_ttl"`
+	CookieSecure    bool     `yaml:"cookie_secure"`
+	TrustedProxies  []string `yaml:"trusted_proxies"`
+	AllowedNetworks []string `yaml:"management_allowed_networks"`
+	ReadOnly        bool     `yaml:"read_only"`
+	DemoMode        bool     `yaml:"demo_mode"`
 }
 
 func Load(path string) (Config, error) {
@@ -86,24 +88,29 @@ func Load(path string) (Config, error) {
 	if err != nil || ttl <= 0 {
 		return Config{}, fmt.Errorf("parse %s: session_ttl must be a positive duration", path)
 	}
-	trustedProxies, err := parsePrefixes(document.TrustedProxies)
+	trustedProxies, err := parsePrefixes("trusted_proxies", document.TrustedProxies)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	allowedNetworks, err := parsePrefixes("management_allowed_networks", document.AllowedNetworks)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	cfg := Config{
-		Listen:         strings.TrimSpace(document.Listen),
-		TLSCertFile:    strings.TrimSpace(document.TLSCertFile),
-		TLSKeyFile:     strings.TrimSpace(document.TLSKeyFile),
-		LibvirtURI:     strings.TrimSpace(document.LibvirtURI),
-		DatabasePath:   strings.TrimSpace(document.DatabasePath),
-		HostName:       strings.TrimSpace(document.HostName),
-		SessionTTL:     ttl,
-		CookieSecure:   document.CookieSecure,
-		AdminUsername:  strings.TrimSpace(document.AdminUsername),
-		AdminPassword:  document.AdminPassword,
-		ReadOnly:       document.ReadOnly,
-		DemoMode:       document.DemoMode,
-		TrustedProxies: trustedProxies,
+		Listen:          strings.TrimSpace(document.Listen),
+		TLSCertFile:     strings.TrimSpace(document.TLSCertFile),
+		TLSKeyFile:      strings.TrimSpace(document.TLSKeyFile),
+		LibvirtURI:      strings.TrimSpace(document.LibvirtURI),
+		DatabasePath:    strings.TrimSpace(document.DatabasePath),
+		HostName:        strings.TrimSpace(document.HostName),
+		SessionTTL:      ttl,
+		CookieSecure:    document.CookieSecure,
+		AdminUsername:   strings.TrimSpace(document.AdminUsername),
+		AdminPassword:   document.AdminPassword,
+		ReadOnly:        document.ReadOnly,
+		DemoMode:        document.DemoMode,
+		TrustedProxies:  trustedProxies,
+		AllowedNetworks: allowedNetworks,
 	}
 	if cfg.Listen == "" {
 		return Config{}, fmt.Errorf("validate %s: listen must not be empty", path)
@@ -130,16 +137,16 @@ func (c Config) TLSEnabled() bool {
 	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
-func parsePrefixes(values []string) ([]netip.Prefix, error) {
+func parsePrefixes(field string, values []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, 0, len(values))
 	for _, value := range values {
 		entry := strings.TrimSpace(value)
 		if entry == "" {
-			return nil, errors.New("trusted_proxies contains an empty entry")
+			return nil, fmt.Errorf("%s contains an empty entry", field)
 		}
 		prefix, err := parsePrefix(entry)
 		if err != nil {
-			return nil, fmt.Errorf("trusted_proxies entry %q: %w", entry, err)
+			return nil, fmt.Errorf("%s entry %q: %w", field, entry, err)
 		}
 		prefixes = append(prefixes, prefix)
 	}

@@ -86,6 +86,8 @@ type Backend interface {
 	UpdateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	AddNetworkDHCPHost(ctx context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error)
 	DeleteNetworkDHCPHost(ctx context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error)
+	AddNetworkDNSHost(ctx context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error)
+	DeleteNetworkDNSHost(ctx context.Context, name string, host domain.NetworkDNSHost) (domain.VirtualNetwork, error)
 	PerformNetworkAction(ctx context.Context, name string, action domain.VirtualNetworkAction) error
 	DeleteNetwork(ctx context.Context, name string) error
 	Ping(ctx context.Context) error

@@ -60,6 +60,36 @@ func TestNetworkDHCPHostXMLAndParentIndex(t *testing.T) {
 	}
 }
 
+func TestNetworkDNSHostXMLAndParentIndex(t *testing.T) {
+	hostXML, err := networkDNSHostXMLText(domain.NetworkDNSHost{
+		IP: "fd00:86::50", Hostnames: []string{"db-v6.lab.example", "db.lab.example"},
+	})
+	if err != nil {
+		t.Fatalf("networkDNSHostXMLText() error = %v", err)
+	}
+	for _, fragment := range []string{
+		`<host ip="fd00:86::50">`,
+		`<hostname>db-v6.lab.example</hostname>`,
+		`<hostname>db.lab.example</hostname>`,
+	} {
+		if !strings.Contains(hostXML, fragment) {
+			t.Fatalf("DNS host XML missing %q: %s", fragment, hostXML)
+		}
+	}
+
+	const text = `<network><dns><forwarder addr='1.1.1.1'/><host ip='fd00:86::50'><hostname>db.lab.example</hostname></host><host ip='fd00:86::51'><hostname>web.lab.example</hostname></host></dns><ip family='ipv6' address='fd00:86::1' prefix='64'/></network>`
+	index, err := networkDNSHostIndex(text, "fd00:86::51")
+	if err != nil || index != 1 {
+		t.Fatalf("DNS host index = %d, %v", index, err)
+	}
+	if _, err := networkDNSHostIndex(text, "fd00:86::52"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing DNS host error = %v", err)
+	}
+	if _, err := networkDNSHostIndex(`<network><name>no-dns</name></network>`, "fd00:86::50"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing DNS section error = %v", err)
+	}
+}
+
 func TestNetworkXMLFromDefinitionIPv6OnlySLAAC(t *testing.T) {
 	xmlText, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
 		Name: "ipv6-only", Mode: "isolated", IPv6Address: "fd00:90::1", IPv6Prefix: 64, IPv6Mode: "slaac",
@@ -89,6 +119,19 @@ func TestNetworkXMLFromDefinitionDNS(t *testing.T) {
 		if !strings.Contains(xmlText, fragment) {
 			t.Fatalf("DNS XML missing %q: %s", fragment, xmlText)
 		}
+	}
+}
+
+func TestNetworkXMLFromDefinitionMTU(t *testing.T) {
+	xmlText, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
+		Name: "jumbo-net", Mode: "isolated", IPv6Address: "fd00:92::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+		MTU: 9000, MTUPresent: true,
+	})
+	if err != nil {
+		t.Fatalf("networkXMLFromDefinition() error = %v", err)
+	}
+	if !strings.Contains(xmlText, `<mtu size="9000"></mtu>`) {
+		t.Fatalf("network MTU missing: %s", xmlText)
 	}
 }
 
@@ -200,6 +243,70 @@ func TestUpdateNetworkXMLPreservesDHCPHosts(t *testing.T) {
 	}
 	if strings.Contains(xmlText, "<forward") || strings.Contains(xmlText, "netmask=") || strings.Contains(xmlText, "family=\"ipv6\"") {
 		t.Fatalf("isolated update retained forward/netmask/IPv6: %s", xmlText)
+	}
+}
+
+func TestUpdateNetworkXMLSetsClearsAndPreservesDNSState(t *testing.T) {
+	const source = `<network><name>dns-net</name><forward mode='nat'/><bridge name='virbr9'/><dns><forwarder addr='1.1.1.1'/><host ip='10.20.30.50'><hostname>web.lab.example</hostname></host><host ip='fd00:20:30::50'><hostname>web-v6.lab.example</hostname></host></dns><ip address='10.20.30.1' prefix='24'/><ip family='ipv6' address='fd00:20:30::1' prefix='64'/></network>`
+	withDNS, err := updateNetworkXML(source, domain.VirtualNetworkDefinition{
+		Name: "dns-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24,
+		IPv6Address: "fd00:20:30::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+		DNSDomain: "lab.example", DNSServers: []string{"9.9.9.9"},
+	})
+	if err != nil {
+		t.Fatalf("update DNS error = %v", err)
+	}
+	for _, fragment := range []string{
+		`<domain name="lab.example"></domain>`,
+		`<forwarder addr="9.9.9.9"></forwarder>`,
+		`<host ip="10.20.30.50">`,
+		`<host ip="fd00:20:30::50">`,
+	} {
+		if !strings.Contains(withDNS, fragment) {
+			t.Fatalf("updated DNS XML missing %q: %s", fragment, withDNS)
+		}
+	}
+	if strings.Contains(withDNS, "1.1.1.1") {
+		t.Fatalf("updated DNS XML retained old forwarder: %s", withDNS)
+	}
+
+	withoutDNS, err := updateNetworkXML(withDNS, domain.VirtualNetworkDefinition{
+		Name: "dns-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24,
+		IPv6Address: "fd00:20:30::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+	})
+	if err != nil {
+		t.Fatalf("clear DNS error = %v", err)
+	}
+	if strings.Contains(withoutDNS, "<forwarder") || strings.Contains(withoutDNS, "<domain") {
+		t.Fatalf("cleared DNS XML retained domain or forwarder: %s", withoutDNS)
+	}
+	if !strings.Contains(withoutDNS, `<host ip="10.20.30.50">`) || !strings.Contains(withoutDNS, `<host ip="fd00:20:30::50">`) {
+		t.Fatalf("clearing forwarders removed static DNS hosts: %s", withoutDNS)
+	}
+}
+
+func TestUpdateNetworkXMLSetsAndClearsMTU(t *testing.T) {
+	const source = `<network><name>mtu-net</name><forward mode='isolated'/><bridge name='virbr9'/><ip family='ipv6' address='fd00:93::1' prefix='64'/></network>`
+	withMTU, err := updateNetworkXML(source, domain.VirtualNetworkDefinition{
+		Name: "mtu-net", Mode: "isolated", IPv6Address: "fd00:93::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+		MTU: 9000, MTUPresent: true,
+	})
+	if err != nil {
+		t.Fatalf("set MTU error = %v", err)
+	}
+	if !strings.Contains(withMTU, `<mtu size="9000"></mtu>`) {
+		t.Fatalf("updated MTU missing: %s", withMTU)
+	}
+
+	withoutMTU, err := updateNetworkXML(withMTU, domain.VirtualNetworkDefinition{
+		Name: "mtu-net", Mode: "isolated", IPv6Address: "fd00:93::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+		MTU: 0, MTUPresent: true,
+	})
+	if err != nil {
+		t.Fatalf("clear MTU error = %v", err)
+	}
+	if strings.Contains(withoutMTU, "<mtu") {
+		t.Fatalf("cleared MTU retained: %s", withoutMTU)
 	}
 }
 

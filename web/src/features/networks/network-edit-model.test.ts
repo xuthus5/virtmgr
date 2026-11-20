@@ -26,6 +26,7 @@ describe("network edit model", () => {
       dnsDomain: "",
       dnsServers: "",
       bridge: "",
+      mtu: "",
       autostart: false,
     });
   });
@@ -52,6 +53,7 @@ describe("network edit model", () => {
       dnsDomain: "",
       dnsServers: "",
       bridge: "br0",
+      mtu: "",
       autostart: true,
     });
   });
@@ -101,7 +103,7 @@ describe("network edit model", () => {
   });
 
   it("normalizes optional DHCP values", () => {
-    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", ipv6Subnet: " fd00:40::/64 ", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: " ", natIpv6: true, dnsDomain: " lab.example.com ", dnsServers: "1.1.1.1, 2606:4700:4700::1111", bridge: "", autostart: true })).toEqual({
+    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", ipv6Subnet: " fd00:40::/64 ", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: " ", natIpv6: true, dnsDomain: " lab.example.com ", dnsServers: "1.1.1.1, 2606:4700:4700::1111", bridge: "", mtu: " 1500 ", autostart: true })).toEqual({
       mode: "isolated",
       subnet: "10.40.0.0/24",
       dhcpStart: undefined,
@@ -113,9 +115,10 @@ describe("network edit model", () => {
       natIpv6: undefined,
       dnsDomain: "lab.example.com",
       dnsServers: ["1.1.1.1", "2606:4700:4700::1111"],
+      mtu: 1500,
       autostart: true,
     });
-    expect(networkUpdateInput({ mode: "bridge", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: " br1 ", autostart: true })).toEqual({
+    expect(networkUpdateInput({ mode: "bridge", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: " br1 ", mtu: "", autostart: true })).toEqual({
       mode: "bridge",
       bridge: "br1",
       autostart: true,

@@ -2,20 +2,21 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Plus } from "lucide-react";
 import { api } from "@/api/client";
-import type { NetworkDHCPHost, NetworkDHCPHostInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput } from "@/api/types";
+import type { NetworkDHCPHost, NetworkDHCPHostInput, NetworkDNSHost, NetworkDNSHostInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { NetworkCreateCard } from "@/features/networks/network-create-card";
-import { NetworkDeleteDialog, NetworkHostDeleteDialog } from "@/features/networks/network-dialogs";
+import { NetworkDeleteDialog, NetworkDNSHostDeleteDialog, NetworkHostDeleteDialog } from "@/features/networks/network-dialogs";
 import { NetworkDiagnosticsCard } from "@/features/networks/network-diagnostics-card";
+import { NetworkDNSHostsCard } from "@/features/networks/network-dns-hosts-card";
 import { NetworkEditCard } from "@/features/networks/network-edit-card";
 import { networkEditForm, networkUpdateInput, type NetworkEditFormState } from "@/features/networks/network-edit-model";
 import { NetworkHostsCard } from "@/features/networks/network-hosts-card";
 import { NetworkLeasesCard } from "@/features/networks/network-leases-card";
 import { NetworkTableCard } from "@/features/networks/network-table-card";
-import { actionError, createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialHostForm, staticHosts, type CreateFormState, type HostFormState } from "@/features/networks/network-ui";
+import { actionError, createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialDNSHostForm, initialHostForm, mtuInputError, splitDNSHostnames, staticDNSHosts, staticHosts, type CreateFormState, type DNSHostFormState, type HostFormState } from "@/features/networks/network-ui";
 import { useHostBridgesQuery, useNetworksQuery } from "@/features/networks/use-networks-query";
 import { useNetworkDiagnosticsQuery } from "@/features/networks/use-network-diagnostics-query";
 import { useNetworkLeasesQuery } from "@/features/networks/use-network-leases-query";
@@ -30,7 +31,7 @@ export function NetworksPage() {
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateForm);
   const [createError, setCreateError] = useState("");
   const [editTarget, setEditTarget] = useState<VirtualNetwork | null>(null);
-  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: "", autostart: false });
+  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: "", mtu: "", autostart: false });
   const [editError, setEditError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [actionErrorText, setActionErrorText] = useState("");
@@ -44,6 +45,9 @@ export function NetworksPage() {
   const [hostError, setHostError] = useState("");
   const [hostTransfer, setHostTransfer] = useState<"import" | "export" | "">("");
   const [hostDeleteTarget, setHostDeleteTarget] = useState<{ network: VirtualNetwork; host: NetworkDHCPHost } | null>(null);
+  const [dnsHostForm, setDNSHostForm] = useState<DNSHostFormState>(initialDNSHostForm);
+  const [dnsHostError, setDNSHostError] = useState("");
+  const [dnsHostDeleteTarget, setDNSHostDeleteTarget] = useState<{ network: VirtualNetwork; host: NetworkDNSHost } | null>(null);
   const networks = query.data?.items ?? [];
   const hostBridges = hostBridgesQuery.data?.items ?? [];
   const leasesQuery = useNetworkLeasesQuery(leasesNetwork);
@@ -52,6 +56,7 @@ export function NetworksPage() {
   const leasesNetworkRecord = networks.find((network) => network.name === leasesNetwork);
   const hostsNetworkRecord = networks.find((network) => network.name === hostsNetwork);
   const hosts = staticHosts(hostsNetworkRecord);
+  const dnsHosts = staticDNSHosts(hostsNetworkRecord);
   const hostsHaveDHCP = Boolean(hostsNetworkRecord?.addresses.some((address) => address.dhcpEnabled || address.dhcpStart));
   const active = networks.filter((network) => network.active).length;
   const bridges = networks.filter((network) => network.forwardMode === "bridge").length;
@@ -144,6 +149,32 @@ export function NetworksPage() {
     onError: (cause) => setHostError(actionError(cause, "删除静态主机失败，请稍后重试。")),
   });
 
+  const addDNSHostMutation = useMutation({
+    mutationFn: ({ name, input }: { name: string; input: NetworkDNSHostInput }) => api.addNetworkDNSHost(name, input),
+    onSuccess: (network) => {
+      setSuccessMessage(`网络 ${network.name} 的 DNS 记录已添加，${network.active ? "已立即生效。" : "将在网络启动后生效。"}`);
+      setDNSHostError("");
+      setActionErrorText("");
+      setDNSHostForm(initialDNSHostForm);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
+    },
+    onError: (cause) => setDNSHostError(actionError(cause, "添加 DNS 记录失败，请稍后重试。")),
+  });
+
+  const deleteDNSHostMutation = useMutation({
+    mutationFn: ({ name, host }: { name: string; host: NetworkDNSHost }) => api.deleteNetworkDNSHost(name, host.ip),
+    onSuccess: (network, variables) => {
+      setSuccessMessage(`网络 ${network.name} 的 DNS 记录 ${variables.host.ip} 已删除。`);
+      setDNSHostError("");
+      setActionErrorText("");
+      setDNSHostDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
+    },
+    onError: (cause) => setDNSHostError(actionError(cause, "删除 DNS 记录失败，请稍后重试。")),
+  });
+
   const reserveLeaseMutation = useMutation({
     mutationFn: ({ name, ip }: { name: string; ip: string }) => api.reserveNetworkLease(name, { ip }),
     onSuccess: (network, variables) => {
@@ -166,6 +197,10 @@ export function NetworksPage() {
 
   function updateHostForm<K extends keyof HostFormState>(key: K, value: HostFormState[K]) {
     setHostForm((form) => ({ ...form, [key]: value }));
+  }
+
+  function updateDNSHostForm<K extends keyof DNSHostFormState>(key: K, value: DNSHostFormState[K]) {
+    setDNSHostForm((form) => ({ ...form, [key]: value }));
   }
 
   async function exportHosts(network: string) {
@@ -215,6 +250,11 @@ export function NetworksPage() {
       setCreateError("IPv4 与 IPv6 子网至少需要填写一项。");
       return;
     }
+    const mtuError = mtuInputError(createForm.mtu, Boolean(createForm.ipv6Subnet.trim()));
+    if (mtuError) {
+      setCreateError(mtuError);
+      return;
+    }
     createMutation.mutate(createNetworkInput(createForm));
   }
 
@@ -233,6 +273,11 @@ export function NetworksPage() {
     setEditError("");
     setSuccessMessage("");
     setActionErrorText("");
+    const mtuError = mtuInputError(editForm.mtu, Boolean(editForm.ipv6Subnet.trim()));
+    if (mtuError) {
+      setEditError(mtuError);
+      return;
+    }
     updateMutation.mutate({ name: editTarget.name, input: networkUpdateInput(editForm) });
   }
 
@@ -253,6 +298,8 @@ export function NetworksPage() {
     setHostsNetwork((current) => current === network.name ? null : network.name);
     setHostError("");
     setHostForm(initialHostForm);
+    setDNSHostError("");
+    setDNSHostForm(initialDNSHostForm);
     setSuccessMessage("");
     setActionErrorText("");
   }
@@ -276,6 +323,23 @@ export function NetworksPage() {
         name: hostForm.name.trim() || undefined,
       },
     });
+  }
+
+  function submitDNSHost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!hostsNetwork || !canManage) return;
+    setDNSHostError("");
+    setSuccessMessage("");
+    const hostnames = splitDNSHostnames(dnsHostForm.hostnames);
+    if (!dnsHostForm.ip.trim()) {
+      setDNSHostError("请填写 IPv4 或 IPv6 地址。");
+      return;
+    }
+    if (!hostnames.length) {
+      setDNSHostError("请至少填写一个 DNS 主机名。");
+      return;
+    }
+    addDNSHostMutation.mutate({ name: hostsNetwork, input: { ip: dnsHostForm.ip.trim(), hostnames } });
   }
 
   return (
@@ -342,24 +406,40 @@ export function NetworksPage() {
           {leasesNetwork ? <NetworkLeasesCard network={leasesNetwork} record={leasesNetworkRecord} leases={leases} loaded={Boolean(leasesQuery.data)} loading={leasesQuery.isLoading} error={leasesQuery.error} fetching={leasesQuery.isFetching} canManage={canManage} disabledReason={disabledReason} reservingIP={reserveLeaseMutation.isPending ? reserveLeaseMutation.variables?.ip : undefined} onRefresh={() => void leasesQuery.refetch()} onReserve={(lease) => { setSuccessMessage(""); setActionErrorText(""); reserveLeaseMutation.mutate({ name: leasesNetwork, ip: lease.ipAddress }); }} /> : null}
           {diagnosticsNetwork ? <NetworkDiagnosticsCard network={diagnosticsNetwork} diagnostics={diagnosticsQuery.data} loading={diagnosticsQuery.isLoading} error={diagnosticsQuery.error} fetching={diagnosticsQuery.isFetching} onRefresh={() => void diagnosticsQuery.refetch()} /> : null}
           {hostsNetwork ? (
-            <NetworkHostsCard
-              network={hostsNetwork}
-              record={hostsNetworkRecord}
-              hosts={hosts}
-              hasDHCP={hostsHaveDHCP}
-              canManage={canManage}
-              disabledReason={disabledReason}
-              form={hostForm}
-              error={hostError}
-              transfer={hostTransfer}
-              addPending={addHostMutation.isPending}
-              deletePending={deleteHostMutation.isPending}
-              onFormChange={updateHostForm}
-              onSubmit={submitHost}
-              onExport={(network) => void exportHosts(network)}
-              onImport={importHosts}
-              onDelete={(host) => { if (hostsNetworkRecord) { setHostError(""); setHostDeleteTarget({ network: hostsNetworkRecord, host }); } }}
-            />
+            <>
+              <NetworkHostsCard
+                network={hostsNetwork}
+                record={hostsNetworkRecord}
+                hosts={hosts}
+                hasDHCP={hostsHaveDHCP}
+                canManage={canManage}
+                disabledReason={disabledReason}
+                form={hostForm}
+                error={hostError}
+                transfer={hostTransfer}
+                addPending={addHostMutation.isPending}
+                deletePending={deleteHostMutation.isPending}
+                onFormChange={updateHostForm}
+                onSubmit={submitHost}
+                onExport={(network) => void exportHosts(network)}
+                onImport={importHosts}
+                onDelete={(host) => { if (hostsNetworkRecord) { setHostError(""); setHostDeleteTarget({ network: hostsNetworkRecord, host }); } }}
+              />
+              <NetworkDNSHostsCard
+                network={hostsNetwork}
+                record={hostsNetworkRecord}
+                hosts={dnsHosts}
+                canManage={canManage}
+                disabledReason={disabledReason}
+                form={dnsHostForm}
+                error={dnsHostError}
+                addPending={addDNSHostMutation.isPending}
+                deletePending={deleteDNSHostMutation.isPending}
+                onFormChange={updateDNSHostForm}
+                onSubmit={submitDNSHost}
+                onDelete={(host) => { if (hostsNetworkRecord) { setDNSHostError(""); setDNSHostDeleteTarget({ network: hostsNetworkRecord, host }); } }}
+              />
+            </>
           ) : null}
         </>
       ) : null}
@@ -373,6 +453,18 @@ export function NetworksPage() {
           if (!hostDeleteTarget) return;
           setHostError("");
           deleteHostMutation.mutate({ name: hostDeleteTarget.network.name, host: hostDeleteTarget.host });
+        }}
+      />
+
+      <NetworkDNSHostDeleteDialog
+        target={dnsHostDeleteTarget}
+        error={dnsHostError}
+        pending={deleteDNSHostMutation.isPending}
+        onOpenChange={(open) => { if (!open) { setDNSHostDeleteTarget(null); setDNSHostError(""); } }}
+        onConfirm={() => {
+          if (!dnsHostDeleteTarget) return;
+          setDNSHostError("");
+          deleteDNSHostMutation.mutate({ name: dnsHostDeleteTarget.network.name, host: dnsHostDeleteTarget.host });
         }}
       />
 

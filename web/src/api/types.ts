@@ -1416,6 +1416,16 @@ export type NetworkDHCPHostImportResult = {
   skipped: number;
 };
 
+export type NetworkDNSHost = {
+  ip: string;
+  hostnames: string[];
+};
+
+export type NetworkDNSHostInput = {
+  ip: string;
+  hostnames: string[];
+};
+
 export type VirtualNetwork = {
   name: string;
   uuid?: string;
@@ -1425,8 +1435,10 @@ export type VirtualNetwork = {
   autostart: boolean;
   forwardMode?: string;
   natIpv6?: boolean;
+  mtu?: number;
   dnsDomain?: string;
   dnsServers?: string[];
+  dnsHosts?: NetworkDNSHost[];
   addresses: NetworkAddress[];
   warnings?: string[];
 };
@@ -1483,6 +1495,8 @@ export type NetworkDiagnostics = {
   active: boolean;
   bridge?: string;
   bridgeReady: boolean;
+  mtu?: number;
+  bridgeMtu?: number;
   ipv4Forwarding: boolean;
   ipv6Forwarding: boolean;
   ipv6Configured: boolean;
@@ -1494,6 +1508,7 @@ export type NetworkDiagnostics = {
   raService: boolean;
   dnsService: boolean;
   dnsResolution: boolean;
+  dnsHostCount: number;
   gatewayReachable: boolean;
   outboundReachable: boolean;
   runtimeDrift: boolean;
@@ -1520,6 +1535,7 @@ export type VirtualNetworkCreateInput = {
   dnsDomain?: string;
   dnsServers?: string[];
   bridge?: string;
+  mtu?: number;
   autostart: boolean;
   start: boolean;
 };
@@ -1537,6 +1553,7 @@ export type VirtualNetworkUpdateInput = {
   dnsDomain?: string;
   dnsServers?: string[];
   bridge?: string;
+  mtu?: number;
   autostart: boolean;
 };
 

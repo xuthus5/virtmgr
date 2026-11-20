@@ -37,6 +37,16 @@ type NetworkDHCPHostImportResult struct {
 	Skipped  int            `json:"skipped"`
 }
 
+type NetworkDNSHost struct {
+	IP        string   `json:"ip"`
+	Hostnames []string `json:"hostnames"`
+}
+
+type NetworkDNSHostCreateSpec struct {
+	IP        string   `json:"ip"`
+	Hostnames []string `json:"hostnames"`
+}
+
 type VirtualNetwork struct {
 	Name        string           `json:"name"`
 	UUID        string           `json:"uuid,omitempty"`
@@ -46,8 +56,10 @@ type VirtualNetwork struct {
 	Autostart   bool             `json:"autostart"`
 	ForwardMode string           `json:"forwardMode,omitempty"`
 	NATIPv6     bool             `json:"natIpv6,omitempty"`
+	MTU         int              `json:"mtu,omitempty"`
 	DNSDomain   string           `json:"dnsDomain,omitempty"`
 	DNSServers  []string         `json:"dnsServers,omitempty"`
+	DNSHosts    []NetworkDNSHost `json:"dnsHosts,omitempty"`
 	Addresses   []NetworkAddress `json:"addresses"`
 	Warnings    []string         `json:"warnings,omitempty"`
 }
@@ -97,6 +109,8 @@ type NetworkDiagnostics struct {
 	Active            bool           `json:"active"`
 	Bridge            string         `json:"bridge,omitempty"`
 	BridgeReady       bool           `json:"bridgeReady"`
+	MTU               int            `json:"mtu,omitempty"`
+	BridgeMTU         int            `json:"bridgeMtu,omitempty"`
 	IPv4Forward       bool           `json:"ipv4Forwarding"`
 	IPv6Forward       bool           `json:"ipv6Forwarding"`
 	IPv6Configured    bool           `json:"ipv6Configured"`
@@ -108,6 +122,7 @@ type NetworkDiagnostics struct {
 	RAService         bool           `json:"raService"`
 	DNSService        bool           `json:"dnsService"`
 	DNSResolution     bool           `json:"dnsResolution"`
+	DNSHostCount      int            `json:"dnsHostCount"`
 	GatewayReachable  bool           `json:"gatewayReachable"`
 	OutboundReachable bool           `json:"outboundReachable"`
 	RuntimeDrift      bool           `json:"runtimeDrift"`
@@ -150,6 +165,7 @@ type VirtualNetworkCreateSpec struct {
 	IPv6DHCPStart string   `json:"ipv6DhcpStart,omitempty"`
 	IPv6DHCPEnd   string   `json:"ipv6DhcpEnd,omitempty"`
 	NATIPv6       *bool    `json:"natIpv6,omitempty"`
+	MTU           *int     `json:"mtu,omitempty"`
 	DNSDomain     string   `json:"dnsDomain,omitempty"`
 	DNSServers    []string `json:"dnsServers,omitempty"`
 	Bridge        string   `json:"bridge,omitempty"`
@@ -167,6 +183,7 @@ type VirtualNetworkUpdateSpec struct {
 	IPv6DHCPStart string   `json:"ipv6DhcpStart,omitempty"`
 	IPv6DHCPEnd   string   `json:"ipv6DhcpEnd,omitempty"`
 	NATIPv6       *bool    `json:"natIpv6,omitempty"`
+	MTU           *int     `json:"mtu,omitempty"`
 	DNSDomain     string   `json:"dnsDomain,omitempty"`
 	DNSServers    []string `json:"dnsServers,omitempty"`
 	Bridge        string   `json:"bridge,omitempty"`
@@ -186,6 +203,8 @@ type VirtualNetworkDefinition struct {
 	IPv6DHCPStart string
 	IPv6DHCPEnd   string
 	NATIPv6       bool
+	MTU           int
+	MTUPresent    bool
 	DNSDomain     string
 	DNSServers    []string
 	Bridge        string
