@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net"
 
 	"virtmgr/internal/domain"
 
@@ -59,7 +60,7 @@ func (c *Client) updateNetworkDHCPHost(ctx context.Context, name string, host do
 	if err != nil {
 		return domain.VirtualNetwork{}, fmt.Errorf("read network XML before DHCP host update: %w", err)
 	}
-	parentIndex, err := networkDHCPHostParentIndex(xmlText)
+	parentIndex, err := networkDHCPHostParentIndexForFamily(xmlText, ipFamily(host.IP))
 	if err != nil {
 		return domain.VirtualNetwork{}, err
 	}
@@ -78,7 +79,11 @@ func (c *Client) updateNetworkDHCPHost(ctx context.Context, name string, host do
 }
 
 func networkDHCPHostXMLText(host domain.NetworkDHCPHost) (string, error) {
-	body, err := xml.Marshal(networkDHCPHostXML{MAC: host.MAC, IP: host.IP, Name: host.Name})
+	item := networkDHCPHostXML{ID: host.ID, IP: host.IP, Name: host.Name}
+	if ipFamily(host.IP) == "ipv4" {
+		item.MAC = host.MAC
+	}
+	body, err := xml.Marshal(item)
 	if err != nil {
 		return "", fmt.Errorf("encode network DHCP host XML: %w", err)
 	}
@@ -86,6 +91,10 @@ func networkDHCPHostXMLText(host domain.NetworkDHCPHost) (string, error) {
 }
 
 func networkDHCPHostParentIndex(xmlText string) (int, error) {
+	return networkDHCPHostParentIndexForFamily(xmlText, "ipv4")
+}
+
+func networkDHCPHostParentIndexForFamily(xmlText, family string) (int, error) {
 	root, err := parseNetworkXMLTree(xmlText)
 	if err != nil {
 		return 0, err
@@ -100,11 +109,22 @@ func networkDHCPHostParentIndex(xmlText string) (int, error) {
 		if !ok || start.Name.Local != "ip" {
 			continue
 		}
-		family := xmlAttributeValue(child, "family")
-		if (family == "" || family == "ipv4") && firstXMLChild(child, "dhcp") != nil {
+		addressFamily := xmlAttributeValue(child, "family")
+		if addressFamily == "" {
+			addressFamily = "ipv4"
+		}
+		if addressFamily == family && firstXMLChild(child, "dhcp") != nil {
 			return index, nil
 		}
 		index++
 	}
 	return 0, domain.ErrNetworkUnsupported
+}
+
+func ipFamily(value string) string {
+	ip := net.ParseIP(value)
+	if ip != nil && ip.To4() == nil && ip.To16() != nil {
+		return "ipv6"
+	}
+	return "ipv4"
 }

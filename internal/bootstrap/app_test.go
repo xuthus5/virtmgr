@@ -1367,11 +1367,14 @@ func TestNetworksAPI(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&leases); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || leases.Network != "default" || leases.Total != 2 {
+	if response.StatusCode != http.StatusOK || leases.Network != "default" || leases.Total != 4 {
 		t.Fatalf("leases status=%d leases=%+v", response.StatusCode, leases)
 	}
 	if leases.Items[0].Hostname != "demo-web-01" || leases.Items[1].Hostname != "demo-db-01" {
 		t.Fatalf("lease order = %+v", leases.Items)
+	}
+	if leases.Items[3].Hostname != "demo-app-01" || leases.Items[3].IPAddress != "fd00:122::51" {
+		t.Fatalf("DHCPv6 lease order = %+v", leases.Items)
 	}
 }
 
@@ -1480,7 +1483,7 @@ func TestNetworkManagementAPI(t *testing.T) {
 	}
 	exportedHosts := readBody(response)
 	response.Body.Close()
-	if response.StatusCode != http.StatusOK || !strings.Contains(exportedHosts, "52:54:00:12:34:57,10.99.0.51,api-host-02") || !strings.Contains(exportedHosts, "52:54:00:12:34:58,10.99.0.52") {
+	if response.StatusCode != http.StatusOK || !strings.Contains(exportedHosts, "52:54:00:12:34:57,,10.99.0.51,api-host-02") || !strings.Contains(exportedHosts, "52:54:00:12:34:58,,10.99.0.52,") {
 		t.Fatalf("export DHCP hosts status=%d body=%s", response.StatusCode, exportedHosts)
 	}
 

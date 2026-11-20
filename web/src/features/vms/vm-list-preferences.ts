@@ -8,9 +8,11 @@ export type VMListFilters = {
   state: "" | VMState;
   tag: string;
   owner: string;
+  folder: string;
+  group: string;
 };
 
-export const defaultVMListFilters: VMListFilters = { state: "", tag: "", owner: "" };
+export const defaultVMListFilters: VMListFilters = { state: "", tag: "", owner: "", folder: "", group: "" };
 
 const validStates = new Set<VMState>(["running", "blocked", "paused", "shutting-down", "crashed", "suspended", "shutoff", "unknown"]);
 const maxFavorites = 200;
@@ -23,6 +25,8 @@ export function parseVMListFilters(raw: string | null): VMListFilters {
       state: typeof value.state === "string" && validStates.has(value.state as VMState) ? value.state as VMState : "",
       tag: typeof value.tag === "string" ? value.tag.slice(0, 128) : "",
       owner: typeof value.owner === "string" ? value.owner.slice(0, 128) : "",
+      folder: typeof value.folder === "string" ? value.folder.slice(0, 255) : "",
+      group: typeof value.group === "string" ? value.group.slice(0, 128) : "",
     };
   } catch {
     return defaultVMListFilters;

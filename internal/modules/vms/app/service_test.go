@@ -230,7 +230,7 @@ func TestServiceVMMetadataEnrichesFiltersAndAudits(t *testing.T) {
 		{UUID: "vm-b", Name: "db-01", State: domain.VMStateShutoff},
 	}}
 	metadata := &fakeVMMetadataRepository{items: map[string]domain.VMMetadata{
-		"vm-a": {VMUUID: "vm-a", Tags: []string{"prod", "API"}, Owner: "platform", Note: "对外接口"},
+		"vm-a": {VMUUID: "vm-a", Tags: []string{"prod", "API"}, Owner: "platform", Note: "对外接口", Folder: "生产/接口", ResourceGroup: "核心业务"},
 	}}
 	audit := &fakeAuditRecorder{}
 	service := New(repository, audit, false, WithVMMetadata(metadata))
@@ -245,6 +245,15 @@ func TestServiceVMMetadataEnrichesFiltersAndAudits(t *testing.T) {
 	if hidden, err := service.List(context.Background(), domain.ListQuery{Tag: "test"}); err != nil || hidden.Total != 0 {
 		t.Fatalf("tag filter = %+v, %v", hidden, err)
 	}
+	if byFolder, err := service.List(context.Background(), domain.ListQuery{Folder: "生产"}); err != nil || byFolder.Total != 1 {
+		t.Fatalf("folder filter = %+v, %v", byFolder, err)
+	}
+	if byGroup, err := service.List(context.Background(), domain.ListQuery{Group: "核心业务"}); err != nil || byGroup.Total != 1 {
+		t.Fatalf("group filter = %+v, %v", byGroup, err)
+	}
+	if wrongFolder, err := service.List(context.Background(), domain.ListQuery{Folder: "测试"}); err != nil || wrongFolder.Total != 0 {
+		t.Fatalf("wrong folder filter = %+v, %v", wrongFolder, err)
+	}
 	vm, err := service.Get(context.Background(), "vm-a")
 	if err != nil || vm.Metadata == nil || vm.Metadata.Owner != "platform" {
 		t.Fatalf("Get() = %+v, %v", vm, err)
@@ -252,17 +261,36 @@ func TestServiceVMMetadataEnrichesFiltersAndAudits(t *testing.T) {
 
 	updated, err := service.UpdateMetadata(context.Background(), VMMetadataCommand{
 		UUID:    "vm-b",
-		Spec:    domain.VMMetadataSpec{Tags: []string{" prod ", "Prod", "数据库"}, Note: " 重要 ", Owner: " dba "},
+		Spec:    domain.VMMetadataSpec{Tags: []string{" prod ", "Prod", "数据库"}, Note: " 重要 ", Owner: " dba ", Folder: " 生产\\数据库 ", ResourceGroup: " 核心业务 "},
 		Request: MutationContext{Session: operatorSession(), RequestID: "req-meta"},
 	})
 	if err != nil {
 		t.Fatalf("UpdateMetadata() error = %v", err)
 	}
-	if len(updated.Tags) != 2 || updated.Tags[0] != "prod" || updated.Owner != "dba" || updated.UpdatedBy != "operator" {
+	if len(updated.Tags) != 2 || updated.Tags[0] != "prod" || updated.Owner != "dba" || updated.Folder != "生产/数据库" || updated.ResourceGroup != "核心业务" || updated.UpdatedBy != "operator" {
 		t.Fatalf("updated metadata = %+v", updated)
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "vm.metadata.update" || audit.events[0].Result != "success" {
 		t.Fatalf("audit events = %+v", audit.events)
+	}
+}
+
+func TestNormalizeVMMetadataSpecValidatesFolderAndGroup(t *testing.T) {
+	normalized, err := normalizeVMMetadataSpec(domain.VMMetadataSpec{Folder: " 生产//数据库/ ", ResourceGroup: " 核心业务 "})
+	if err != nil || normalized.Folder != "生产/数据库" || normalized.ResourceGroup != "核心业务" {
+		t.Fatalf("normalized spec = %+v, %v", normalized, err)
+	}
+	tests := []domain.VMMetadataSpec{
+		{Folder: "生产/../数据库"},
+		{Folder: strings.Repeat("a/", 9) + "x"},
+		{Folder: "生产/\x00x"},
+		{ResourceGroup: "核心/业务"},
+		{ResourceGroup: "bad\x00group"},
+	}
+	for _, spec := range tests {
+		if _, err := normalizeVMMetadataSpec(spec); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("spec %+v error = %v", spec, err)
+		}
 	}
 }
 

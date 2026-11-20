@@ -27,6 +27,10 @@ type AuditRecorder interface {
 	RecordAudit(ctx context.Context, event domain.AuditEvent) error
 }
 
+type TLSStatusProvider interface {
+	Status(requestHost string) domain.TLSInfo
+}
+
 type MutationContext struct {
 	Session   domain.Session
 	RequestID string
@@ -43,6 +47,7 @@ type Service struct {
 	exporter     DatabaseExporter
 	restorer     DatabaseRestorer
 	audit        AuditRecorder
+	tlsStatus    TLSStatusProvider
 	tempDir      string
 	databasePath string
 	now          func() time.Time
@@ -52,6 +57,10 @@ type Option func(*Service)
 
 func WithDatabasePath(path string) Option {
 	return func(service *Service) { service.databasePath = path }
+}
+
+func WithTLSStatus(provider TLSStatusProvider) Option {
+	return func(service *Service) { service.tlsStatus = provider }
 }
 
 func New(exporter DatabaseExporter, audit AuditRecorder, options ...Option) *Service {
@@ -68,12 +77,16 @@ func New(exporter DatabaseExporter, audit AuditRecorder, options ...Option) *Ser
 	return service
 }
 
-func (s *Service) Info() domain.SystemInfo {
-	return domain.SystemInfo{Build: domain.BuildInfo{
+func (s *Service) Info(requestHost string) domain.SystemInfo {
+	info := domain.SystemInfo{Build: domain.BuildInfo{
 		Version: strings.TrimSpace(version.Version),
 		Commit:  strings.TrimSpace(version.Commit),
 		Date:    strings.TrimSpace(version.Date),
 	}}
+	if s.tlsStatus != nil {
+		info.TLS = s.tlsStatus.Status(requestHost)
+	}
+	return info
 }
 
 func (s *Service) ExportDatabase(ctx context.Context, request MutationContext) (DatabaseExport, error) {

@@ -123,6 +123,15 @@ func TestOpenAPIContractDescribesBridgeNetworks(t *testing.T) {
 	if _, ok := document.Components.Schemas["HostBridgeList"]; !ok {
 		t.Fatal("HostBridgeList schema is missing")
 	}
+	if _, ok := document.Components.Schemas["NetworkDiagnostics"]; !ok {
+		t.Fatal("NetworkDiagnostics schema is missing")
+	}
+	if _, ok := virtual.Properties["natIpv6"]; !ok {
+		t.Fatal("VirtualNetwork schema is missing natIpv6")
+	}
+	if _, ok := create.Properties["ipv6Mode"]; !ok {
+		t.Fatal("NetworkCreateRequest schema is missing ipv6Mode")
+	}
 }
 
 func TestOpenAPIContractCoversGuestAgentResizeConfigurationAndQoS(t *testing.T) {
@@ -206,8 +215,8 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
 		"/storage/pools/{pool}/volumes/{volume}/convert", "/storage/pools/{pool}/volumes/{volume}/download",
 		"/storage/pools/{pool}/volumes/{volume}/flatten",
-		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/hosts",
-		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{mac}", "/networks/{name}/hosts/export",
+		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/diagnostics", "/networks/{name}/hosts",
+		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{host}", "/networks/{name}/hosts/export",
 		"/networks/{name}/actions/{action}",
 		"/images", "/images/{id}", "/images/{id}/refresh", "/templates", "/templates/{id}",
 		"/tasks", "/tasks/stream", "/tasks/{id}", "/tasks/{id}/retry", "/tasks/{id}/cancel",

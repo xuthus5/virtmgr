@@ -619,6 +619,8 @@ export type VMMetadata = {
   tags: string[];
   note: string;
   owner: string;
+  folder: string;
+  resourceGroup: string;
   updatedBy: string;
   updatedAt: string;
 };
@@ -627,6 +629,8 @@ export type VMMetadataInput = {
   tags: string[];
   note: string;
   owner: string;
+  folder: string;
+  resourceGroup: string;
 };
 
 export type SerialConsole = {
@@ -1182,6 +1186,22 @@ export type SystemInfo = {
     commit: string;
     date: string;
   };
+  tls: {
+    enabled: boolean;
+    subject?: string;
+    issuer?: string;
+    notBefore?: string;
+    notAfter?: string;
+    dnsNames?: string[];
+    ipAddresses?: string[];
+    requestHost?: string;
+    requestHostMatched: boolean;
+    expiresInDays?: number;
+    keyFileMode?: string;
+    lastReloadedAt?: string;
+    reloadError?: string;
+    warnings?: string[];
+  };
 };
 
 export type DatabaseRestoreStatus = {
@@ -1369,6 +1389,7 @@ export type NetworkAddress = {
   family: string;
   address: string;
   prefix: number;
+  ipv6Mode?: "slaac" | "dhcpv6";
   dhcpEnabled?: boolean;
   dhcpStart?: string;
   dhcpEnd?: string;
@@ -1376,13 +1397,15 @@ export type NetworkAddress = {
 };
 
 export type NetworkDHCPHost = {
-  mac: string;
+  mac?: string;
+  id?: string;
   ip: string;
   name?: string;
 };
 
 export type NetworkDHCPHostInput = {
-  mac: string;
+  mac?: string;
+  id?: string;
   ip: string;
   name?: string;
 };
@@ -1401,7 +1424,11 @@ export type VirtualNetwork = {
   persistent: boolean;
   autostart: boolean;
   forwardMode?: string;
+  natIpv6?: boolean;
+  dnsDomain?: string;
+  dnsServers?: string[];
   addresses: NetworkAddress[];
+  warnings?: string[];
 };
 
 export type VirtualNetworkList = {
@@ -1436,6 +1463,47 @@ export type DHCPLeaseList = {
   total: number;
 };
 
+export type NetworkLeaseReservationInput = {
+  ip: string;
+  name?: string;
+};
+
+export type NetworkCheckStatus = "ok" | "warning" | "error";
+
+export type NetworkCheck = {
+  id: string;
+  status: NetworkCheckStatus;
+  title: string;
+  detail: string;
+};
+
+export type NetworkDiagnostics = {
+  network: string;
+  checkedAt: string;
+  active: boolean;
+  bridge?: string;
+  bridgeReady: boolean;
+  ipv4Forwarding: boolean;
+  ipv6Forwarding: boolean;
+  ipv6Configured: boolean;
+  natIpv6: boolean;
+  nat66Firewall: boolean;
+  firewallBackend?: string;
+  dhcpv6Range: boolean;
+  dhcpv6Service: boolean;
+  raService: boolean;
+  dnsService: boolean;
+  dnsResolution: boolean;
+  gatewayReachable: boolean;
+  outboundReachable: boolean;
+  runtimeDrift: boolean;
+  driftDetails?: string[];
+  libvirtVersion?: string;
+  dnsmasqVersion?: string;
+  leaseCount: number;
+  checks: NetworkCheck[];
+};
+
 export type VirtualNetworkAction = "start" | "stop";
 
 export type VirtualNetworkCreateInput = {
@@ -1444,6 +1512,13 @@ export type VirtualNetworkCreateInput = {
   subnet?: string;
   dhcpStart?: string;
   dhcpEnd?: string;
+  ipv6Subnet?: string;
+  ipv6Mode?: "slaac" | "dhcpv6";
+  ipv6DhcpStart?: string;
+  ipv6DhcpEnd?: string;
+  natIpv6?: boolean;
+  dnsDomain?: string;
+  dnsServers?: string[];
   bridge?: string;
   autostart: boolean;
   start: boolean;
@@ -1454,6 +1529,13 @@ export type VirtualNetworkUpdateInput = {
   subnet?: string;
   dhcpStart?: string;
   dhcpEnd?: string;
+  ipv6Subnet?: string;
+  ipv6Mode?: "slaac" | "dhcpv6";
+  ipv6DhcpStart?: string;
+  ipv6DhcpEnd?: string;
+  natIpv6?: boolean;
+  dnsDomain?: string;
+  dnsServers?: string[];
   bridge?: string;
   autostart: boolean;
 };

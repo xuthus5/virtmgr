@@ -242,7 +242,9 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   const defaultRow = page.getByTestId("network-row-default");
   await expect(defaultRow).toContainText("virbr0");
   await expect(defaultRow).toContainText("192.168.122.1/24");
+  await expect(defaultRow).toContainText("fd00:122::1/64");
   await expect(defaultRow).toContainText("DHCP 192.168.122.2 - 192.168.122.254");
+  await expect(defaultRow).toContainText("DHCP fd00:122::2 - fd00:122::ffff");
   const bridgeRow = page.getByTestId("network-row-br-prod");
   await expect(bridgeRow).toContainText("bridge");
   await expect(bridgeRow).toContainText("br0");
@@ -262,23 +264,63 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await page.getByTestId("network-leases-default").click();
   await expect(page.getByTestId("network-leases-card")).toContainText("DHCP 租约 · default");
   const leaseRows = page.locator('[data-testid^="network-lease-row-"]');
-  await expect(leaseRows).toHaveCount(2);
+  await expect(leaseRows).toHaveCount(4);
   await expect(leaseRows.first()).toContainText("demo-web-01");
   await expect(leaseRows.first()).toContainText("192.168.122.101/24");
   await expect(leaseRows.first()).toContainText("52:54:00:12:34:56");
+  await expect(leaseRows.nth(2)).toContainText("demo-db-01");
+  await expect(leaseRows.nth(2)).toContainText("fd00:122::50/64");
+  await expect(leaseRows.nth(3)).toContainText("demo-app-01");
+  await expect(leaseRows.nth(3)).toContainText("fd00:122::51/64");
+  await expect(page.getByTestId("network-lease-reserve-3")).toBeDisabled();
 
   await page.getByTestId("network-leases-lab-isolated").click();
   await expect(page.getByTestId("network-leases-card")).toContainText("DHCP 租约 · lab-isolated");
   await expect(page.getByTestId("network-leases-empty")).toContainText("网络未激活，或未配置 DHCP 地址池");
 
   await page.getByTestId("network-hosts-default").click();
-  await expect(page.getByTestId("network-hosts-card")).toContainText("静态 DHCP 主机 · default");
+  await expect(page.getByTestId("network-hosts-card")).toContainText("静态 DHCP / DHCPv6 主机 · default");
   await expect(page.getByTestId("network-hosts-card")).toContainText("实时生效");
   await expect(page.getByTestId("network-host-row-52:54:00:12:34:56")).toContainText("demo-web-01");
   await expect(page.getByTestId("network-host-form")).toHaveCount(0);
   await expect(page.getByTestId("network-hosts-export-default")).toBeEnabled();
   await expect(page.getByTestId("network-hosts-import-default")).toBeDisabled();
   await expect(page.getByTestId("network-host-delete-52:54:00:12:34:56")).toBeDisabled();
+});
+
+test("网络诊断展示真实检查项并适配移动端", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "网络", exact: true }).click();
+  await page.getByTestId("network-diagnostics-default").click();
+
+  const card = page.getByTestId("network-diagnostics-card");
+  await expect(card).toBeVisible();
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("NAT66 已启用");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("规则就绪");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("DHCPv6 运行");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("RA 运行");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("DNS 有响应");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("网关 可达");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("出网 可达");
+  await expect(page.getByTestId("network-diagnostic-compatibility")).toContainText("满足受支持基线");
+  await expect(page.getByTestId("network-diagnostic-nat66-firewall")).toContainText("IPv6 masquerade 规则");
+
+  await page.getByTestId("network-diagnostics-lab-isolated").click();
+  await expect(page.getByTestId("network-diagnostics-card")).toContainText("IPv6 / 转发诊断 · lab-isolated");
+  await expect(page.getByTestId("network-diagnostics-summary")).toContainText("未配置 IPv6");
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px 网络诊断不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px 网络诊断 body 不应横向溢出`).toBeLessThanOrEqual(layout.viewportWidth);
+    const box = await card.boundingBox();
+    expect(box?.width ?? width + 1, `${width}px 诊断卡片应适应视口`).toBeLessThanOrEqual(width);
+  }
 });
 
 test("物理主机页展示资源、存储池、网络和虚拟机分配", async ({ page }) => {

@@ -3,8 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${VIRTMGR_E2E_PORT:-18080}"
+LISTEN="${VIRTMGR_E2E_LISTEN:-127.0.0.1:${PORT}}"
 DB_PATH="${VIRTMGR_E2E_DATABASE_PATH:-/tmp/virtmgr-e2e-${PORT}.db}"
 CONFIG_PATH="${VIRTMGR_E2E_CONFIG_PATH:-/tmp/virtmgr-e2e-${PORT}.yaml}"
+export GOSUMDB="${GOSUMDB:-sum.golang.org}"
+export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 python3 - "$DB_PATH" <<'PY'
 import pathlib
@@ -19,7 +22,7 @@ npm run build >/dev/null
 cd "$ROOT"
 
 cat >"$CONFIG_PATH" <<EOF
-listen: "127.0.0.1:${PORT}"
+listen: "${LISTEN}"
 libvirt_uri: qemu:///system
 database_path: "${DB_PATH}"
 host_name: e2e-host

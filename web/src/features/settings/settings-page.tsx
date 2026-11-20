@@ -161,7 +161,7 @@ export function SettingsPage() {
         </Card>
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+      <div className="mt-4 grid gap-4 xl:grid-cols-4">
         <Card data-testid="settings-system-info">
           <CardHeader><CardTitle className="flex items-center gap-2"><Info className="h-4 w-4 text-primary" />版本信息</CardTitle><CardDescription>用于确认当前部署的二进制版本和升级结果。</CardDescription></CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -172,6 +172,21 @@ export function SettingsPage() {
               <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">提交</span><span className="font-mono text-xs">{systemQuery.data.build.commit || "unknown"}</span></div>
               <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">构建时间</span><span className="font-mono text-xs">{systemQuery.data.build.date || "-"}</span></div>
             </> : null}
+          </CardContent>
+        </Card>
+        <Card data-testid="settings-tls">
+          <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" />管理面 TLS</CardTitle><CardDescription>证书 SAN、到期时间和热重载状态。证书文件变化后新连接会自动使用新证书，无需重启。</CardDescription></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {systemQuery.isLoading ? <p className="text-muted-foreground">正在读取证书状态…</p> : null}
+            {systemQuery.data?.tls.enabled ? <>
+              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">当前主机</span><Badge variant={systemQuery.data.tls.requestHostMatched ? "success" : "warning"} data-testid="settings-tls-host-match">{systemQuery.data.tls.requestHostMatched ? "SAN 匹配" : "SAN 不匹配"}</Badge></div>
+              <p className="break-all rounded-md border bg-muted/25 px-3 py-2 text-xs"><span className="text-muted-foreground">主体：</span><span className="font-mono">{systemQuery.data.tls.subject || "-"}</span></p>
+              <p className="break-all rounded-md border bg-muted/25 px-3 py-2 text-xs"><span className="text-muted-foreground">有效期至：</span>{systemQuery.data.tls.notAfter ? new Date(systemQuery.data.tls.notAfter).toLocaleString("zh-CN") : "-"}{typeof systemQuery.data.tls.expiresInDays === "number" ? ` · 剩余 ${systemQuery.data.tls.expiresInDays} 天` : ""}</p>
+              <p className="break-all rounded-md border bg-muted/25 px-3 py-2 text-xs"><span className="text-muted-foreground">私钥权限：</span><span className="font-mono">{systemQuery.data.tls.keyFileMode || "-"}</span></p>
+              <p className="break-all rounded-md border bg-muted/25 px-3 py-2 text-[11px] text-muted-foreground">SAN：{[...(systemQuery.data.tls.dnsNames ?? []), ...(systemQuery.data.tls.ipAddresses ?? [])].join("、") || "-"}</p>
+              {systemQuery.data.tls.reloadError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">热重载失败：{systemQuery.data.tls.reloadError}</p> : null}
+              {(systemQuery.data.tls.warnings ?? []).map((warning) => <p key={warning} className="rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">{warning}</p>)}
+            </> : <p className="rounded-md border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">未启用原生 TLS。若使用 nginx、Caddy 或 Cloudflare 终止 TLS，请在对应代理配置证书和 SAN。</p>}
           </CardContent>
         </Card>
         <Card data-testid="settings-database-export">

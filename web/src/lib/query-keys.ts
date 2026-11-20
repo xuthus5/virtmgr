@@ -24,6 +24,7 @@ export const queryKeys = {
     list: ["networks"] as const,
     bridges: ["networks", "bridges"] as const,
     leases: (name: string | null) => ["networks", name, "leases"] as const,
+    diagnostics: (name: string | null) => ["networks", name, "diagnostics"] as const,
   },
   host: {
     root: ["host"] as const,
@@ -33,7 +34,7 @@ export const queryKeys = {
   },
   vms: {
     root: ["vms"] as const,
-    list: (query: string, state: string, tag = "", owner = "") => ["vms", query, state, tag, owner] as const,
+    list: (query: string, state: string, tag = "", owner = "", folder = "", group = "") => ["vms", query, state, tag, owner, folder, group] as const,
   },
   vm: (uuid: string) => ({
     root: ["vm", uuid] as const,

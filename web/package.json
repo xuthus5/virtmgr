@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test --workers=1",
-    "e2e:serial": "playwright test --workers=1 && playwright test --workers=1 -c playwright.writable.config.ts"
+    "e2e:serial": "playwright test --workers=1 && playwright test --workers=1 -c playwright.writable.config.ts",
+    "e2e:compat": "playwright test --workers=1 -c playwright.compat.config.ts"
   },
   "dependencies": {
     "@codemirror/lang-xml": "^6.1.0",

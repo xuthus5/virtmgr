@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { HostFormState } from "@/features/networks/network-ui";
+import { hostIdentity, hostIsIPv6, type HostFormState } from "@/features/networks/network-ui";
 
 export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, disabledReason, form, error, transfer, addPending, deletePending, onFormChange, onSubmit, onExport, onImport, onDelete }: {
   network: string;
@@ -28,6 +28,7 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
   onDelete: (host: NetworkDHCPHost) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const ipv6Host = hostIsIPv6(form);
 
   async function importFile(networkName: string, file: File) {
     await onImport(networkName, file);
@@ -38,7 +39,7 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
     <CardHeader>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <CardTitle>静态 DHCP 主机 · {network}</CardTitle>
+          <CardTitle>静态 DHCP / DHCPv6 主机 · {network}</CardTitle>
           <CardDescription>{record?.active ? "网络正在运行：条目会立即应用到运行配置，并同步写入持久配置，无需停止网络。" : "网络未激活：条目会写入持久配置，并在网络下次启动时生效。"}</CardDescription>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -56,7 +57,7 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
     <CardContent className="space-y-4">
       {!hasDHCP ? (
         <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning" role="status">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />该网络没有可用的 IPv4 DHCP 地址池，无法添加静态主机条目。
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />该网络没有可用的 DHCP 或 DHCPv6 地址池，无法添加静态主机条目。
         </p>
       ) : null}
       {!canManage ? (
@@ -66,14 +67,18 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
       ) : null}
       {canManage && hasDHCP ? (
         <form id="network-host-form" data-testid="network-host-form" onSubmit={onSubmit} className="space-y-3 rounded-lg border bg-muted/20 p-3">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="space-y-1.5">
-              <Label htmlFor="network-host-mac">MAC 地址</Label>
-              <Input id="network-host-mac" value={form.mac} onChange={(event) => onFormChange("mac", event.target.value)} placeholder="52:54:00:12:34:56" required autoComplete="off" disabled={addPending} className="font-mono" />
+              <Label htmlFor="network-host-mac">MAC 地址{ipv6Host ? "（IPv6 不使用）" : ""}</Label>
+              <Input id="network-host-mac" data-testid="network-host-mac" value={form.mac} onChange={(event) => onFormChange("mac", event.target.value)} placeholder="52:54:00:12:34:56" required={!ipv6Host} autoComplete="off" disabled={addPending || ipv6Host} className="font-mono" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="network-host-ip">IPv4 地址</Label>
-              <Input id="network-host-ip" value={form.ip} onChange={(event) => onFormChange("ip", event.target.value)} placeholder="192.168.122.50" required autoComplete="off" disabled={addPending} className="font-mono" />
+              <Label htmlFor="network-host-id">DUID / Client ID（IPv6）</Label>
+              <Input id="network-host-id" data-testid="network-host-id" value={form.id} onChange={(event) => onFormChange("id", event.target.value)} placeholder="00:03:00:01:52:54:00:12:34:56" autoComplete="off" disabled={addPending || !ipv6Host} className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="network-host-ip">IPv4 / IPv6 地址</Label>
+              <Input id="network-host-ip" value={form.ip} onChange={(event) => onFormChange("ip", event.target.value)} placeholder="192.168.122.50 或 fd00:122::50" required autoComplete="off" disabled={addPending} className="font-mono" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="network-host-name">主机名（可选）</Label>
@@ -81,7 +86,7 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">IP 必须位于当前子网内，且不能是网关、网络地址或广播地址。CSV 列为 <span className="font-mono">mac,ip,name</span>，同名同 IP 条目会跳过。</p>
+            <p className="text-xs text-muted-foreground">IPv4 条目使用 MAC；DHCPv6 条目使用 DUID/Client ID 或主机名，不能填写 MAC。CSV 列为 <span className="font-mono">mac,id,ip,name</span>。</p>
             <Button type="submit" size="sm" data-testid="network-host-submit" disabled={addPending}>
               {addPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               添加静态主机
@@ -97,27 +102,31 @@ export function NetworkHostsCard({ network, record, hosts, hasDHCP, canManage, d
       <div className="overflow-hidden rounded-md border">
         {hosts.length ? (
           <Table className="min-w-[620px]">
-            <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>MAC 地址</TableHead><TableHead className="w-20 text-right">操作</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>DUID / Client ID</TableHead><TableHead>MAC 地址</TableHead><TableHead className="w-20 text-right">操作</TableHead></TableRow></TableHeader>
             <TableBody>
-              {hosts.map((host) => (
-                <TableRow key={host.mac} data-testid={`network-host-row-${host.mac}`}>
+              {hosts.map((host) => {
+                const identity = hostIdentity(host);
+                return (
+                <TableRow key={identity} data-testid={`network-host-row-${identity}`}>
                   <TableCell>{host.name || "-"}</TableCell>
                   <TableCell><span className="font-mono text-xs">{host.ip}</span></TableCell>
-                  <TableCell><span className="font-mono text-xs">{host.mac}</span></TableCell>
+                  <TableCell><span className="block max-w-64 truncate font-mono text-[10px]" title={host.id}>{host.id || "-"}</span></TableCell>
+                  <TableCell><span className="font-mono text-xs">{host.mac || "-"}</span></TableCell>
                   <TableCell className="text-right">
-                    <Button type="button" variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" data-testid={`network-host-delete-${host.mac}`} aria-label={`删除静态主机 ${host.mac}`} disabled={!canManage || deletePending} title={disabledReason || "删除静态主机"} onClick={() => onDelete(host)}>
+                    <Button type="button" variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" data-testid={`network-host-delete-${identity}`} aria-label={`删除静态主机 ${identity}`} disabled={!canManage || deletePending} title={disabledReason || "删除静态主机"} onClick={() => onDelete(host)}>
                       <Trash2 className="h-3.5 w-3.5" />删除
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         ) : (
           <div className="flex flex-col items-center px-4 py-8 text-center" data-testid="network-hosts-empty">
             <ListPlus className="h-7 w-7 text-muted-foreground" />
             <p className="mt-2 text-sm font-medium">暂无静态主机条目</p>
-            <p className="mt-1 text-xs text-muted-foreground">静态条目用于为固定 MAC 保留指定 IP，与动态 DHCP 租约分开管理。</p>
+            <p className="mt-1 text-xs text-muted-foreground">静态条目可按 MAC、DUID/Client ID 或主机名保留固定地址，与动态租约分开管理。</p>
           </div>
         )}
       </div>

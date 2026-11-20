@@ -65,7 +65,7 @@ export function VMsPage() {
   const [confirmAction, setConfirmAction] = useState<VMAction | null>(null);
   const [batchNotice, setBatchNotice] = useState<BatchNotice | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const vms = useVMsQuery(deferredSearch, filters.state, true, filters.tag.trim(), filters.owner.trim());
+  const vms = useVMsQuery(deferredSearch, filters.state, true, filters.tag.trim(), filters.owner.trim(), filters.folder.trim(), filters.group.trim());
   const session = useSessionQuery();
   const queryClient = useQueryClient();
   const readOnly = Boolean(session.data?.readOnly);
@@ -157,13 +157,15 @@ export function VMsPage() {
           <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center">
             <div className="relative min-w-0 flex-1 md:max-w-sm">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input aria-label="搜索虚拟机" placeholder="搜索名称、UUID、标签、备注或负责人" className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Input aria-label="搜索虚拟机" placeholder="搜索名称、UUID、文件夹、分组、标签或负责人" className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <select aria-label="状态筛选" value={filters.state} onChange={(event) => updateFilters({ state: event.target.value as "" | VMState })} className="h-9 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {states.map((item) => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
             </select>
             <Input aria-label="标签筛选" placeholder="标签" className="md:max-w-36" value={filters.tag} onChange={(event) => updateFilters({ tag: event.target.value })} />
             <Input aria-label="负责人筛选" placeholder="负责人" className="md:max-w-36" value={filters.owner} onChange={(event) => updateFilters({ owner: event.target.value })} />
+            <Input aria-label="文件夹筛选" placeholder="文件夹路径" className="md:max-w-36" value={filters.folder} onChange={(event) => updateFilters({ folder: event.target.value })} />
+            <Input aria-label="资源分组筛选" placeholder="资源分组" className="md:max-w-36" value={filters.group} onChange={(event) => updateFilters({ group: event.target.value })} />
             <Button type="button" size="sm" variant={showFavorites ? "secondary" : "outline"} aria-pressed={showFavorites} data-testid="vm-favorites-toggle" onClick={() => setShowFavorites((current) => !current)}>
               <Star className={showFavorites ? "h-4 w-4 fill-current" : "h-4 w-4"} />收藏{favorites.length ? ` (${favorites.length})` : ""}
             </Button>
@@ -268,8 +270,10 @@ export function VMsPage() {
                               </button>
                             </div>
                             <p className="truncate font-mono text-[10px] text-muted-foreground">{vm.uuid}</p>
-                            {vm.metadata?.tags?.length || vm.metadata?.owner ? (
+                            {vm.metadata?.folder || vm.metadata?.resourceGroup || vm.metadata?.tags?.length || vm.metadata?.owner ? (
                               <div className="mt-1 flex flex-wrap items-center gap-1">
+                                {vm.metadata?.folder ? <span className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] text-primary">{vm.metadata.folder}</span> : null}
+                                {vm.metadata?.resourceGroup ? <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{vm.metadata.resourceGroup}</span> : null}
                                 {vm.metadata?.tags?.map((item) => <span key={item} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{item}</span>)}
                                 {vm.metadata?.owner ? <span className="text-[10px] text-muted-foreground">负责人 {vm.metadata.owner}</span> : null}
                               </div>

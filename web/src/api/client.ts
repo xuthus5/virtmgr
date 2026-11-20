@@ -1,4 +1,4 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, CapacityForecastList, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DataPlaneOperation, DataPlaneOperationList, DataPlaneOperationResult, DatabaseRestoreStatus, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, GuestFilesystemSampleList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkModelInput, VMNetworkQoSInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, CapacityForecastList, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DataPlaneOperation, DataPlaneOperationList, DataPlaneOperationResult, DatabaseRestoreStatus, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, GuestFilesystemSampleList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, NetworkDiagnostics, NetworkLeaseReservationInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkModelInput, VMNetworkQoSInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
@@ -141,6 +141,7 @@ export const api = {
   networks: () => request<VirtualNetworkList>("/api/v1/networks"),
   networkBridges: () => request<HostBridgeList>("/api/v1/networks/bridges"),
   networkLeases: (name: string) => request<DHCPLeaseList>(`/api/v1/networks/${encodeURIComponent(name)}/leases`),
+  networkDiagnostics: (name: string) => request<NetworkDiagnostics>(`/api/v1/networks/${encodeURIComponent(name)}/diagnostics`),
   createNetwork: (input: VirtualNetworkCreateInput) => request<VirtualNetwork>("/api/v1/networks", {
     method: "POST",
     body: JSON.stringify(input),
@@ -153,13 +154,17 @@ export const api = {
     `/api/v1/networks/${encodeURIComponent(name)}/hosts`,
     { method: "POST", body: JSON.stringify(input) },
   ),
+  reserveNetworkLease: (name: string, input: NetworkLeaseReservationInput) => request<VirtualNetwork>(
+    `/api/v1/networks/${encodeURIComponent(name)}/leases/reserve`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
   exportNetworkDHCPHosts: (name: string) => download(`/api/v1/networks/${encodeURIComponent(name)}/hosts/export`),
   importNetworkDHCPHosts: (name: string, csv: string) => request<NetworkDHCPHostImportResult>(
     `/api/v1/networks/${encodeURIComponent(name)}/hosts/import`,
     { method: "POST", headers: { "Content-Type": "text/csv; charset=utf-8" }, body: csv },
   ),
-  deleteNetworkDHCPHost: (name: string, mac: string) => request<VirtualNetwork>(
-    `/api/v1/networks/${encodeURIComponent(name)}/hosts/${encodeURIComponent(mac)}`,
+  deleteNetworkDHCPHost: (name: string, key: string) => request<VirtualNetwork>(
+    `/api/v1/networks/${encodeURIComponent(name)}/hosts/${encodeURIComponent(key)}`,
     { method: "DELETE" },
   ),
   networkAction: (name: string, action: VirtualNetworkAction) => request<void>(
@@ -167,12 +172,14 @@ export const api = {
     { method: "POST" },
   ),
   deleteNetwork: (name: string) => request<void>(`/api/v1/networks/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  vms: (query = "", state = "", tag = "", owner = "") => {
+  vms: (query = "", state = "", tag = "", owner = "", folder = "", group = "") => {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (state) params.set("state", state as VMState);
     if (tag) params.set("tag", tag);
     if (owner) params.set("owner", owner);
+    if (folder) params.set("folder", folder);
+    if (group) params.set("group", group);
     const suffix = params.toString();
     return request<VMSummaryList>(`/api/v1/vms${suffix ? `?${suffix}` : ""}`);
   },

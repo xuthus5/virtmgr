@@ -18,6 +18,13 @@ describe("network edit model", () => {
       subnet: "10.20.30.1/24",
       dhcpStart: "10.20.30.10",
       dhcpEnd: "10.20.30.200",
+      ipv6Subnet: "",
+      ipv6Mode: "slaac",
+      ipv6DhcpStart: "",
+      ipv6DhcpEnd: "",
+      natIpv6: false,
+      dnsDomain: "",
+      dnsServers: "",
       bridge: "",
       autostart: false,
     });
@@ -37,9 +44,51 @@ describe("network edit model", () => {
       subnet: "",
       dhcpStart: "",
       dhcpEnd: "",
+      ipv6Subnet: "",
+      ipv6Mode: "slaac",
+      ipv6DhcpStart: "",
+      ipv6DhcpEnd: "",
+      natIpv6: false,
+      dnsDomain: "",
+      dnsServers: "",
       bridge: "br0",
       autostart: true,
     });
+  });
+
+  it("maps IPv6-only DUID metadata and NAT66 state", () => {
+    expect(networkEditForm({
+      name: "ipv6-only",
+      active: false,
+      persistent: true,
+      autostart: false,
+      forwardMode: "nat",
+      natIpv6: true,
+      dnsDomain: "lab.example.com",
+      dnsServers: ["1.1.1.1", "2606:4700:4700::1111"],
+      addresses: [{ family: "ipv6", address: "fd00:70::1", prefix: 64, ipv6Mode: "dhcpv6", dhcpStart: "fd00:70::2", dhcpEnd: "fd00:70::ff" }],
+    })).toMatchObject({
+      subnet: "",
+      ipv6Subnet: "fd00:70::1/64",
+      ipv6Mode: "dhcpv6",
+      ipv6DhcpStart: "fd00:70::2",
+      ipv6DhcpEnd: "fd00:70::ff",
+      natIpv6: true,
+      dnsDomain: "lab.example.com",
+      dnsServers: "1.1.1.1, 2606:4700:4700::1111",
+    });
+  });
+
+  it("defaults NAT66 when an isolated dual-stack network is switched to NAT", () => {
+    expect(networkEditForm({
+      name: "isolated-dual",
+      active: false,
+      persistent: true,
+      autostart: false,
+      forwardMode: "isolated",
+      natIpv6: false,
+      addresses: [{ family: "ipv6", address: "fd00:71::1", prefix: 64, ipv6Mode: "dhcpv6", dhcpStart: "fd00:71::2", dhcpEnd: "fd00:71::ff" }],
+    }).natIpv6).toBe(true);
   });
 
   it("requires the network to be stopped and supported", () => {
@@ -52,14 +101,21 @@ describe("network edit model", () => {
   });
 
   it("normalizes optional DHCP values", () => {
-    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", bridge: "", autostart: true })).toEqual({
+    expect(networkUpdateInput({ mode: "isolated", subnet: " 10.40.0.0/24 ", dhcpStart: " ", dhcpEnd: "", ipv6Subnet: " fd00:40::/64 ", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: " ", natIpv6: true, dnsDomain: " lab.example.com ", dnsServers: "1.1.1.1, 2606:4700:4700::1111", bridge: "", autostart: true })).toEqual({
       mode: "isolated",
       subnet: "10.40.0.0/24",
       dhcpStart: undefined,
       dhcpEnd: undefined,
+      ipv6Subnet: "fd00:40::/64",
+      ipv6Mode: "dhcpv6",
+      ipv6DhcpStart: undefined,
+      ipv6DhcpEnd: undefined,
+      natIpv6: undefined,
+      dnsDomain: "lab.example.com",
+      dnsServers: ["1.1.1.1", "2606:4700:4700::1111"],
       autostart: true,
     });
-    expect(networkUpdateInput({ mode: "bridge", subnet: "", dhcpStart: "", dhcpEnd: "", bridge: " br1 ", autostart: true })).toEqual({
+    expect(networkUpdateInput({ mode: "bridge", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: " br1 ", autostart: true })).toEqual({
       mode: "bridge",
       bridge: "br1",
       autostart: true,

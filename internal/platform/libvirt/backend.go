@@ -81,6 +81,7 @@ type Backend interface {
 	ListNetworks(ctx context.Context) ([]domain.VirtualNetwork, error)
 	ListHostBridges(ctx context.Context) ([]domain.HostBridge, error)
 	ListDHCPLeases(ctx context.Context, networkName string) ([]domain.DHCPLease, error)
+	NetworkDiagnostics(ctx context.Context, name string) (domain.NetworkDiagnostics, error)
 	CreateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	UpdateNetwork(ctx context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error)
 	AddNetworkDHCPHost(ctx context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error)

@@ -567,7 +567,7 @@ func TestDemoBackendNetworks(t *testing.T) {
 	if defaultNetwork == nil || defaultNetwork.Bridge != "virbr0" || !defaultNetwork.Active {
 		t.Fatalf("default network = %+v", defaultNetwork)
 	}
-	if len(defaultNetwork.Addresses) != 1 || defaultNetwork.Addresses[0].DHCPStart != "192.168.122.2" {
+	if len(defaultNetwork.Addresses) != 2 || defaultNetwork.Addresses[0].DHCPStart != "192.168.122.2" || defaultNetwork.Addresses[1].Family != "ipv6" || defaultNetwork.Addresses[1].Address != "fd00:122::1" {
 		t.Fatalf("default addresses = %+v", defaultNetwork.Addresses)
 	}
 	if isolatedNetwork == nil || isolatedNetwork.Active {
@@ -747,11 +747,17 @@ func TestDemoBackendBridgeNetwork(t *testing.T) {
 func TestDemoBackendDHCPLeases(t *testing.T) {
 	backend := NewDemo()
 	leases, err := backend.ListDHCPLeases(context.Background(), "default")
-	if err != nil || len(leases) != 2 {
+	if err != nil || len(leases) != 4 {
 		t.Fatalf("ListDHCPLeases(default) = %+v, %v", leases, err)
 	}
 	if leases[0].Hostname != "demo-web-01" || leases[0].IPAddress != "192.168.122.101" || leases[0].ExpiresAt == nil {
 		t.Fatalf("first lease = %+v", leases[0])
+	}
+	if leases[2].Family != "ipv6" || leases[2].IPAddress != "fd00:122::50" || leases[2].MAC != "" {
+		t.Fatalf("IPv6 lease = %+v", leases[2])
+	}
+	if leases[3].Family != "ipv6" || leases[3].IPAddress != "fd00:122::51" || leases[3].Hostname != "demo-app-01" {
+		t.Fatalf("reservable IPv6 lease = %+v", leases[3])
 	}
 	inactive, err := backend.ListDHCPLeases(context.Background(), "lab-isolated")
 	if err != nil || len(inactive) != 0 {

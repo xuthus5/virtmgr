@@ -309,18 +309,22 @@ type VMNetworkAttachSpec struct {
 }
 
 type VMMetadata struct {
-	VMUUID    string    `json:"vmUuid"`
-	Tags      []string  `json:"tags"`
-	Note      string    `json:"note"`
-	Owner     string    `json:"owner"`
-	UpdatedBy string    `json:"updatedBy"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	VMUUID        string    `json:"vmUuid"`
+	Tags          []string  `json:"tags"`
+	Note          string    `json:"note"`
+	Owner         string    `json:"owner"`
+	Folder        string    `json:"folder"`
+	ResourceGroup string    `json:"resourceGroup"`
+	UpdatedBy     string    `json:"updatedBy"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type VMMetadataSpec struct {
-	Tags  []string `json:"tags"`
-	Note  string   `json:"note"`
-	Owner string   `json:"owner"`
+	Tags          []string `json:"tags"`
+	Note          string   `json:"note"`
+	Owner         string   `json:"owner"`
+	Folder        string   `json:"folder"`
+	ResourceGroup string   `json:"resourceGroup"`
 }
 
 type CloudInitSpec struct {

@@ -3,9 +3,9 @@ import { defaultVMListFilters, parseVMFavorites, parseVMListFilters, serializeVM
 
 describe("vm list preferences", () => {
   it("parses persisted filters and falls back for malformed values", () => {
-    expect(parseVMListFilters(serializeVMListFilters({ state: "running", tag: "prod", owner: "ops" }))).toEqual({ state: "running", tag: "prod", owner: "ops" });
+    expect(parseVMListFilters(serializeVMListFilters({ state: "running", tag: "prod", owner: "ops", folder: "生产/数据库", group: "核心业务" }))).toEqual({ state: "running", tag: "prod", owner: "ops", folder: "生产/数据库", group: "核心业务" });
     expect(parseVMListFilters("not-json")).toEqual(defaultVMListFilters);
-    expect(parseVMListFilters(JSON.stringify({ state: "invalid", tag: 42, owner: "admin" }))).toEqual({ state: "", tag: "", owner: "admin" });
+    expect(parseVMListFilters(JSON.stringify({ state: "invalid", tag: 42, owner: "admin" }))).toEqual({ state: "", tag: "", owner: "admin", folder: "", group: "" });
   });
 
   it("deduplicates favorites and toggles them without losing order", () => {

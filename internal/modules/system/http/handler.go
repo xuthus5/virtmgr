@@ -24,7 +24,7 @@ func New(service *systemapp.Service) *Handler {
 }
 
 func (h *Handler) Info(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	httpx.JSON(w, stdhttp.StatusOK, h.service.Info())
+	httpx.JSON(w, stdhttp.StatusOK, h.service.Info(r.Host))
 }
 
 func (h *Handler) ExportDatabase(w stdhttp.ResponseWriter, r *stdhttp.Request) {

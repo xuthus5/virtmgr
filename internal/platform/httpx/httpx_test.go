@@ -132,3 +132,20 @@ func TestRealIPFallsBackToXRealIPForTrustedProxy(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})).ServeHTTP(recorder, request)
 }
+
+func TestRealIPAcceptsIPv6ForwardedClientChain(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("2001:db8:ffff::/48")}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "[::1]:1234"
+	request.Header.Set("X-Forwarded-For", "2001:db8:1::40, 2001:db8:ffff::2")
+	recorder := httptest.NewRecorder()
+	RealIP(trusted)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := SourceIP(r); got != "2001:db8:1::40" {
+			t.Fatalf("SourceIP() = %q, want forwarded IPv6 client", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}

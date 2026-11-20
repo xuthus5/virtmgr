@@ -27,6 +27,9 @@ services:
     # Match the GID that owns /var/run/libvirt/libvirt-sock on the host.
     group_add:
       - "${LIBVIRT_GID:-640}"
+    # Required only for read-only nftables/ip6tables diagnostics.
+    cap_add:
+      - NET_ADMIN
     security_opt:
       - no-new-privileges:true
 

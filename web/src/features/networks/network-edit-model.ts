@@ -1,21 +1,37 @@
 import type { Role, VirtualNetwork, VirtualNetworkUpdateInput } from "@/api/types";
+import { splitDNSServers } from "@/features/networks/network-ui";
 
 export type NetworkEditFormState = {
   mode: VirtualNetworkUpdateInput["mode"];
   subnet: string;
   dhcpStart: string;
   dhcpEnd: string;
+  ipv6Subnet: string;
+  ipv6Mode: "slaac" | "dhcpv6";
+  ipv6DhcpStart: string;
+  ipv6DhcpEnd: string;
+  natIpv6: boolean;
+  dnsDomain: string;
+  dnsServers: string;
   bridge: string;
   autostart: boolean;
 };
 
 export function networkEditForm(network: VirtualNetwork): NetworkEditFormState {
   const ipv4 = network.addresses.find((address) => address.family === "" || address.family === "ipv4");
+  const ipv6 = network.addresses.find((address) => address.family === "ipv6");
   return {
     mode: network.forwardMode === "bridge" ? "bridge" : network.forwardMode === "nat" ? "nat" : "isolated",
     subnet: ipv4 ? `${ipv4.address}/${ipv4.prefix}` : "",
     dhcpStart: ipv4?.dhcpStart ?? "",
     dhcpEnd: ipv4?.dhcpEnd ?? "",
+    ipv6Subnet: ipv6 ? `${ipv6.address}/${ipv6.prefix}` : "",
+    ipv6Mode: ipv6?.ipv6Mode === "dhcpv6" ? "dhcpv6" : "slaac",
+    ipv6DhcpStart: ipv6?.dhcpStart ?? "",
+    ipv6DhcpEnd: ipv6?.dhcpEnd ?? "",
+    natIpv6: network.forwardMode === "nat" ? Boolean(network.natIpv6) : network.forwardMode === "isolated",
+    dnsDomain: network.dnsDomain ?? "",
+    dnsServers: (network.dnsServers ?? []).join(", "),
     bridge: network.bridge ?? "",
     autostart: network.autostart,
   };
@@ -54,11 +70,19 @@ export function networkUpdateInput(form: NetworkEditFormState): VirtualNetworkUp
       autostart: form.autostart,
     };
   }
+  const ipv6Subnet = form.ipv6Subnet.trim();
   return {
     mode: form.mode,
     subnet: form.subnet.trim(),
     dhcpStart: form.dhcpStart.trim() || undefined,
     dhcpEnd: form.dhcpEnd.trim() || undefined,
+    ipv6Subnet: ipv6Subnet || undefined,
+    ipv6Mode: ipv6Subnet ? form.ipv6Mode : undefined,
+    ipv6DhcpStart: ipv6Subnet && form.ipv6Mode === "dhcpv6" ? form.ipv6DhcpStart.trim() || undefined : undefined,
+    ipv6DhcpEnd: ipv6Subnet && form.ipv6Mode === "dhcpv6" ? form.ipv6DhcpEnd.trim() || undefined : undefined,
+    natIpv6: form.mode === "nat" && Boolean(ipv6Subnet) ? form.natIpv6 : undefined,
+    dnsDomain: form.dnsDomain.trim() || undefined,
+    dnsServers: splitDNSServers(form.dnsServers),
     autostart: form.autostart,
   };
 }

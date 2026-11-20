@@ -50,6 +50,15 @@ func (h *Handler) Leases(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
+func (h *Handler) Diagnostics(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	result, err := h.service.Diagnose(r.Context(), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VirtualNetworkCreateSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -146,14 +155,14 @@ func (h *Handler) DeleteDHCPHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, domain.ErrUnauthorized)
 		return
 	}
-	mac, err := url.PathUnescape(chi.URLParam(r, "mac"))
+	hostKey, err := url.PathUnescape(chi.URLParam(r, "host"))
 	if err != nil {
 		httpx.Error(w, r, domain.ErrInvalidInput)
 		return
 	}
 	network, err := h.service.DeleteDHCPHost(r.Context(), networksapp.DeleteNetworkDHCPHostCommand{
 		Name:    chi.URLParam(r, "name"),
-		MAC:     mac,
+		Key:     hostKey,
 		Request: mutationContext(r, session),
 	})
 	if err != nil {
@@ -161,6 +170,29 @@ func (h *Handler) DeleteDHCPHost(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, network)
+}
+
+func (h *Handler) ReserveLease(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.NetworkLeaseReservationSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	network, err := h.service.ReserveLease(r.Context(), networksapp.ReserveNetworkLeaseCommand{
+		Name:    chi.URLParam(r, "name"),
+		Spec:    spec,
+		Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, network)
 }
 
 func (h *Handler) ExportDHCPHosts(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -240,6 +272,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/networks", h.List)
 	r.Get("/networks/bridges", h.ListHostBridges)
 	r.Get("/networks/{name}/leases", h.Leases)
+	r.Get("/networks/{name}/diagnostics", h.Diagnostics)
 	r.Get("/networks/{name}/hosts/export", h.ExportDHCPHosts)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
@@ -247,7 +280,8 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Patch("/networks/{name}", h.Update)
 		mutating.Post("/networks/{name}/hosts/import", h.ImportDHCPHosts)
 		mutating.Post("/networks/{name}/hosts", h.AddDHCPHost)
-		mutating.Delete("/networks/{name}/hosts/{mac}", h.DeleteDHCPHost)
+		mutating.Post("/networks/{name}/leases/reserve", h.ReserveLease)
+		mutating.Delete("/networks/{name}/hosts/{host}", h.DeleteDHCPHost)
 		mutating.Post("/networks/{name}/actions/{action}", h.Action)
 		mutating.Delete("/networks/{name}", h.Delete)
 	})

@@ -102,12 +102,14 @@ func updateNetworkXML(xmlText string, definition domain.VirtualNetworkDefinition
 	if network == nil {
 		return "", errors.New("network XML has no network element")
 	}
-	if err := setNetworkForward(network, definition.Mode); err != nil {
+	if err := setNetworkForward(network, definition); err != nil {
 		return "", err
 	}
 	if definition.Mode == "bridge" {
 		setNetworkBridge(network, definition.Bridge)
 		removeXMLChildren(network, "ip")
+		removeXMLChild(network, "domain")
+		removeXMLChild(network, "dns")
 	} else {
 		if current.Forward.Mode == "bridge" {
 			removeXMLChild(network, "bridge")
@@ -115,6 +117,8 @@ func updateNetworkXML(xmlText string, definition domain.VirtualNetworkDefinition
 		if err := setNetworkIPv4(network, definition); err != nil {
 			return "", err
 		}
+		setNetworkIPv6(network, definition)
+		setNetworkDomainAndDNS(network, definition)
 	}
 	var buffer bytes.Buffer
 	encoder := xml.NewEncoder(&buffer)
@@ -192,7 +196,8 @@ func encodeNetworkXMLNode(encoder *xml.Encoder, node *networkXMLNode) error {
 	return nil
 }
 
-func setNetworkForward(network *networkXMLNode, mode string) error {
+func setNetworkForward(network *networkXMLNode, definition domain.VirtualNetworkDefinition) error {
+	mode := definition.Mode
 	forward := firstXMLChild(network, "forward")
 	if mode == "isolated" {
 		removeXMLChild(network, "forward")
@@ -206,7 +211,25 @@ func setNetworkForward(network *networkXMLNode, mode string) error {
 		insertXMLChildBefore(network, forward, "bridge", "mac", "domain", "dns", "ip")
 	}
 	setXMLAttribute(forward, "mode", mode)
+	setNetworkNAT(forward, definition)
 	return nil
+}
+
+func setNetworkNAT(forward *networkXMLNode, definition domain.VirtualNetworkDefinition) {
+	nat := firstXMLChild(forward, "nat")
+	enableIPv6 := definition.Mode == "nat" && definition.IPv6Address != "" && definition.NATIPv6
+	if nat == nil {
+		if !enableIPv6 {
+			return
+		}
+		nat = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "nat"}}}
+		forward.Children = append(forward.Children, nat)
+	}
+	if enableIPv6 {
+		setXMLAttribute(nat, "ipv6", "yes")
+	} else {
+		removeXMLAttribute(nat, "ipv6")
+	}
 }
 
 func setNetworkBridge(network *networkXMLNode, name string) {
@@ -219,6 +242,18 @@ func setNetworkBridge(network *networkXMLNode, name string) {
 }
 
 func setNetworkIPv4(network *networkXMLNode, definition domain.VirtualNetworkDefinition) error {
+	if definition.IPv4Address == "" {
+		for _, child := range append([]*networkXMLNode(nil), network.Children...) {
+			start, ok := child.Token.(xml.StartElement)
+			if ok && start.Name.Local == "ip" {
+				family := xmlAttributeValue(child, "family")
+				if family == "" || family == "ipv4" {
+					removeNetworkXMLChild(network, child)
+				}
+			}
+		}
+		return nil
+	}
 	var target *networkXMLNode
 	for _, child := range network.Children {
 		start, ok := child.Token.(xml.StartElement)
@@ -240,6 +275,81 @@ func setNetworkIPv4(network *networkXMLNode, definition domain.VirtualNetworkDef
 	removeXMLAttribute(target, "netmask")
 	setNetworkDHCP(target, definition.DHCPStart, definition.DHCPEnd)
 	return nil
+}
+
+func setNetworkIPv6(network *networkXMLNode, definition domain.VirtualNetworkDefinition) {
+	var target *networkXMLNode
+	for _, child := range network.Children {
+		start, ok := child.Token.(xml.StartElement)
+		if !ok || start.Name.Local != "ip" {
+			continue
+		}
+		if xmlAttributeValue(child, "family") == "ipv6" {
+			target = child
+			break
+		}
+	}
+	if definition.IPv6Address == "" {
+		for _, child := range network.Children {
+			start, ok := child.Token.(xml.StartElement)
+			if ok && start.Name.Local == "ip" && xmlAttributeValue(child, "family") == "ipv6" {
+				removeNetworkXMLChild(network, child)
+				return
+			}
+		}
+		return
+	}
+	if target == nil {
+		target = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "ip"}}}
+		network.Children = append(network.Children, target)
+	}
+	setXMLAttribute(target, "family", "ipv6")
+	setXMLAttribute(target, "address", definition.IPv6Address)
+	setXMLAttribute(target, "prefix", strconv.Itoa(definition.IPv6Prefix))
+	removeXMLAttribute(target, "netmask")
+	if definition.IPv6Mode == "dhcpv6" && definition.IPv6DHCPStart != "" && definition.IPv6DHCPEnd != "" {
+		setNetworkDHCP(target, definition.IPv6DHCPStart, definition.IPv6DHCPEnd)
+	} else {
+		removeXMLChild(target, "dhcp")
+	}
+}
+
+func setNetworkDomainAndDNS(network *networkXMLNode, definition domain.VirtualNetworkDefinition) {
+	if definition.DNSDomain != "" {
+		domainNode := firstXMLChild(network, "domain")
+		if domainNode == nil {
+			domainNode = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "domain"}}}
+			insertXMLChildBefore(network, domainNode, "forward", "bridge", "mac", "dns", "ip")
+		}
+		setXMLAttribute(domainNode, "name", definition.DNSDomain)
+	} else {
+		removeXMLChild(network, "domain")
+	}
+	if len(definition.DNSServers) == 0 {
+		removeXMLChild(network, "dns")
+		return
+	}
+	dnsNode := firstXMLChild(network, "dns")
+	if dnsNode == nil {
+		dnsNode = &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "dns"}}}
+		insertXMLChildBefore(network, dnsNode, "bridge", "mac", "ip")
+	}
+	removeXMLChildren(dnsNode, "forwarder")
+	for _, server := range definition.DNSServers {
+		forwarder := &networkXMLNode{Token: xml.StartElement{Name: xml.Name{Local: "forwarder"}}}
+		setXMLAttribute(forwarder, "addr", server)
+		dnsNode.Children = append(dnsNode.Children, forwarder)
+	}
+}
+
+func removeNetworkXMLChild(parent, target *networkXMLNode) {
+	children := parent.Children[:0]
+	for _, child := range parent.Children {
+		if child != target {
+			children = append(children, child)
+		}
+	}
+	parent.Children = children
 }
 
 func setNetworkDHCP(ip *networkXMLNode, startAddress, endAddress string) {

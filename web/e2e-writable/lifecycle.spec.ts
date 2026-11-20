@@ -907,7 +907,10 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(page.getByTestId("network-create-form")).toBeVisible();
   await page.getByLabel("网络名称", { exact: true }).fill("e2e-net-01");
   await page.getByLabel("网络模式", { exact: true }).selectOption("isolated");
-  await page.getByLabel("IPv4 子网", { exact: true }).fill("10.99.0.0/24");
+  await page.getByTestId("network-subnet").fill("10.99.0.0/24");
+  await page.getByTestId("network-ipv6-subnet").fill("fd00:99::/64");
+  await page.getByTestId("network-ipv6-dhcp-start").fill("fd00:99::100");
+  await page.getByTestId("network-ipv6-dhcp-end").fill("fd00:99::1ff");
   await expect(page.getByLabel("创建后立即启动", { exact: true })).not.toBeChecked();
   await page.getByTestId("network-create-submit").click();
 
@@ -917,7 +920,9 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(row).toContainText("isolated");
   await expect(row).toContainText("未激活");
   await expect(row).toContainText("10.99.0.1/24");
+  await expect(row).toContainText("fd00:99::1/64");
   await expect(row).toContainText("DHCP 10.99.0.2 - 10.99.0.254");
+  await expect(row).toContainText("DHCP fd00:99::100 - fd00:99::1ff");
   await expect(row).toContainText("启动");
   await expect(page.getByTestId("network-stop-e2e-net-01")).toHaveCount(0);
 
@@ -925,7 +930,8 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(page.getByTestId("network-edit-form")).toBeVisible();
   await expect(page.getByLabel("网络名称", { exact: true }).last()).toHaveValue("e2e-net-01");
   await page.getByLabel("网络模式", { exact: true }).last().selectOption("nat");
-  await page.getByLabel("IPv4 子网", { exact: true }).last().fill("10.99.1.0/24");
+  await page.getByTestId("network-edit-subnet").fill("10.99.1.0/24");
+  await expect(page.getByTestId("network-edit-ipv6-subnet")).toHaveValue("fd00:99::1/64");
   await page.getByLabel("DHCP 起始地址（可选）", { exact: true }).last().fill("10.99.1.20");
   await page.getByLabel("DHCP 结束地址（可选）", { exact: true }).last().fill("10.99.1.120");
   await page.getByLabel("开机自动启动", { exact: true }).last().check();
@@ -943,9 +949,9 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await expect(page.getByTestId("network-active")).toHaveText("3");
 
   await page.getByTestId("network-hosts-e2e-net-01").click();
-  await expect(page.getByTestId("network-hosts-card")).toContainText("静态 DHCP 主机 · e2e-net-01");
+  await expect(page.getByTestId("network-hosts-card")).toContainText("静态 DHCP / DHCPv6 主机 · e2e-net-01");
   await page.getByLabel("MAC 地址", { exact: true }).fill("52:54:00:aa:bb:cc");
-  await page.getByLabel("IPv4 地址", { exact: true }).fill("10.99.1.50");
+  await page.getByLabel("IPv4 / IPv6 地址", { exact: true }).fill("10.99.1.50");
   await page.getByLabel("主机名（可选）", { exact: true }).fill("e2e-static-01");
   await page.getByTestId("network-host-submit").click();
   await expect(page.getByTestId("network-action-success")).toContainText("已立即生效");
@@ -957,6 +963,19 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
   await hostDialog.getByTestId("confirm-delete-network-host").click();
   await expect(page.getByTestId("network-action-success")).toContainText("静态主机 52:54:00:aa:bb:cc 已删除");
   await expect(page.getByTestId("network-host-row-52:54:00:aa:bb:cc")).toHaveCount(0);
+
+  await page.getByLabel("IPv4 / IPv6 地址", { exact: true }).fill("fd00:99::50");
+  await expect(page.getByTestId("network-host-mac")).toBeDisabled();
+  await page.getByLabel("DUID / Client ID（IPv6）", { exact: true }).fill("00:03:00:01:52:54:00:aa:bb:cd");
+  await page.getByLabel("主机名（可选）", { exact: true }).fill("e2e-static-ipv6");
+  await page.getByTestId("network-host-submit").click();
+  await expect(page.getByTestId("network-host-row-00:03:00:01:52:54:00:aa:bb:cd")).toContainText("fd00:99::50");
+  await expect(page.getByTestId("network-host-row-00:03:00:01:52:54:00:aa:bb:cd")).toContainText("e2e-static-ipv6");
+
+  await page.getByTestId("network-diagnostics-e2e-net-01").click();
+  await expect(page.getByTestId("network-diagnostics-card")).toContainText("NAT66 已启用");
+  await expect(page.getByTestId("network-diagnostic-active")).toContainText("libvirt 网络处于活跃状态");
+  await expect(page.getByTestId("network-diagnostic-dhcpv6")).toContainText("fd00:99::100 - fd00:99::1ff");
 
   await page.getByTestId("network-stop-e2e-net-01").click();
   await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-net-01 已停止。");
@@ -988,6 +1007,103 @@ test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {
     await expect(auditRow).toContainText(label);
     await expect(auditRow).toContainText("成功");
   }
+});
+
+test("可写模式创建 IPv6-only SLAAC 网络并完成诊断", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "网络", exact: true }).click();
+  await expect(page.getByTestId("network-total")).toHaveText("3");
+
+  await page.getByTestId("network-create-toggle").click();
+  await expect(page.getByTestId("network-create-form")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const layout = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }));
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewportWidth);
+
+  await page.getByLabel("网络名称", { exact: true }).fill("e2e-v6-only");
+  await page.getByLabel("网络模式", { exact: true }).selectOption("isolated");
+  await page.getByTestId("network-subnet").fill("");
+  await page.getByTestId("network-ipv6-subnet").fill("fd00:9a::/64");
+  await page.getByTestId("network-ipv6-mode").selectOption("slaac");
+  await page.getByTestId("network-dns-domain").fill("v6.example.com");
+  await page.getByTestId("network-dns-servers").fill("2606:4700:4700::1111");
+  await page.getByTestId("network-create-submit").click();
+
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-v6-only 已创建。");
+  await expect(page.getByTestId("network-total")).toHaveText("4");
+  const row = page.getByTestId("network-row-e2e-v6-only");
+  await expect(row).toContainText("fd00:9a::1/64");
+  await expect(row).toContainText("slaac");
+  await expect(row).toContainText("DNS v6.example.com · 2606:4700:4700::1111");
+
+  await page.getByTestId("network-start-e2e-v6-only").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-v6-only 已启动。");
+  await page.getByTestId("network-diagnostics-e2e-v6-only").click();
+  await expect(page.getByTestId("network-diagnostics-card")).toContainText("IPv6 / 转发诊断 · e2e-v6-only");
+  await expect(page.getByTestId("network-diagnostic-active")).toContainText("libvirt 网络处于活跃状态");
+  await expect(page.getByTestId("network-diagnostic-dhcpv6")).toContainText("使用 RA/SLAAC");
+
+  await page.getByTestId("network-stop-e2e-v6-only").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-v6-only 已停止。");
+  await page.getByTestId("network-delete-e2e-v6-only").click();
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByLabel("输入网络名称确认").fill("e2e-v6-only");
+  await dialog.getByTestId("confirm-delete-network").click();
+  await expect(page.getByTestId("network-action-success")).toContainText("网络 e2e-v6-only 已删除。");
+  await expect(page.getByTestId("network-total")).toHaveText("3");
+});
+
+test("可写模式将 DHCPv6 租约保留为静态主机", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "网络", exact: true }).click();
+  await page.getByTestId("network-leases-default").click();
+
+  const leaseRow = page.locator('[data-testid^="network-lease-row-"]').filter({ hasText: "fd00:122::51" });
+  await expect(leaseRow).toContainText("demo-app-01");
+  await expect(leaseRow.getByTestId(/network-lease-reserve-/)).toBeEnabled();
+  await leaseRow.getByTestId(/network-lease-reserve-/).click();
+  await expect(page.getByTestId("network-action-success")).toContainText("已保留为网络 default 的静态主机");
+
+  await page.getByTestId("network-hosts-default").click();
+  const hostRow = page.getByTestId("network-host-row-0:3:0:1:0:16:3e:11:22:44");
+  await expect(hostRow).toContainText("fd00:122::51");
+  await expect(hostRow).toContainText("demo-app-01");
+  await expect(page.getByTestId("network-host-row-0:3:0:1:0:16:3e:11:22:33")).toContainText("fd00:122::50");
+});
+
+test("可写模式维护虚拟机文件夹和资源分组并支持列表筛选", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "虚拟机", exact: true }).click();
+  await page.getByRole("link", { name: "demo-web-01", exact: true }).click();
+  await openVMTab(page, "config");
+
+  const metadataCard = page.getByTestId("vm-metadata-card");
+  await expect(metadataCard).toBeVisible();
+  await metadataCard.getByRole("button", { name: "编辑", exact: true }).click();
+  await page.getByTestId("vm-metadata-folder").fill("E2E/生产/Web");
+  await page.getByTestId("vm-metadata-group").fill("验收业务");
+  await page.getByTestId("vm-metadata-save").click();
+  await expect(metadataCard).toContainText("虚拟机组织信息已保存。");
+  await expect(metadataCard).toContainText("E2E/生产/Web");
+  await expect(metadataCard).toContainText("验收业务");
+
+  await page.goto("/vms");
+  await expect(page.getByTestId("vm-name-cell-11111111-1111-4111-8111-111111111111")).toContainText("E2E/生产/Web");
+  await expect(page.getByTestId("vm-name-cell-11111111-1111-4111-8111-111111111111")).toContainText("验收业务");
+
+  await page.getByLabel("文件夹筛选").fill("E2E/生产");
+  await expect(page.getByTestId("vm-name-cell-11111111-1111-4111-8111-111111111111")).toBeVisible();
+  await expect(page.getByTestId("vm-name-cell-22222222-2222-4222-8222-222222222222")).toHaveCount(0);
+
+  await page.getByLabel("文件夹筛选").fill("");
+  await page.getByLabel("资源分组筛选").fill("验收业务");
+  await expect(page.getByTestId("vm-name-cell-11111111-1111-4111-8111-111111111111")).toBeVisible();
+  await expect(page.getByTestId("vm-name-cell-22222222-2222-4222-8222-222222222222")).toHaveCount(0);
 });
 
 test("可写模式创建外部桥接网络并校验网桥切换", async ({ page }) => {

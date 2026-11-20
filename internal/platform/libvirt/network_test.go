@@ -46,6 +46,50 @@ func TestNetworkDHCPHostXMLAndParentIndex(t *testing.T) {
 	if _, err := networkDHCPHostParentIndex(`<network><name>bridge</name></network>`); !errors.Is(err, domain.ErrNetworkUnsupported) {
 		t.Fatalf("missing DHCP error = %v", err)
 	}
+	ipv6HostXML, err := networkDHCPHostXMLText(domain.NetworkDHCPHost{ID: "00:03:00:01:52:54:00:12:34:56", IP: "fd00::50", Name: "db-ipv6"})
+	if err != nil {
+		t.Fatalf("IPv6 networkDHCPHostXMLText() error = %v", err)
+	}
+	if !strings.Contains(ipv6HostXML, `id="00:03:00:01:52:54:00:12:34:56"`) || strings.Contains(ipv6HostXML, `mac=`) {
+		t.Fatalf("IPv6 host XML = %s", ipv6HostXML)
+	}
+	ipv6Text := `<network><ip family='ipv6' address='fd00::1' prefix='64'><dhcp><range start='fd00::2' end='fd00::ffff'/></dhcp></ip><ip address='192.168.122.1' prefix='24'><dhcp><range start='192.168.122.2' end='192.168.122.254'/></dhcp></ip></network>`
+	ipv6Index, err := networkDHCPHostParentIndexForFamily(ipv6Text, "ipv6")
+	if err != nil || ipv6Index != 0 {
+		t.Fatalf("IPv6 parent index = %d, %v", ipv6Index, err)
+	}
+}
+
+func TestNetworkXMLFromDefinitionIPv6OnlySLAAC(t *testing.T) {
+	xmlText, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
+		Name: "ipv6-only", Mode: "isolated", IPv6Address: "fd00:90::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+	})
+	if err != nil {
+		t.Fatalf("networkXMLFromDefinition() error = %v", err)
+	}
+	for _, fragment := range []string{`<ip family="ipv6" address="fd00:90::1" prefix="64"></ip>`} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("IPv6-only XML missing %q: %s", fragment, xmlText)
+		}
+	}
+	if strings.Contains(xmlText, `<ip address=`) || strings.Contains(xmlText, `<dhcp>`) || strings.Contains(xmlText, `<forward`) {
+		t.Fatalf("IPv6-only SLAAC XML contains unexpected IPv4/DHCP/forward: %s", xmlText)
+	}
+}
+
+func TestNetworkXMLFromDefinitionDNS(t *testing.T) {
+	xmlText, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
+		Name: "dns-net", Mode: "nat", IPv4Address: "10.91.0.1", Prefix: 24, DHCPStart: "10.91.0.2", DHCPEnd: "10.91.0.254",
+		DNSDomain: "lab.example.com", DNSServers: []string{"1.1.1.1", "2606:4700:4700::1111"},
+	})
+	if err != nil {
+		t.Fatalf("networkXMLFromDefinition() error = %v", err)
+	}
+	for _, fragment := range []string{`<domain name="lab.example.com"></domain>`, `<forwarder addr="1.1.1.1"></forwarder>`, `<forwarder addr="2606:4700:4700::1111"></forwarder>`} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("DNS XML missing %q: %s", fragment, xmlText)
+		}
+	}
 }
 
 func TestPrefixFromNetmask(t *testing.T) {
@@ -149,14 +193,61 @@ func TestUpdateNetworkXMLPreservesDHCPHosts(t *testing.T) {
 		`<ip address="10.50.0.1" prefix="24">`,
 		`<range start="10.50.0.20" end="10.50.0.120"></range>`,
 		`<host mac="52:54:00:12:34:56" ip="10.20.30.50"></host>`,
-		`<ip family="ipv6" address="fd00::1" prefix="64"></ip>`,
 	} {
 		if !strings.Contains(xmlText, fragment) {
 			t.Fatalf("updated XML missing %q: %s", fragment, xmlText)
 		}
 	}
-	if strings.Contains(xmlText, "<forward") || strings.Contains(xmlText, "netmask=") {
-		t.Fatalf("isolated update retained forward/netmask: %s", xmlText)
+	if strings.Contains(xmlText, "<forward") || strings.Contains(xmlText, "netmask=") || strings.Contains(xmlText, "family=\"ipv6\"") {
+		t.Fatalf("isolated update retained forward/netmask/IPv6: %s", xmlText)
+	}
+}
+
+func TestNetworkXMLFromDefinitionIncludesIPv6(t *testing.T) {
+	xmlText, err := networkXMLFromDefinition(domain.VirtualNetworkDefinition{
+		Name: "dual-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24,
+		DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254",
+		IPv6Address: "fd00:20:30::1", IPv6Prefix: 64, IPv6Mode: "dhcpv6", IPv6DHCPStart: "fd00:20:30::2", IPv6DHCPEnd: "fd00:20:30::ffff",
+		NATIPv6: true,
+	})
+	if err != nil {
+		t.Fatalf("networkXMLFromDefinition() error = %v", err)
+	}
+	for _, fragment := range []string{
+		`<ip address="10.20.30.1" prefix="24">`,
+		`<ip family="ipv6" address="fd00:20:30::1" prefix="64">`,
+		`<range start="fd00:20:30::2" end="fd00:20:30::ffff"></range>`,
+		`<nat ipv6="yes"></nat>`,
+	} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("dual-stack XML missing %q: %s", fragment, xmlText)
+		}
+	}
+}
+
+func TestUpdateNetworkXMLUpdatesAndRemovesIPv6(t *testing.T) {
+	const source = `<network><name>dual-net</name><forward mode='nat'/><ip address='10.20.30.1' prefix='24'><dhcp><range start='10.20.30.2' end='10.20.30.254'/></dhcp></ip><ip family='ipv6' address='fd00:20:30::1' prefix='64'><dhcp><range start='fd00:20:30::2' end='fd00:20:30::ffff'/><host mac='52:54:00:12:34:56' ip='fd00:20:30::50'/></dhcp></ip></network>`
+	xmlText, err := updateNetworkXML(source, domain.VirtualNetworkDefinition{
+		Name: "dual-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24, DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254",
+		IPv6Address: "fd00:99::1", IPv6Prefix: 64, IPv6Mode: "dhcpv6", IPv6DHCPStart: "fd00:99::2", IPv6DHCPEnd: "fd00:99::ffff",
+		NATIPv6: true,
+	})
+	if err != nil {
+		t.Fatalf("update IPv6 error = %v", err)
+	}
+	for _, fragment := range []string{`<ip family="ipv6" address="fd00:99::1" prefix="64">`, `<range start="fd00:99::2" end="fd00:99::ffff"></range>`, `<host mac="52:54:00:12:34:56" ip="fd00:20:30::50"></host>`, `<nat ipv6="yes"></nat>`} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("updated IPv6 XML missing %q: %s", fragment, xmlText)
+		}
+	}
+	withoutIPv6, err := updateNetworkXML(xmlText, domain.VirtualNetworkDefinition{
+		Name: "dual-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24, DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254",
+	})
+	if err != nil {
+		t.Fatalf("remove IPv6 error = %v", err)
+	}
+	if strings.Contains(withoutIPv6, "family=\"ipv6\"") {
+		t.Fatalf("IPv6 was not removed: %s", withoutIPv6)
 	}
 }
 
@@ -180,6 +271,25 @@ func TestUpdateNetworkXMLAddsForwardAndDHCP(t *testing.T) {
 	}
 	if strings.Index(xmlText, "<forward") > strings.Index(xmlText, "<bridge") {
 		t.Fatalf("forward must precede bridge: %s", xmlText)
+	}
+}
+
+func TestUpdateNetworkXMLIPv6OnlyAndDNS(t *testing.T) {
+	const source = `<network><name>dual-net</name><forward mode='nat'><nat ipv6='yes'/></forward><ip address='10.20.30.1' prefix='24'><dhcp><range start='10.20.30.2' end='10.20.30.254'/></dhcp></ip><ip family='ipv6' address='fd00:91::1' prefix='64'/></network>`
+	xmlText, err := updateNetworkXML(source, domain.VirtualNetworkDefinition{
+		Name: "dual-net", Mode: "isolated", IPv6Address: "fd00:91::1", IPv6Prefix: 64, IPv6Mode: "slaac",
+		DNSDomain: "lab.example.com", DNSServers: []string{"2606:4700:4700::1111"},
+	})
+	if err != nil {
+		t.Fatalf("updateNetworkXML() error = %v", err)
+	}
+	for _, fragment := range []string{`<ip family="ipv6" address="fd00:91::1" prefix="64"></ip>`, `<domain name="lab.example.com"></domain>`, `<forwarder addr="2606:4700:4700::1111"></forwarder>`} {
+		if !strings.Contains(xmlText, fragment) {
+			t.Fatalf("IPv6-only update missing %q: %s", fragment, xmlText)
+		}
+	}
+	if strings.Contains(xmlText, `address="10.20.30.1"`) || strings.Contains(xmlText, `<forward `) || strings.Contains(xmlText, `<nat `) {
+		t.Fatalf("IPv6-only update retained IPv4/forward/NAT: %s", xmlText)
 	}
 }
 

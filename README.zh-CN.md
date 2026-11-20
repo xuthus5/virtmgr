@@ -62,7 +62,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 备份中心 | 集中管理冷备份和运行中虚拟机在线备份、Guest Agent 静默、一致性/vTPM 状态、恢复为新虚拟机、固定间隔/每日计划、保留清理、固定保留、失败重试和任务 SSE 状态 |
 | 镜像库 | 登记已有 qcow2/raw 卷及 OS 元数据；按需刷新容量和 SHA-256；模板可绑定镜像；从镜像全量克隆，或对同存储池 qcow2 镜像创建链接克隆；移除登记不会删除底层卷 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；流式上传 ISO、qcow2 和 raw 镜像；阻止删除仍在使用的卷 |
-| 网络 | NAT、隔离和外部桥接网络、宿主机网桥发现、IPv4/DHCP 配置、实时租约、静态 DHCP 主机及 CSV 批量导入/导出，以及创建、编辑、启停和删除 |
+| 网络 | NAT、隔离和外部桥接网络；IPv4-only、双栈和 IPv6-only 管理型网络；DHCP、SLAAC、有状态 DHCPv6、NAT66、DNS；宿主机网桥发现、实时租约、IPv4/IPv6 静态主机及 CSV 批量导入/导出、网络诊断，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
 | 可观测性 | SSE 实时事件与任务状态、任务失败重试、宿主机和运行中 VM 的 7 天历史指标、Prometheus `/metrics`、CPU/内存阈值 Webhook 告警、结构化日志和健康检查 |
 | 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、带作用域且可撤销的 Bearer API Token、OpenAPI 3.1、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选/导出/按保留期清理的审计、CSP 和安全响应头 |
@@ -234,6 +234,10 @@ cookie_secure: true
 
 控制台使用同源 `wss://` 连接。部分浏览器允许用户临时跳过自签名证书以打开 HTTPS 页面，却仍会拦截 WebSocket 握手，表现为控制台一直连接但服务端收不到 Upgrade 请求。生产环境应使用浏览器信任的证书和域名；不要依赖 IP 地址加自签名证书作为长期控制台入口。
 
+**IPv6 管理面访问**
+
+将 `listen` 设置为 `"[::]:8443"` 可监听 Linux 双栈通配地址。使用 `X-Forwarded-For` 或 `X-Real-IP` 时，应把反向代理的 IPv6 地址加入 `trusted_proxies`。通过字面 IPv6 地址访问浏览器时，证书 SAN 必须包含当前地址；由于运营商分配的 IPv6 前缀可能变化，生产环境应优先使用稳定 DNS 名称和证书。原生 TLS 证书和私钥文件变化后会自动热重载，系统设置页会展示 SAN 不匹配、到期时间和热重载错误。客户机网络的 IPv6 转发和 NAT66 依赖宿主机 `net.ipv6.conf.all.forwarding` 与防火墙策略，NAT66 仅提供出站访问；暴露业务前请先使用网络诊断页确认，并在每个受支持发行版上运行 `scripts/ipv6-compat-check.sh`。已验证矩阵与剩余边界见 `docs/ipv6-commercial-readiness.md`，证书轮换和回滚见 `docs/tls-rotation-runbook.md`。
+
 不要在没有 TLS、防火墙和强管理员密码的情况下，将可写模式的 VirtMgr 直接暴露到公网。
 
 ## 使用容器部署
@@ -330,7 +334,7 @@ API 位于 `/api/v1`，使用 JSON。浏览器使用 Cookie，写操作还需要
 | 备份中心 | `/api/v1/backups`、`/backups/{id}/verify`、`/backups/{id}/restore`、`/backup-schedules`、`/backup-repositories` |
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
 | 镜像库 | `GET/POST /api/v1/images`、`GET/DELETE /api/v1/images/{id}`、`POST /api/v1/images/{id}/refresh` |
-| 网络 | `/api/v1/networks`、`/networks/bridges`、`/leases`、`/hosts`、`/actions/{action}` |
+| 网络 | `/api/v1/networks`、`/networks/bridges`、`/leases`、`/hosts`、`/diagnostics`、`/actions/{action}` |
 | 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/audit-events/export`、`/users`、`/users/me/password`、`/users/{id}/sessions`、`/settings` |
 
 允许类型的任务可在安全检查点通过 `POST /api/v1/tasks/{id}/cancel` 取消。
@@ -392,7 +396,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 镜像库支持上传 qcow2/raw、从镜像全量克隆，以及同存储池 qcow2 镜像的链接克隆；存储页支持空闲卷 qcow2/raw 格式转换、跨池复制和链接克隆展平。关机/异常停止虚拟机的数据盘可跨池迁移并自动切换持久域引用，但跨池链接克隆尚未实现。
 - 创建和导入虚拟机时，架构与机型来自宿主机 libvirt 能力探测；可显式选择架构和机型，并校验 UEFI、Secure Boot 与镜像架构兼容性。未指定时保持 x86_64/BIOS 兼容默认，ARM64 宿主默认使用 `virt` 机型。
 - 自动备份校验和夏令时特殊处理不在当前范围；每日调度使用服务端本地时区。
-- 外部桥接网络接入宿主机已有 Linux 网桥，并使用上游网络提供的地址/DHCP；单块网卡可设置入站/出站带宽 QoS。VirtMgr 不创建宿主机网桥，也不管理 VLAN、bond、OVS、SR-IOV、IPv6/RA 或安全组。
+- 管理型 NAT/隔离网络支持 IPv4-only、双栈和 IPv6-only。IPv4 使用 DHCP；IPv6 支持 SLAAC（`/64`）和有状态 DHCPv6（`/64` 至 `/124`），NAT 双栈网络默认启用 NAT66。支持 DNS 转发、DHCPv6 DUID/Client ID 静态主机、网络诊断及 CSV 批量导入/导出。外部桥接网络接入宿主机已有 Linux 网桥，并使用上游网络提供的地址/DHCP；单块网卡可设置入站/出站带宽 QoS。VirtMgr 不创建宿主机网桥，也不管理 VLAN、bond、OVS、SR-IOV、显式 RA 参数/前缀委派、IPv6 入站端口映射或安全组。
 - 告警仅支持现有规则级 Webhook；不提供通知中心、SMTP、Slack/Teams、PagerDuty、通知静默或升级策略。
 - 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。
 - 建议使用较新的 Chrome、Edge、Firefox 或 Safari。

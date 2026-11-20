@@ -27,6 +27,7 @@ type handlerRepository struct {
 	deleted     string
 	leaseFor    string
 	leases      []domain.DHCPLease
+	diagnostics domain.NetworkDiagnostics
 }
 
 func (f *handlerRepository) ListNetworks(context.Context) ([]domain.VirtualNetwork, error) {
@@ -40,6 +41,14 @@ func (f *handlerRepository) ListHostBridges(context.Context) ([]domain.HostBridg
 func (f *handlerRepository) ListDHCPLeases(_ context.Context, networkName string) ([]domain.DHCPLease, error) {
 	f.leaseFor = networkName
 	return f.leases, f.err
+}
+
+func (f *handlerRepository) NetworkDiagnostics(_ context.Context, networkName string) (domain.NetworkDiagnostics, error) {
+	result := f.diagnostics
+	if result.Network == "" {
+		result.Network = networkName
+	}
+	return result, f.err
 }
 
 func (f *handlerRepository) CreateNetwork(_ context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error) {
@@ -149,6 +158,46 @@ func TestNetworkLeaseRoute(t *testing.T) {
 	}
 }
 
+func TestReserveNetworkLeaseRoute(t *testing.T) {
+	repository := &handlerRepository{
+		networks: []domain.VirtualNetwork{{
+			Name: "dual-net", Active: true, Persistent: true,
+			Addresses: []domain.NetworkAddress{{Family: "ipv6", Address: "fd00:92::1", Prefix: 64, IPv6Mode: "dhcpv6", DHCPEnabled: true, DHCPStart: "fd00:92::2", DHCPEnd: "fd00:92::ffff"}},
+		}},
+		leases: []domain.DHCPLease{{Family: "ipv6", IPAddress: "fd00:92::50", Prefix: 64, ClientID: "00:03:00:01:52:54:00:12:34:56", Hostname: "db-v6"}},
+	}
+	router := newTestRouter(repository)
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/dual-net/leases/reserve", strings.NewReader(`{"ip":"fd00:92::50"}`)), domain.RoleAdmin)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if repository.addedHost.ID != "00:03:00:01:52:54:00:12:34:56" || repository.addedHost.IP != "fd00:92::50" || repository.addedHost.Name != "db-v6" {
+		t.Fatalf("reserved host = %+v", repository.addedHost)
+	}
+}
+
+func TestNetworkDiagnosticsRoute(t *testing.T) {
+	repository := &handlerRepository{diagnostics: domain.NetworkDiagnostics{
+		Active: true, Bridge: "virbr0", BridgeReady: true, IPv4Forward: true, IPv6Forward: true, NATIPv6: true,
+		DHCPv6Range: true, LeaseCount: 2,
+		Checks: []domain.NetworkCheck{{ID: "active", Status: "ok", Title: "网络状态", Detail: "正常"}},
+	}}
+	router := newTestRouter(repository)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/networks/default/diagnostics", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, fragment := range []string{`"network":"default"`, `"bridge":"virbr0"`, `"ipv6Forwarding":true`, `"natIpv6":true`, `"dhcpv6Range":true`, `"leaseCount":2`, `"checks":[`} {
+		if !strings.Contains(recorder.Body.String(), fragment) {
+			t.Fatalf("body missing %q: %s", fragment, recorder.Body.String())
+		}
+	}
+}
+
 func TestCreateNetworkRoute(t *testing.T) {
 	repository := &handlerRepository{}
 	router := newTestRouter(repository)
@@ -192,13 +241,16 @@ func TestCreateBridgeNetworkRoute(t *testing.T) {
 }
 
 func TestUpdateNetworkRoute(t *testing.T) {
-	repository := &handlerRepository{}
+	repository := &handlerRepository{networks: []domain.VirtualNetwork{{Name: "lab-net"}}}
 	router := newTestRouter(repository)
 	request := withSession(httptest.NewRequest(http.MethodPatch, "/networks/lab-net", strings.NewReader(`{
 		"mode":"isolated",
 		"subnet":"10.31.0.0/24",
 		"dhcpStart":"10.31.0.20",
 		"dhcpEnd":"10.31.0.120",
+		"ipv6Subnet":"fd00:31::/64",
+		"ipv6DhcpStart":"fd00:31::20",
+		"ipv6DhcpEnd":"fd00:31::120",
 		"autostart":true
 	}`)), domain.RoleOperator)
 	request.Header.Set("Content-Type", "application/json")
@@ -207,7 +259,8 @@ func TestUpdateNetworkRoute(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if repository.updated.Name != "lab-net" || repository.updated.IPv4Address != "10.31.0.1" || repository.updated.Mode != "isolated" || !repository.updated.Autostart {
+	if repository.updated.Name != "lab-net" || repository.updated.IPv4Address != "10.31.0.1" || repository.updated.Mode != "isolated" || !repository.updated.Autostart ||
+		repository.updated.IPv6Address != "fd00:31::1" || repository.updated.IPv6Prefix != 64 || repository.updated.IPv6DHCPStart != "fd00:31::20" {
 		t.Fatalf("updated definition = %+v", repository.updated)
 	}
 }
@@ -286,11 +339,11 @@ func TestNetworkDHCPHostImportExportRoutes(t *testing.T) {
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Header().Get("Content-Disposition"), "virtmgr-default-dhcp-hosts.csv") {
 		t.Fatalf("export status = %d headers=%v body=%s", recorder.Code, recorder.Header(), recorder.Body.String())
 	}
-	if body := recorder.Body.String(); !strings.HasPrefix(body, "mac,ip,name\n") || !strings.Contains(body, "52:54:00:12:34:56,192.168.122.50,web-01") {
+	if body := recorder.Body.String(); !strings.HasPrefix(body, "mac,id,ip,name\n") || !strings.Contains(body, "52:54:00:12:34:56,,192.168.122.50,web-01") {
 		t.Fatalf("export body = %s", body)
 	}
 
-	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,ip,name\n52:54:00:12:34:56,192.168.122.50,web-01\n52:54:00:AB:CD:EF,192.168.122.60,db-01\n")), domain.RoleOperator)
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,id,ip,name\n52:54:00:12:34:56,,192.168.122.50,web-01\n52:54:00:AB:CD:EF,,192.168.122.60,db-01\n")), domain.RoleOperator)
 	request.Header.Set("Content-Type", "text/csv")
 	recorder = httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
@@ -301,12 +354,39 @@ func TestNetworkDHCPHostImportExportRoutes(t *testing.T) {
 		t.Fatalf("imported host = %+v", repository.addedHost)
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,ip,name\n52:54:00:AB:CD:EF,192.168.122.60,db-01\n"))
+	request = httptest.NewRequest(http.MethodPost, "/networks/default/hosts/import", strings.NewReader("mac,id,ip,name\n52:54:00:AB:CD:EF,,192.168.122.60,db-01\n"))
 	request.Header.Set("Content-Type", "text/csv")
 	recorder = httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("missing session status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestNetworkDHCPHostIPv6DUIDRoutes(t *testing.T) {
+	network := domain.VirtualNetwork{
+		Name: "dual-net", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{{
+			Family: "ipv6", Address: "fd00:86::1", Prefix: 64, IPv6Mode: "dhcpv6", DHCPEnabled: true,
+			DHCPStart: "fd00:86::2", DHCPEnd: "fd00:86::ffff",
+			Hosts: []domain.NetworkDHCPHost{{ID: "00:03:00:01:52:54:00:12:34:56", IP: "fd00:86::50", Name: "db-ipv6"}},
+		}},
+	}
+	repository := &handlerRepository{networks: []domain.VirtualNetwork{network}}
+	router := newTestRouter(repository)
+	request := withSession(httptest.NewRequest(http.MethodPost, "/networks/dual-net/hosts", strings.NewReader(`{"id":"00:03:00:01:52:54:00:ab:cd:ef","ip":"fd00:86::60","name":"web-ipv6"}`)), domain.RoleOperator)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || repository.addedHost.ID != "00:03:00:01:52:54:00:ab:cd:ef" || repository.addedHost.MAC != "" {
+		t.Fatalf("add IPv6 host status = %d body=%s host=%+v", recorder.Code, recorder.Body.String(), repository.addedHost)
+	}
+
+	request = withSession(httptest.NewRequest(http.MethodDelete, "/networks/dual-net/hosts/00%3A03%3A00%3A01%3A52%3A54%3A00%3A12%3A34%3A56", nil), domain.RoleAdmin)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || repository.deletedHost.ID != "00:03:00:01:52:54:00:12:34:56" || repository.deletedHost.IP != "fd00:86::50" {
+		t.Fatalf("delete IPv6 host status = %d body=%s host=%+v", recorder.Code, recorder.Body.String(), repository.deletedHost)
 	}
 }
 
@@ -342,7 +422,7 @@ func TestNetworkMutationsRequireSessionAndOperator(t *testing.T) {
 }
 
 func TestNetworkWriteRoutesUseCSRF(t *testing.T) {
-	repository := &handlerRepository{}
+	repository := &handlerRepository{networks: []domain.VirtualNetwork{{Name: "lab-net"}}}
 	router := chi.NewRouter()
 	New(networksapp.New(repository, nil, false)).Mount(router, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

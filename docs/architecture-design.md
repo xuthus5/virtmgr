@@ -51,6 +51,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 创建虚拟机：名称、vCPU、内存、BIOS/UEFI 固件、Secure Boot、vTPM 2.0、磁盘路径/格式、磁盘总线、网卡型号、启动顺序、虚拟网络、可选 ISO、autostart 和创建后启动。磁盘总线支持 `virtio` / `sata` / `scsi`，网卡型号支持 `virtio` / `e1000`，启动顺序支持 `auto` / `disk-first` / `cdrom-first`；默认值与原有行为兼容。磁盘可从活跃存储池的现有 qcow2/raw 卷选择，网络只列出活跃虚拟网络。UEFI 使用 libvirt firmware 自动选择，Secure Boot 仅允许与 UEFI 组合；vTPM 通过 libvirt domain capabilities 探测 `swtpm` emulator 支持，x86 使用 `tpm-crb`、其他架构使用 `tpm-tis`，不支持时拒绝。固件、安全启动、vTPM 和硬件建模参数进入创建审计，并从持久/运行态域 XML 回读。
 - 安装 ISO 运维：`POST /vms/{uuid}/iso/attach` 仅允许关机/异常停止的持久虚拟机从活跃存储池挂载 `.iso` 卷。系统替换已有非 cloud-init 安装光驱或新增 CD-ROM，保留 cloud-init 介质，切换为光盘优先启动，且不删除任何存储卷；`POST /vms/{uuid}/iso/eject` 移除安装光驱并恢复磁盘优先启动。成功/失败写入脱敏审计并采集配置版本。
 - 导入虚拟机：`POST /vms/import` 接收 `name`、`sourcePool`、`sourceVolume`、可选 `targetPool`、`diskCapacityBytes`、架构/机型、UEFI/Secure Boot 和 vTPM 等硬件参数。来源与目标池必须活跃；QCOW2/RAW 系统盘复制为 `${name}-disk.${format}`，ISO 则保留为只读安装介质、创建 `${name}-disk.qcow2` 空白系统盘并使用光盘优先启动，默认 20 GiB、可配置 1-16384 GiB。OVA/OVF、VMDK、VHDX 和格式转换不支持。预检校验名称、架构、机型、固件、vTPM 能力与目标卷冲突后创建 `vm.import` 可取消任务并定义持久域。来源卷始终保留；失败或安全检查点取消会清理新建目标卷，若域已创建则先移除新域。成功写入 `vm.import` 审计并采集 `import` 配置版本；取消不会强杀正在执行的 libvirt 操作，会在下一个检查点停止。
+- 虚拟网络：NAT/isolated 网络至少配置 IPv4 或 IPv6 子网中的一项；IPv4 支持 `/29` 及更大前缀，IPv6 支持 `/64` 至 `/124`。IPv6 地址分配支持 SLAAC（仅 `/64`）和有状态 DHCPv6，NAT 双栈网络默认启用 NAT66 并可显式关闭；同时支持 DNS domain 与 IPv4/IPv6 上游 DNS。IPv6 网关由网络地址加一生成，DHCPv6 范围必须位于前缀内且避开网关和末地址。libvirt XML 使用多个 `<ip>` 表达双栈，编辑时保留静态主机，并拒绝会移除网段、关闭 DHCPv6 或使现有主机失效的变更。IPv4 静态主机使用 MAC，IPv6 静态主机使用 DUID/Client ID 或主机名；CSV 使用 `mac,id,ip,name` 并兼容旧 `mac,ip,name`。外部桥接仍只接入宿主机已有 Linux 网桥，不接受 IPv4/IPv6/DHCP/DNS 字段。
 - Cloud-init：创建和模板配置时可选提供 NoCloud `user-data` 与目标活跃存储池。前端提供可视化字段（软件包、启动命令、时区/Locale、sudo/SSH 用户）并实时生成 `#cloud-config` YAML，同时保留带语法高亮和校验的高级源码模式。后端生成卷标 `cidata`、包含 `meta-data`/`user-data` 的 ISO，通过带 `serial=cloud-init` 标记的只读 CD-ROM 挂载；用户数据限制 64 KiB，审计仅记录启用状态、池和字节数，不记录内容。
 - 虚拟机模板：SQLite `vm_templates` 保存可复用的 vCPU、内存、磁盘格式、网络、固件、Secure Boot、Cloud-init、ISO 路径、可选镜像绑定和启动策略。模板只保存镜像引用，不拥有镜像或系统盘；新建虚拟机表单可选择模板预填，但实例名称和磁盘路径始终由操作者填写。模板 CRUD 仅对 Operator/Admin 开放，受全局只读模式约束并记录 `vm_template.create/update/delete` 审计。
 - PCI/USB 直通：`POST /vms/{uuid}/devices` 与 `DELETE /vms/{uuid}/devices/{device}` 使用 libvirt 节点设备名分配或移除主机设备。PCI 以地址匹配，USB 以 vendor/product ID 和 bus/device 匹配；服务层阻止同一设备跨虚拟机重复分配，并记录 `vm.device.attach` / `vm.device.detach` 审计。
@@ -69,7 +70,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 用户与账号安全：管理员可创建本地账号、调整角色、禁用/启用用户、重置其他账号密码并查看/撤销登录会话；所有本地账号均可从顶部“账号安全”页验证当前密码后自助改密。改密保留当前会话并撤销其他会话，管理员重置会撤销目标账号全部会话；密码和会话写操作均记录审计，只读模式拒绝 API 用户写操作。登录页提供忘记密码说明，单机部署通过宿主机上的 `virtmgr reset-password --username <name>` 进行受文件权限保护的本地恢复；该命令隐藏输入密码、撤销目标账号全部会话，并记录不含密码内容的 `user.password.recovery` 审计事件。
 - API Token：设置页可为当前浏览器会话创建 Token，选择 read 或 write（write 隐含 read）和 0 至 3650 天有效期。明文只在创建响应出现一次，SQLite 仅保存哈希；列表不返回明文，撤销立即生效，过期或用户禁用后 Bearer 认证失败。Bearer 请求跳过浏览器 CSRF，但仍受 Token 作用域、角色、只读模式和审计约束；Token 不能调用 Token 管理接口。OpenAPI 3.1 契约通过公开的 `GET /api/v1/openapi.json` 提供，覆盖全部已挂载路由、主要请求/响应模型、错误响应和示例；契约测试校验路径参数、唯一操作 ID、所有内部引用和关键模块覆盖，防止接口漂移。
 - 存储能力：存储池状态、类型、目标路径、容量，目录池（dir）、NFS `netfs` 和 LVM `logical` 创建，启动/停止/刷新和未激活池定义删除，活跃池的卷列表，创建 qcow2/raw 卷，流式上传 ISO/qcow2/raw 镜像，以及删除未被虚拟机引用的卷。NFS 池校验主机名、绝对导出路径和目标路径；LVM 池校验卷组与 `/dev/` 目标路径，只允许 raw 卷并拒绝文件上传。上传格式按扩展名解析，`.iso` 与 `.raw` 使用 raw 格式，`.qcow2` 使用 qcow2 格式；成功后刷新存储池以回读真实虚拟容量和分配量。卷列表即使为空也返回数组而非 `null`，避免前端空池状态崩溃。
-- 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、DHCP 范围、实时 DHCP 租约和自动启动状态；Operator/Admin 可创建 NAT/隔离/外部桥接网络、启停网络并删除未激活网络。外部桥接复用宿主机已有 Linux 网桥，地址和 DHCP 由上游网络提供。模式、网桥存在性、地址推导和删除约束由后端校验，写操作记录审计。
+- 虚拟网络管理：网络模式、桥接口、IPv4/IPv6 地址、SLAAC/DHCPv6 模式、NAT66、DNS、DHCP 租约、静态主机、配置警告和自动启动状态；Operator/Admin 可创建 NAT/隔离/外部桥接网络、启停网络并删除未激活网络。外部桥接复用宿主机已有 Linux 网桥，地址和 DHCP 由上游网络提供。模式、网桥存在性、地址推导、前缀重叠和删除约束由后端校验，写操作记录审计；只读诊断接口检查桥接口、宿主机转发、DHCPv6、NAT66 与 DNS。
 - 实时事件：进程内事件总线保留最近 500 条事件，真实 libvirt 后端注册域生命周期回调并运行默认事件循环；demo 后端生成 VM、快照、存储和网络事件。`GET /events` 提供快照，`GET /events/stream` 通过 SSE 推送初始快照、实时增量和 15 秒心跳。
 - 任务中心：SQLite `tasks` 表提供持久化任务列表、状态筛选、分页和单任务查询；启动时将遗留的排队/运行任务标记为 `interrupted`。前端轮询或订阅 SSE，展示进度、步骤、失败原因、关联资源和 `cancellable`。`vm.clone`、`vm.import`、备份相关任务、磁盘跨池迁移和存储卷上传等允许类型可在安全检查点取消；取消注册表使用上下文取消，SQLite 终态保护防止后续成功/失败覆盖 `cancelled`。同一资源上的可取消任务串行执行，避免并发克隆、导入、迁移或备份互相破坏。取消不是强制杀进程，可能保留检查点前的中间文件。
 - 前端包含总览、虚拟机列表、虚拟机详情、动作按钮、只读提示和危险动作二次确认；虚拟机详情可切换查看运行态/持久配置 XML 并复制。
@@ -78,7 +79,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 - 虚拟机配置导出：`GET /api/v1/vms/{uuid}/export` 返回稳定版本化的 JSON 包，包含虚拟机详情、持久配置 XML、活动域 live XML、快照和磁盘/网络元数据；只读能力不受 Viewer 或全局只读模式限制，但记录 `vm.export` 审计，不包含磁盘镜像数据。
 - Playwright 使用只读和可写两套严格串行配置；可写场景只连接有状态 demo 后端，不对真实虚拟机执行写操作。
 
-P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` / `bridge` 模式，管理型网络使用 IPv4 子网且至少为 `/29`，外部桥接网络接入宿主机已有网桥；活跃网络必须先停止才能删除。虚拟机创建与导入通过 libvirt capabilities/domain capabilities 探测宿主机架构、KVM 机型与 UEFI/Secure Boot，由请求可显式选择架构和机型；未指定时 x86_64/BIOS 保持兼容，ARM64 默认 `virt`。demo 后端暴露同等能力用于 UI 验证。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
+P0 控制台闭环已落地：`POST /vms/{uuid}/console-token` 生成 30 秒有效、单次使用且绑定用户/VM 的 token，`GET /vms/{uuid}/console` 完成会话校验、token 消费、WebSocket 升级和 libvirt graphics FD 双向桥接；demo 后端提供最小 RFB 握手，供严格串行 Playwright 验证浏览器连接。存储卷创建/删除和 ISO/qcow2/raw 上传已实现；上传使用 `application/octet-stream` 请求体直接写入 libvirt 流，要求 `Content-Length`、受支持的扩展名和 1 MiB - 256 GiB 大小，失败时删除未完成卷。删除前会扫描全部域 XML 的磁盘来源，仍被引用的卷返回 `409 VOLUME_IN_USE`。未激活存储池不能枚举、创建、上传或删除卷，后端返回 `503 UNAVAILABLE`。虚拟网络创建/启停/删除已实现：支持 `nat` / `isolated` / `bridge` 模式，管理型网络至少配置 IPv4 `/29+` 或 IPv6 `/64-/124`，IPv6 支持 SLAAC、DHCPv6、NAT66 与 DNS，外部桥接网络接入宿主机已有网桥；活跃网络必须先停止才能删除。虚拟机创建与导入通过 libvirt capabilities/domain capabilities 探测宿主机架构、KVM 机型与 UEFI/Secure Boot，由请求可显式选择架构和机型；未指定时 x86_64/BIOS 保持兼容，ARM64 默认 `virt`。demo 后端暴露同等能力用于 UI 验证。实时事件已实现内存事件总线、libvirt 生命周期采集和 SSE 推送；事件不属于长期审计。设计文档其余部分保留为目标架构与后续阶段约束。
 
 ## 2. 总体架构
 
@@ -580,7 +581,7 @@ type StorageVolume = {
 
 ### 4.3 网络与快照
 
-当前网络写能力通过 libvirt Network API 实现。创建 NAT/隔离网络时由后端根据 IPv4 子网推导网关、前缀和默认 DHCP 范围，可选 DHCP 起止地址必须位于子网内且避开网关；创建外部桥接网络时要求宿主机网桥名称合法、libvirt 能识别该接口为 `bridge` 且未被其他网络占用，生成的 XML 仅包含 `<forward mode='bridge'/>` 和 `<bridge name='...'/>`，不创建 libvirt IP 或 DHCP。所有模式都支持 autostart、创建后启动和失败回滚。编辑时网络名称不可变，仅允许未激活的持久网络；后端在原始 libvirt XML 上定点替换 forward、bridge、IPv4 address/prefix 和 DHCP range，并保留 DHCP host、IPv6、MAC 等其他元素，再通过 `NetworkDefineXML` 原子更新持久定义。编辑活跃网络返回 `409 NETWORK_ACTIVE`；路由等不支持的类型返回 `409 NETWORK_UPDATE_UNSUPPORTED`。`GET /networks/bridges` 返回尚未被网络占用的活跃宿主机网桥，供前端选择；VirtMgr 不创建或修改宿主机网桥。静态 DHCP 主机条目作为独立资源管理：对激活的持久网络使用 `virNetworkUpdate` 的 `ADD_LAST/DELETE + IP_DHCP_HOST + LIVE|CONFIG`，对未激活网络使用 `CONFIG`，因此无需停止网络即可实时增删；外部桥接网络禁用 libvirt DHCP 静态主机接口。服务层校验 MAC、IPv4 子网归属、保留地址和重复 MAC/IP。启停动作按当前网络状态校验，活跃网络删除返回 `409 CONFLICT`。网络状态始终来自 libvirt，不写入业务数据库；审计记录 `network.create`、`network.update`、`network.dhcp.host.add`、`network.dhcp.host.delete`、`network.start`、`network.stop`、`network.delete`。
+当前网络写能力通过 libvirt Network API 实现。创建 NAT/隔离网络时由后端根据 IPv4 和/或 IPv6 子网推导网关、前缀和默认地址池：IPv4 至少 `/29`，IPv6 为 `/64` 至 `/124`；IPv6 分配模式为 SLAAC（仅 `/64`）或有状态 DHCPv6，NAT 网络存在 IPv6 时默认生成 `<nat ipv6='yes'/>`，显式关闭后不生成该属性。DNS domain 写入 `<domain name>`，上游 DNS 写入 `<dns><forwarder>`。创建外部桥接网络时要求宿主机网桥名称合法、libvirt 能识别该接口为 `bridge` 且未被其他网络占用，生成的 XML 仅包含 `<forward mode='bridge'/>` 和 `<bridge name='...'/>`，不创建 libvirt IP、DHCP、DNS 或 NAT66。所有模式都支持 autostart、创建后启动和失败回滚。编辑时网络名称不可变，仅允许未激活的持久网络；后端在原始 libvirt XML 上定点替换 forward、NAT66、bridge、IPv4/IPv6 address/prefix、DHCPv6 range、domain 和 DNS forwarder，并保留 DHCP host、MAC 等其他元素，再通过 `NetworkDefineXML` 更新持久定义。服务层在任何更新前检查现有 IPv4/IPv6 静态主机：删除对应网段、关闭 DHCPv6 或修改前缀导致主机越界时返回 `409`，必须先迁移或删除主机。编辑活跃网络返回 `409 NETWORK_ACTIVE`；路由等不支持的类型返回 `409 NETWORK_UPDATE_UNSUPPORTED`。`GET /networks/bridges` 返回尚未被网络占用的活跃宿主机网桥，供前端选择；VirtMgr 不创建或修改宿主机网桥。静态 DHCP 主机条目作为独立资源管理：对激活的持久网络使用 `virNetworkUpdate` 的 `ADD_LAST/DELETE + IP_DHCP_HOST + LIVE|CONFIG`，对未激活网络使用 `CONFIG`，因此无需停止网络即可实时增删；外部桥接网络禁用 libvirt DHCP 静态主机接口。IPv4 主机使用 MAC 且拒绝 DUID；DHCPv6 主机使用 DUID/Client ID 或主机名且拒绝 MAC。删除可按 IP、DUID、MAC 或主机名定位。CSV 导出为 `mac,id,ip,name`，导入兼容该格式和旧 `mac,ip,name`，支持 BOM、空行和有界批量校验。DHCPv6 租约可通过 `POST /networks/{name}/leases/reserve` 保留为静态主机，服务端从租约提取 DUID/Client ID 或主机名，并复用静态主机冲突校验。`GET /networks/{name}/diagnostics` 只读返回活跃状态、桥接口、宿主机 IPv4/IPv6 转发、DHCPv6/RA/DNS 服务、DNS 查询、IPv6 网关与出网探测、NAT66 防火墙规则、libvirt/dnsmasq 版本、租约数、持久/运行态漂移和检查项。NAT66 防火墙检查优先读取 nftables，失败时回退 ip6tables；服务无 `CAP_NET_ADMIN` 时返回 warning。网络状态始终来自 libvirt，不写入业务数据库；审计记录 `network.create`、`network.update`、`network.dhcp.host.add`、`network.dhcp.host.delete`、`network.dhcp.host.import`、`network.dhcp.host.reserve`、`network.start`、`network.stop`、`network.delete`。
 
 ```ts
 type VirtualNetwork = {
@@ -649,7 +650,7 @@ type PassthroughDevice = {
 
 ### 4.6 自定义元数据
 
-只保存 libvirt 不表达的少量信息，例如展示名称、备注和标签。优先写入域 XML 的自定义 metadata 命名空间，再由后端读取；SQLite 不保存可被 libvirt 推导出的状态。这样重建数据库不会丢失虚拟机业务信息。
+SQLite `vm_metadata` 只保存 libvirt 不表达的业务信息：文件夹、资源分组、标签、备注和负责人。文件夹是最多 8 层、255 字节的 `/` 分隔路径，用于层级浏览；资源分组是跨文件夹的业务归属。两者都通过虚拟机元数据 API 更新并进入 `vm.metadata.update` 审计，不写入域 XML；虚拟机删除时清理对应元数据。
 
 ## 5. API 设计
 
@@ -976,13 +977,13 @@ type PassthroughDevice = {
 
 ### 7.3 虚拟机列表
 
-顶部工具栏：搜索、状态筛选、存储池筛选、标签筛选、刷新、新建。
+顶部工具栏：搜索、状态筛选、存储池筛选、文件夹筛选、资源分组筛选、标签筛选、刷新、新建。
 
 表格列建议：
 
 | 列 | 内容 |
 |---|---|
-| 名称 | 名称 + UUID 短码 + 标签 |
+| 名称 | 名称 + UUID 短码 + 文件夹 + 资源分组 + 标签 |
 | 状态 | `StatusBadge` |
 | 规格 | vCPU / 内存 |
 | IP | 多个 IP 折叠展示，Guest Agent 不可用时显示 `-` |
@@ -1043,7 +1044,7 @@ Tab 内容：
 ### 7.7 存储、网络、物理主机
 
 - **存储**：顶部池容量卡；下方存储池表；进入池后展示卷、ISO、容量、挂载 VM。上传使用流式进度对话框。
-- **网络**：虚拟网络表与宿主机桥分区；详情展示 IPv4、DHCP 范围、bridge、lease 和关联 VM。
+- **网络**：虚拟网络表与宿主机桥分区；详情展示 IPv4/IPv6、DHCP/DHCPv6 范围、bridge、lease 和关联 VM。
 - **物理主机**：硬件摘要、CPU/内存/磁盘/网络趋势、PCI/USB 设备和 libvirt/QEMU 版本。
 - **任务中心**：运行中、成功、失败三类筛选；任务详情包含步骤、耗时、错误和关联资源。
 - **事件与审计**：事件面向运行态，审计面向“谁在何时对什么做了什么”，两者不混用。

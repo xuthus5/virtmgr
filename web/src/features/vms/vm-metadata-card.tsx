@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, LoaderCircle, Tags, TriangleAlert } from "lucide-react";
+import { CheckCircle2, FolderTree, LoaderCircle, Tags, TriangleAlert } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import type { VM } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,8 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
   const [tags, setTags] = useState(tagText(vm.metadata?.tags));
   const [note, setNote] = useState(vm.metadata?.note ?? "");
   const [owner, setOwner] = useState(vm.metadata?.owner ?? "");
+  const [folder, setFolder] = useState(vm.metadata?.folder ?? "");
+  const [resourceGroup, setResourceGroup] = useState(vm.metadata?.resourceGroup ?? "");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -34,6 +36,8 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
     setTags(tagText(vm.metadata?.tags));
     setNote(vm.metadata?.note ?? "");
     setOwner(vm.metadata?.owner ?? "");
+    setFolder(vm.metadata?.folder ?? "");
+    setResourceGroup(vm.metadata?.resourceGroup ?? "");
   }, [editing, vm.metadata]);
 
   const mutation = useMutation({
@@ -41,13 +45,15 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
       tags: tags.split(",").map((item) => item.trim()).filter(Boolean),
       note: note.trim(),
       owner: owner.trim(),
+      folder: folder.trim(),
+      resourceGroup: resourceGroup.trim(),
     }),
     onSuccess: (metadata) => {
       queryClient.setQueryData<VM>(vmQueryKey(vm.uuid), (current) => current ? { ...current, metadata } : current);
       void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
       setEditing(false);
       setError("");
-      setNotice("标签与备注已保存。");
+      setNotice("虚拟机组织信息已保存。");
     },
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : "保存虚拟机标签失败，请稍后重试。"),
   });
@@ -57,18 +63,30 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2"><Tags className="h-4 w-4 text-primary" />标签与备注</CardTitle>
-            <CardDescription>用于分组、检索和记录虚拟机负责人；元数据保存在 VirtMgr 数据库中。</CardDescription>
+            <CardTitle className="flex items-center gap-2"><FolderTree className="h-4 w-4 text-primary" />文件夹、分组与标签</CardTitle>
+            <CardDescription>用层级文件夹浏览资源，用资源分组表达业务归属；元数据保存在 VirtMgr 数据库中。</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             {vm.metadata?.updatedBy ? <Badge variant="outline">最近更新 {vm.metadata.updatedBy}</Badge> : null}
-            {!editing ? <Button size="sm" variant="outline" disabled={!canMutate} title={canMutate ? "编辑标签与备注" : disabledReason} onClick={() => { setNotice(""); setError(""); setEditing(true); }}>编辑</Button> : null}
+            {!editing ? <Button size="sm" variant="outline" disabled={!canMutate} title={canMutate ? "编辑文件夹、分组、标签与备注" : disabledReason} onClick={() => { setNotice(""); setError(""); setEditing(true); }}>编辑</Button> : null}
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {editing ? (
           <div className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="vm-metadata-folder">文件夹</Label>
+                <Input id="vm-metadata-folder" data-testid="vm-metadata-folder" value={folder} maxLength={255} placeholder="生产/数据库" onChange={(event) => setFolder(event.target.value)} />
+                <p className="text-xs text-muted-foreground">使用 / 分隔层级，最多 8 层；留空表示未归档。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vm-metadata-group">资源分组</Label>
+                <Input id="vm-metadata-group" data-testid="vm-metadata-group" value={resourceGroup} maxLength={128} placeholder="核心业务" onChange={(event) => setResourceGroup(event.target.value)} />
+                <p className="text-xs text-muted-foreground">用于跨文件夹的业务归属和筛选。</p>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="vm-metadata-tags">标签</Label>
               <Input id="vm-metadata-tags" data-testid="vm-metadata-tags" value={tags} maxLength={1024} placeholder="prod, database, 华东" onChange={(event) => setTags(event.target.value)} />
@@ -89,6 +107,8 @@ export function VMMetadataCard({ vm, canMutate, disabledReason }: {
         ) : (
           <div className="space-y-3">
             <div className="flex flex-wrap gap-1.5">
+              {vm.metadata?.folder ? <Badge variant="outline" className="font-mono"><FolderTree className="mr-1 h-3 w-3" />{vm.metadata.folder}</Badge> : null}
+              {vm.metadata?.resourceGroup ? <Badge><Tags className="mr-1 h-3 w-3" />{vm.metadata.resourceGroup}</Badge> : null}
               {vm.metadata?.tags?.length ? vm.metadata.tags.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>) : <span className="text-sm text-muted-foreground">未设置标签</span>}
             </div>
             <div className="grid gap-3 text-sm md:grid-cols-2">

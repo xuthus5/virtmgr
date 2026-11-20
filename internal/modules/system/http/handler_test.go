@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"virtmgr/internal/domain"
@@ -16,6 +17,13 @@ import (
 )
 
 type restoreRepository struct{}
+
+type tlsStatusProvider struct{ host string }
+
+func (provider *tlsStatusProvider) Status(host string) domain.TLSInfo {
+	provider.host = host
+	return domain.TLSInfo{Enabled: true, RequestHost: host, RequestHostMatched: false, Warnings: []string{"SAN mismatch"}}
+}
 
 func (restoreRepository) ExportDatabase(context.Context, string) error { return nil }
 
@@ -74,5 +82,24 @@ func TestDatabaseRestoreStatusReturnsAdminView(t *testing.T) {
 	}
 	if status.State != domain.DatabaseRestorePendingRestart || status.Filename != "backup.db" {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestSystemInfoIncludesTLSStatusForRequestHost(t *testing.T) {
+	provider := &tlsStatusProvider{}
+	router := chi.NewRouter()
+	New(systemapp.New(restoreRepository{}, nil, systemapp.WithTLSStatus(provider))).Mount(router, func(next http.Handler) http.Handler { return next })
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://[fd00::10]:8443/system/info", nil)
+	request.Host = "[fd00::10]:8443"
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if provider.host != "[fd00::10]:8443" {
+		t.Fatalf("TLS request host = %q", provider.host)
+	}
+	if !strings.Contains(recorder.Body.String(), `"tls":{"enabled":true`) || !strings.Contains(recorder.Body.String(), `"requestHostMatched":false`) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }

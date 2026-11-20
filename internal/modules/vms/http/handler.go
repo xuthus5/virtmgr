@@ -44,10 +44,12 @@ func New(service *vmsapp.Service) *Handler {
 
 func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	result, err := h.service.List(r.Context(), domain.ListQuery{
-		Query: r.URL.Query().Get("q"),
-		State: r.URL.Query().Get("state"),
-		Tag:   r.URL.Query().Get("tag"),
-		Owner: r.URL.Query().Get("owner"),
+		Query:  r.URL.Query().Get("q"),
+		State:  r.URL.Query().Get("state"),
+		Tag:    r.URL.Query().Get("tag"),
+		Owner:  r.URL.Query().Get("owner"),
+		Folder: r.URL.Query().Get("folder"),
+		Group:  r.URL.Query().Get("group"),
 	})
 	if err != nil {
 		httpx.Error(w, r, err)

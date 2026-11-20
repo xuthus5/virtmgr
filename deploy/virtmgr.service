@@ -28,8 +28,10 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
-CapabilityBoundingSet=
-AmbientCapabilities=
+# Read-only nftables/ip6tables inspection is required by network diagnostics.
+# VirtMgr does not modify firewall rules; it only verifies libvirt-managed NAT66.
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target

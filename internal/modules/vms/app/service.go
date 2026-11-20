@@ -391,6 +391,9 @@ var (
 	maxVMMetadataTagBytes     = 48
 	maxVMMetadataNoteBytes    = 2000
 	maxVMMetadataOwnerBytes   = 128
+	maxVMMetadataFolderBytes  = 255
+	maxVMMetadataFolderDepth  = 8
+	maxVMResourceGroupBytes   = 128
 	supportedFormats          = map[string]struct{}{"qcow2": {}, "raw": {}}
 )
 
@@ -424,6 +427,8 @@ func (s *Service) List(ctx context.Context, query domain.ListQuery) (domain.VMSu
 	state := strings.ToLower(strings.TrimSpace(query.State))
 	tag := strings.ToLower(strings.TrimSpace(query.Tag))
 	owner := strings.ToLower(strings.TrimSpace(query.Owner))
+	folder := strings.ToLower(normalizeFolderQuery(query.Folder))
+	group := strings.ToLower(strings.TrimSpace(query.Group))
 	for _, vm := range vms {
 		if search != "" && !vmMatchesSearch(vm, search) {
 			continue
@@ -435,6 +440,12 @@ func (s *Service) List(ctx context.Context, query domain.ListQuery) (domain.VMSu
 			continue
 		}
 		if tag != "" && !vmHasTag(vm, tag) {
+			continue
+		}
+		if folder != "" && (vm.Metadata == nil || !vmInFolder(vm.Metadata.Folder, folder)) {
+			continue
+		}
+		if group != "" && (vm.Metadata == nil || !strings.EqualFold(vm.Metadata.ResourceGroup, group)) {
 			continue
 		}
 		filtered = append(filtered, vm)
@@ -493,7 +504,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, command VMMetadataCommand)
 	if err != nil {
 		return domain.VMMetadata{}, err
 	}
-	detail := map[string]any{"tags": spec.Tags, "owner": spec.Owner}
+	detail := map[string]any{"tags": spec.Tags, "owner": spec.Owner, "folder": spec.Folder, "resourceGroup": spec.ResourceGroup}
 	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
 		return domain.VMMetadata{}, s.mutationFailure(ctx, command.Request, "vm.metadata.update", command.UUID, detail, domain.ErrForbidden)
 	}
@@ -509,7 +520,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, command VMMetadataCommand)
 	}
 	detail["name"] = vm.Name
 	item, err := s.metadata.UpsertVMMetadata(ctx, domain.VMMetadata{
-		VMUUID: command.UUID, Tags: spec.Tags, Note: spec.Note, Owner: spec.Owner,
+		VMUUID: command.UUID, Tags: spec.Tags, Note: spec.Note, Owner: spec.Owner, Folder: spec.Folder, ResourceGroup: spec.ResourceGroup,
 		UpdatedBy: command.Request.Session.User.Username, UpdatedAt: time.Now().UTC(),
 	})
 	if err != nil {
@@ -1519,11 +1530,52 @@ func normalizeVMMetadataSpec(spec domain.VMMetadataSpec) (domain.VMMetadataSpec,
 	spec.Tags = tags
 	spec.Note = strings.TrimSpace(spec.Note)
 	spec.Owner = strings.TrimSpace(spec.Owner)
+	folder, err := normalizeMetadataFolder(spec.Folder)
+	if err != nil {
+		return domain.VMMetadataSpec{}, err
+	}
+	spec.Folder = folder
+	spec.ResourceGroup = strings.TrimSpace(spec.ResourceGroup)
 	if len(spec.Note) > maxVMMetadataNoteBytes || len(spec.Owner) > maxVMMetadataOwnerBytes ||
-		strings.IndexFunc(spec.Note, isNUL) >= 0 || strings.IndexFunc(spec.Owner, unicode.IsControl) >= 0 {
+		len(spec.ResourceGroup) > maxVMResourceGroupBytes ||
+		strings.IndexFunc(spec.Note, isNUL) >= 0 || strings.IndexFunc(spec.Owner, unicode.IsControl) >= 0 ||
+		strings.IndexFunc(spec.ResourceGroup, unicode.IsControl) >= 0 || strings.Contains(spec.ResourceGroup, "/") {
 		return domain.VMMetadataSpec{}, domain.ErrInvalidInput
 	}
 	return spec, nil
+}
+
+func normalizeMetadataFolder(raw string) (string, error) {
+	folder := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	segments := strings.Split(folder, "/")
+	cleaned := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		if segment == "." || segment == ".." || strings.IndexFunc(segment, unicode.IsControl) >= 0 {
+			return "", fmt.Errorf("%w: invalid VM folder path", domain.ErrInvalidInput)
+		}
+		cleaned = append(cleaned, segment)
+	}
+	folder = strings.Join(cleaned, "/")
+	if len(folder) > maxVMMetadataFolderBytes || len(cleaned) > maxVMMetadataFolderDepth {
+		return "", fmt.Errorf("%w: VM folder path is too long or deeply nested", domain.ErrInvalidInput)
+	}
+	return folder, nil
+}
+
+func normalizeFolderQuery(raw string) string {
+	folder := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	parts := strings.FieldsFunc(folder, func(value rune) bool { return value == '/' })
+	return strings.Join(parts, "/")
+}
+
+func vmInFolder(folder, query string) bool {
+	folder = strings.ToLower(strings.Trim(folder, "/"))
+	query = strings.Trim(query, "/")
+	return query == "" || folder == query || strings.HasPrefix(folder, query+"/")
 }
 
 func isNUL(value rune) bool {
@@ -1537,7 +1589,8 @@ func vmMatchesSearch(vm domain.VM, search string) bool {
 	if vm.Metadata == nil {
 		return false
 	}
-	if strings.Contains(strings.ToLower(vm.Metadata.Owner), search) || strings.Contains(strings.ToLower(vm.Metadata.Note), search) {
+	if strings.Contains(strings.ToLower(vm.Metadata.Owner), search) || strings.Contains(strings.ToLower(vm.Metadata.Note), search) ||
+		strings.Contains(strings.ToLower(vm.Metadata.Folder), search) || strings.Contains(strings.ToLower(vm.Metadata.ResourceGroup), search) {
 		return true
 	}
 	for _, tag := range vm.Metadata.Tags {

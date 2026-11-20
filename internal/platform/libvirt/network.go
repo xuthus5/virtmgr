@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -15,8 +16,11 @@ import (
 
 type networkXML struct {
 	Forward struct {
-		Mode string `xml:"mode,attr"`
+		Mode string         `xml:"mode,attr"`
+		NAT  *networkNATXML `xml:"nat"`
 	} `xml:"forward"`
+	Domain *networkDomainXML `xml:"domain"`
+	DNS    *networkDNSXML    `xml:"dns"`
 	Bridge struct {
 		Name string `xml:"name,attr"`
 	} `xml:"bridge"`
@@ -38,21 +42,41 @@ type networkDHCPXML struct {
 
 type networkDHCPHostXML struct {
 	XMLName xml.Name `xml:"host"`
-	MAC     string   `xml:"mac,attr"`
+	MAC     string   `xml:"mac,attr,omitempty"`
+	ID      string   `xml:"id,attr,omitempty"`
 	IP      string   `xml:"ip,attr"`
 	Name    string   `xml:"name,attr,omitempty"`
 }
 
 type networkDefinitionXML struct {
-	XMLName xml.Name                `xml:"network"`
-	Name    string                  `xml:"name"`
-	Forward *networkForwardXML      `xml:"forward,omitempty"`
-	Bridge  *networkBridgeXML       `xml:"bridge,omitempty"`
-	IP      *networkIPDefinitionXML `xml:"ip,omitempty"`
+	XMLName xml.Name                 `xml:"network"`
+	Name    string                   `xml:"name"`
+	Forward *networkForwardXML       `xml:"forward,omitempty"`
+	Domain  *networkDomainXML        `xml:"domain,omitempty"`
+	DNS     *networkDNSXML           `xml:"dns,omitempty"`
+	Bridge  *networkBridgeXML        `xml:"bridge,omitempty"`
+	IPs     []networkIPDefinitionXML `xml:"ip,omitempty"`
 }
 
 type networkForwardXML struct {
-	Mode string `xml:"mode,attr"`
+	Mode string         `xml:"mode,attr"`
+	NAT  *networkNATXML `xml:"nat,omitempty"`
+}
+
+type networkNATXML struct {
+	IPv6 string `xml:"ipv6,attr,omitempty"`
+}
+
+type networkDomainXML struct {
+	Name string `xml:"name,attr"`
+}
+
+type networkDNSXML struct {
+	Forwarders []networkDNSForwarderXML `xml:"forwarder"`
+}
+
+type networkDNSForwarderXML struct {
+	Addr string `xml:"addr,attr"`
 }
 
 type networkBridgeXML struct {
@@ -64,6 +88,7 @@ type interfaceXML struct {
 }
 
 type networkIPDefinitionXML struct {
+	Family  string                    `xml:"family,attr,omitempty"`
 	Address string                    `xml:"address,attr"`
 	Prefix  int                       `xml:"prefix,attr"`
 	DHCP    *networkDHCPDefinitionXML `xml:"dhcp,omitempty"`
@@ -247,6 +272,7 @@ func (c *Client) CreateNetwork(ctx context.Context, definition domain.VirtualNet
 		rollback()
 		return domain.VirtualNetwork{}, err
 	}
+	waitForNetworkIPv6Ready(ctx, result)
 	return result, nil
 }
 
@@ -322,6 +348,9 @@ func (c *Client) PerformNetworkAction(ctx context.Context, name string, action d
 		if err := network.Create(); err != nil {
 			return fmt.Errorf("start network: %w", err)
 		}
+		if record, recordErr := networkFromLibvirt(network); recordErr == nil {
+			waitForNetworkIPv6Ready(ctx, record)
+		}
 	case domain.VirtualNetworkActionStop:
 		if !active {
 			return domain.ErrConflict
@@ -367,9 +396,10 @@ func networkXMLFromDefinition(definition domain.VirtualNetworkDefinition) (strin
 	switch definition.Mode {
 	case "nat":
 		item.Forward = &networkForwardXML{Mode: "nat"}
-		item.IP = &networkIPDefinitionXML{Address: definition.IPv4Address, Prefix: definition.Prefix}
+		if definition.IPv6Address != "" && definition.NATIPv6 {
+			item.Forward.NAT = &networkNATXML{IPv6: "yes"}
+		}
 	case "isolated":
-		item.IP = &networkIPDefinitionXML{Address: definition.IPv4Address, Prefix: definition.Prefix}
 	case "bridge":
 		if definition.Bridge == "" {
 			return "", fmt.Errorf("%w: host bridge name is required", domain.ErrInvalidInput)
@@ -379,8 +409,28 @@ func networkXMLFromDefinition(definition domain.VirtualNetworkDefinition) (strin
 	default:
 		return "", fmt.Errorf("%w: unsupported network mode", domain.ErrInvalidInput)
 	}
-	if item.IP != nil && definition.DHCPStart != "" && definition.DHCPEnd != "" {
-		item.IP.DHCP = &networkDHCPDefinitionXML{Range: networkRangeXML{Start: definition.DHCPStart, End: definition.DHCPEnd}}
+	if definition.Mode != "bridge" && definition.IPv4Address != "" {
+		ipv4 := networkIPDefinitionXML{Address: definition.IPv4Address, Prefix: definition.Prefix}
+		if definition.DHCPStart != "" && definition.DHCPEnd != "" {
+			ipv4.DHCP = &networkDHCPDefinitionXML{Range: networkRangeXML{Start: definition.DHCPStart, End: definition.DHCPEnd}}
+		}
+		item.IPs = append(item.IPs, ipv4)
+	}
+	if definition.Mode != "bridge" && definition.IPv6Address != "" {
+		ipv6 := networkIPDefinitionXML{Family: "ipv6", Address: definition.IPv6Address, Prefix: definition.IPv6Prefix}
+		if definition.IPv6Mode == "dhcpv6" && definition.IPv6DHCPStart != "" && definition.IPv6DHCPEnd != "" {
+			ipv6.DHCP = &networkDHCPDefinitionXML{Range: networkRangeXML{Start: definition.IPv6DHCPStart, End: definition.IPv6DHCPEnd}}
+		}
+		item.IPs = append(item.IPs, ipv6)
+	}
+	if definition.DNSDomain != "" {
+		item.Domain = &networkDomainXML{Name: definition.DNSDomain}
+	}
+	if len(definition.DNSServers) > 0 {
+		item.DNS = &networkDNSXML{Forwarders: make([]networkDNSForwarderXML, 0, len(definition.DNSServers))}
+		for _, server := range definition.DNSServers {
+			item.DNS.Forwarders = append(item.DNS.Forwarders, networkDNSForwarderXML{Addr: server})
+		}
 	}
 	body, err := xml.Marshal(item)
 	if err != nil {
@@ -419,23 +469,44 @@ func networkFromLibvirt(network *libvirt.Network) (domain.VirtualNetwork, error)
 		address := domain.NetworkAddress{
 			Family: family, Address: item.Address, Prefix: prefix,
 		}
+		if family == "ipv6" {
+			address.IPv6Mode = "slaac"
+		}
 		if item.DHCP != nil {
 			address.DHCPEnabled = true
+			if family == "ipv6" {
+				address.IPv6Mode = "dhcpv6"
+			}
 			if item.DHCP.Range != nil {
 				address.DHCPStart = item.DHCP.Range.Start
 				address.DHCPEnd = item.DHCP.Range.End
 			}
 			for _, host := range item.DHCP.Hosts {
-				address.Hosts = append(address.Hosts, domain.NetworkDHCPHost{MAC: host.MAC, IP: host.IP, Name: host.Name})
+				address.Hosts = append(address.Hosts, domain.NetworkDHCPHost{MAC: host.MAC, ID: host.ID, IP: host.IP, Name: host.Name})
 			}
 		}
 		addresses = append(addresses, address)
 	}
-	return domain.VirtualNetwork{
+	natIPv6 := parsed.Forward.Mode == "nat" && parsed.Forward.NAT != nil && parsed.Forward.NAT.IPv6 == "yes"
+	dnsServers := make([]string, 0)
+	if parsed.DNS != nil {
+		for _, forwarder := range parsed.DNS.Forwarders {
+			if strings.TrimSpace(forwarder.Addr) != "" {
+				dnsServers = append(dnsServers, forwarder.Addr)
+			}
+		}
+	}
+	dnsDomain := ""
+	if parsed.Domain != nil {
+		dnsDomain = parsed.Domain.Name
+	}
+	result := domain.VirtualNetwork{
 		Name: name, UUID: uuid, Bridge: parsed.Bridge.Name, Active: active,
 		Persistent: persistent, Autostart: autostart, ForwardMode: parsed.Forward.Mode,
-		Addresses: addresses,
-	}, nil
+		NATIPv6: natIPv6, DNSDomain: dnsDomain, DNSServers: dnsServers, Addresses: addresses,
+	}
+	result.Warnings = networkWarnings(result)
+	return result, nil
 }
 
 func prefixFromNetmask(mask string) int {

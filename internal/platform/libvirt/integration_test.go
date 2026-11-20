@@ -251,6 +251,326 @@ func TestRealLibvirtActiveNetworkDHCPHost(t *testing.T) {
 	}
 }
 
+func TestRealLibvirtIPv6DualStackNetwork(t *testing.T) {
+	if os.Getenv("VIRTMGR_TEST_REAL_LIBVIRT") != "1" {
+		t.Skip("set VIRTMGR_TEST_REAL_LIBVIRT=1 to run against qemu:///system")
+	}
+	client, err := New("qemu:///system", "integration-test")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	ipv4 := fmt.Sprintf("10.253.%d", suffix%250+1)
+	ipv6 := fmt.Sprintf("fd00:253:%x", uint64(suffix)&0xffff)
+	name := fmt.Sprintf("virtmgr-it-ipv6-%d", suffix)
+	definition := domain.VirtualNetworkDefinition{
+		Name: name, Mode: "nat", IPv4Address: ipv4 + ".1", Prefix: 24,
+		DHCPStart: ipv4 + ".2", DHCPEnd: ipv4 + ".254",
+		IPv6Address: ipv6 + "::1", IPv6Prefix: 64, IPv6Mode: "dhcpv6",
+		IPv6DHCPStart: ipv6 + "::2", IPv6DHCPEnd: ipv6 + "::ff", NATIPv6: true,
+		DNSDomain: "it.example.com", DNSServers: []string{"1.1.1.1", "2606:4700:4700::1111"},
+		Start: true,
+	}
+	created, err := client.CreateNetwork(ctx, definition)
+	if err != nil {
+		t.Fatalf("CreateNetwork() error = %v", err)
+	}
+	defer func() {
+		_ = client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop)
+		_ = client.DeleteNetwork(ctx, created.Name)
+	}()
+	if !created.Active || created.ForwardMode != "nat" || !created.NATIPv6 || created.DNSDomain != "it.example.com" || len(created.DNSServers) != 2 {
+		t.Fatalf("created IPv6 network = %+v", created)
+	}
+	if len(created.Addresses) != 2 {
+		t.Fatalf("created IPv6 network addresses = %+v", created.Addresses)
+	}
+	var ipv6Address *domain.NetworkAddress
+	for index := range created.Addresses {
+		if created.Addresses[index].Family == "ipv6" {
+			ipv6Address = &created.Addresses[index]
+		}
+	}
+	if ipv6Address == nil || ipv6Address.IPv6Mode != "dhcpv6" || ipv6Address.DHCPStart == "" || ipv6Address.DHCPEnd == "" {
+		t.Fatalf("created DHCPv6 address = %+v", ipv6Address)
+	}
+
+	host := domain.NetworkDHCPHost{ID: "00:03:00:01:52:54:00:ab:cd:ef", IP: ipv6 + "::50", Name: "it-ipv6-host"}
+	updated, err := client.AddNetworkDHCPHost(ctx, created.Name, host)
+	if err != nil {
+		t.Fatalf("AddNetworkDHCPHost() error = %v", err)
+	}
+	if !containsDHCPHost(staticHostsOf(updated), host) {
+		t.Fatalf("IPv6 static host not found: %+v", updated.Addresses)
+	}
+	secondHost := domain.NetworkDHCPHost{ID: "00:03:00:01:52:54:00:ab:cd:f0", IP: ipv6 + "::51", Name: "it-ipv6-host-2"}
+	updated, err = client.AddNetworkDHCPHost(ctx, created.Name, secondHost)
+	if err != nil {
+		t.Fatalf("AddNetworkDHCPHost(second) error = %v", err)
+	}
+	if !containsDHCPHost(staticHostsOf(updated), host) || !containsDHCPHost(staticHostsOf(updated), secondHost) {
+		t.Fatalf("multiple IPv6 static hosts not found: %+v", updated.Addresses)
+	}
+	if err := client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop); err != nil {
+		t.Fatalf("stop network before reservation restart: %v", err)
+	}
+	if err := client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStart); err != nil {
+		t.Fatalf("restart network with reservations: %v", err)
+	}
+	networks, err := client.ListNetworks(ctx)
+	if err != nil {
+		t.Fatalf("ListNetworks() after restart error = %v", err)
+	}
+	var restarted *domain.VirtualNetwork
+	for index := range networks {
+		if networks[index].Name == created.Name {
+			restarted = &networks[index]
+			break
+		}
+	}
+	if restarted == nil || !containsDHCPHost(staticHostsOf(*restarted), host) || !containsDHCPHost(staticHostsOf(*restarted), secondHost) {
+		t.Fatalf("IPv6 reservations did not survive restart: %+v", restarted)
+	}
+	updated, err = client.DeleteNetworkDHCPHost(ctx, created.Name, host)
+	if err != nil {
+		t.Fatalf("DeleteNetworkDHCPHost() error = %v", err)
+	}
+	if containsDHCPHost(staticHostsOf(updated), host) {
+		t.Fatalf("IPv6 static host still present: %+v", updated.Addresses)
+	}
+	updated, err = client.DeleteNetworkDHCPHost(ctx, created.Name, secondHost)
+	if err != nil {
+		t.Fatalf("DeleteNetworkDHCPHost(second) error = %v", err)
+	}
+	if containsDHCPHost(staticHostsOf(updated), secondHost) {
+		t.Fatalf("second IPv6 static host still present: %+v", updated.Addresses)
+	}
+
+	diagnostics, err := client.NetworkDiagnostics(ctx, created.Name)
+	if err != nil {
+		t.Fatalf("NetworkDiagnostics() error = %v", err)
+	}
+	if !diagnostics.Active || !diagnostics.BridgeReady || !diagnostics.NATIPv6 || !diagnostics.DHCPv6Range || len(diagnostics.Checks) == 0 {
+		t.Fatalf("IPv6 diagnostics = %+v", diagnostics)
+	}
+	if diagnostics.RuntimeDrift || len(diagnostics.DriftDetails) != 0 {
+		t.Fatalf("IPv6 diagnostics unexpectedly report runtime drift: %+v", diagnostics)
+	}
+	if diagnostics.LibvirtVersion == "" || diagnostics.DnsmasqVersion == "" {
+		t.Fatalf("IPv6 diagnostics did not record runtime versions: %+v", diagnostics)
+	}
+	if !diagnostics.DHCPv6Service || !diagnostics.RAService || !diagnostics.DNSService || !diagnostics.BridgeReady {
+		t.Fatalf("IPv6 services were not detected: %+v", diagnostics)
+	}
+	if os.Geteuid() == 0 {
+		if _, err := exec.LookPath("nft"); err == nil {
+			if !diagnostics.NAT66Firewall || diagnostics.FirewallBackend != "nftables" {
+				t.Fatalf("NAT66 nftables rule was not detected: %+v", diagnostics)
+			}
+		} else if _, err := exec.LookPath("ip6tables"); err == nil {
+			if !diagnostics.NAT66Firewall || diagnostics.FirewallBackend != "ip6tables" {
+				t.Fatalf("NAT66 ip6tables rule was not detected: %+v", diagnostics)
+			}
+		}
+	}
+}
+
+func TestRealLibvirtIPv6OnlySLAACNetwork(t *testing.T) {
+	if os.Getenv("VIRTMGR_TEST_REAL_LIBVIRT") != "1" {
+		t.Skip("set VIRTMGR_TEST_REAL_LIBVIRT=1 to run against qemu:///system")
+	}
+	client, err := New("qemu:///system", "integration-test")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	ipv6 := fmt.Sprintf("fd00:254:%x", uint64(suffix)&0xffff)
+	name := fmt.Sprintf("virtmgr-it-slaac-%d", suffix)
+	created, err := client.CreateNetwork(ctx, domain.VirtualNetworkDefinition{
+		Name: name, Mode: "isolated", IPv6Address: ipv6 + "::1", IPv6Prefix: 64, IPv6Mode: "slaac", Start: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateNetwork() error = %v", err)
+	}
+	defer func() {
+		_ = client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop)
+		_ = client.DeleteNetwork(ctx, created.Name)
+	}()
+	if !created.Active || len(created.Addresses) != 1 || created.Addresses[0].Family != "ipv6" || created.Addresses[0].IPv6Mode != "slaac" {
+		t.Fatalf("created SLAAC network = %+v", created)
+	}
+	if created.Addresses[0].DHCPStart != "" || created.Addresses[0].DHCPEnd != "" {
+		t.Fatalf("SLAAC network unexpectedly has DHCPv6 range: %+v", created.Addresses[0])
+	}
+	diagnostics, err := client.NetworkDiagnostics(ctx, created.Name)
+	if err != nil {
+		t.Fatalf("NetworkDiagnostics() error = %v", err)
+	}
+	if !diagnostics.Active || !diagnostics.BridgeReady || diagnostics.DHCPv6Range {
+		t.Fatalf("SLAAC diagnostics = %+v", diagnostics)
+	}
+}
+
+func TestRealLibvirtIPv6DHCPv6NAT66DataPlane(t *testing.T) {
+	if os.Getenv("VIRTMGR_TEST_REAL_LIBVIRT") != "1" {
+		t.Skip("set VIRTMGR_TEST_REAL_LIBVIRT=1 to run against qemu:///system")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("root is required to create a network namespace and veth pair")
+	}
+	if _, err := exec.LookPath("dhcpcd"); err != nil {
+		t.Skip("dhcpcd is required for the IPv6 data-plane test")
+	}
+	client, err := New("qemu:///system", "integration-test")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	ipv4 := fmt.Sprintf("10.252.%d", suffix%250+1)
+	ipv6 := fmt.Sprintf("fd00:262:%x", uint64(suffix)&0xffff)
+	name := fmt.Sprintf("virtmgr-it-nat66-%d", suffix)
+	created, err := client.CreateNetwork(ctx, domain.VirtualNetworkDefinition{
+		Name: name, Mode: "nat", IPv4Address: ipv4 + ".1", Prefix: 24,
+		DHCPStart: ipv4 + ".2", DHCPEnd: ipv4 + ".254",
+		IPv6Address: ipv6 + "::1", IPv6Prefix: 64, IPv6Mode: "dhcpv6",
+		IPv6DHCPStart: ipv6 + "::2", IPv6DHCPEnd: ipv6 + "::ff", NATIPv6: true,
+		Start: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateNetwork() error = %v", err)
+	}
+	defer func() {
+		_ = client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop)
+		_ = client.DeleteNetwork(ctx, created.Name)
+	}()
+	if created.Bridge == "" {
+		t.Fatalf("created network has no bridge: %+v", created)
+	}
+
+	tag := fmt.Sprintf("%06d", suffix%1_000_000)
+	namespace := "vmns" + tag
+	hostVeth := "vmh" + tag
+	namespaceVeth := "vmn" + tag
+	cleanup := func() {
+		_ = exec.Command("ip", "netns", "del", namespace).Run()
+		_ = exec.Command("ip", "link", "del", hostVeth).Run()
+	}
+	defer cleanup()
+	runNetworkCommand(t, "ip", "netns", "add", namespace)
+	runNetworkCommand(t, "ip", "link", "add", hostVeth, "type", "veth", "peer", "name", namespaceVeth)
+	runNetworkCommand(t, "ip", "link", "set", hostVeth, "master", created.Bridge)
+	runNetworkCommand(t, "ip", "link", "set", hostVeth, "up")
+	runNetworkCommand(t, "ip", "link", "set", namespaceVeth, "netns", namespace)
+	runNetworkCommand(t, "ip", "-n", namespace, "link", "set", namespaceVeth, "up")
+	runNetworkCommand(t, "ip", "-n", namespace, "link", "set", "lo", "up")
+	runNetworkCommand(t, "ip", "netns", "exec", namespace, "dhcpcd", "-6", "-1", "-t", "20", namespaceVeth)
+
+	addresses := runNetworkCommand(t, "ip", "-n", namespace, "-6", "-o", "addr", "show", "dev", namespaceVeth)
+	if !strings.Contains(addresses, ipv6+"::") {
+		t.Fatalf("namespace did not obtain an address from %s/64: %s", ipv6, addresses)
+	}
+	runNetworkCommand(t, "ip", "netns", "exec", namespace, "ping", "-6", "-c", "1", "-W", "3", ipv6+"::1")
+	if hostIPv6InternetAvailable() {
+		runNetworkCommand(t, "ip", "netns", "exec", namespace, "ping", "-6", "-c", "1", "-W", "5", "2606:4700:4700::1111")
+	}
+
+	leases, err := client.ListDHCPLeases(ctx, created.Name)
+	if err != nil {
+		t.Fatalf("ListDHCPLeases() error = %v", err)
+	}
+	foundIPv6Lease := false
+	for _, lease := range leases {
+		if lease.Family == "ipv6" && strings.HasPrefix(lease.IPAddress, ipv6+"::") {
+			foundIPv6Lease = true
+		}
+	}
+	if !foundIPv6Lease {
+		t.Fatalf("IPv6 lease not found: %+v", leases)
+	}
+}
+
+func TestRealLibvirtIPv6SLAACDataPlane(t *testing.T) {
+	if os.Getenv("VIRTMGR_TEST_REAL_LIBVIRT") != "1" {
+		t.Skip("set VIRTMGR_TEST_REAL_LIBVIRT=1 to run against qemu:///system")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("root is required to create a network namespace and veth pair")
+	}
+	if _, err := exec.LookPath("dhcpcd"); err != nil {
+		t.Skip("dhcpcd is required for the IPv6 data-plane test")
+	}
+	client, err := New("qemu:///system", "integration-test")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	ipv6 := fmt.Sprintf("fd00:263:%x", uint64(suffix)&0xffff)
+	name := fmt.Sprintf("virtmgr-it-slaac-plane-%d", suffix)
+	created, err := client.CreateNetwork(ctx, domain.VirtualNetworkDefinition{
+		Name: name, Mode: "isolated", IPv6Address: ipv6 + "::1", IPv6Prefix: 64, IPv6Mode: "slaac", Start: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateNetwork() error = %v", err)
+	}
+	defer func() {
+		_ = client.PerformNetworkAction(ctx, created.Name, domain.VirtualNetworkActionStop)
+		_ = client.DeleteNetwork(ctx, created.Name)
+	}()
+
+	tag := fmt.Sprintf("%06d", suffix%1_000_000)
+	namespace := "vmns" + tag
+	hostVeth := "vmh" + tag
+	namespaceVeth := "vmn" + tag
+	defer func() {
+		_ = exec.Command("ip", "netns", "del", namespace).Run()
+		_ = exec.Command("ip", "link", "del", hostVeth).Run()
+	}()
+	runNetworkCommand(t, "ip", "netns", "add", namespace)
+	runNetworkCommand(t, "ip", "link", "add", hostVeth, "type", "veth", "peer", "name", namespaceVeth)
+	runNetworkCommand(t, "ip", "link", "set", hostVeth, "master", created.Bridge)
+	runNetworkCommand(t, "ip", "link", "set", hostVeth, "up")
+	runNetworkCommand(t, "ip", "link", "set", namespaceVeth, "netns", namespace)
+	runNetworkCommand(t, "ip", "-n", namespace, "link", "set", namespaceVeth, "up")
+	runNetworkCommand(t, "ip", "-n", namespace, "link", "set", "lo", "up")
+	runNetworkCommand(t, "ip", "netns", "exec", namespace, "dhcpcd", "-6", "-1", "-t", "20", namespaceVeth)
+	addresses := runNetworkCommand(t, "ip", "-n", namespace, "-6", "-o", "addr", "show", "dev", namespaceVeth)
+	if !strings.Contains(addresses, ipv6+":") || !strings.Contains(addresses, "/64") {
+		t.Fatalf("namespace did not obtain a SLAAC address from %s/64: %s", ipv6, addresses)
+	}
+	runNetworkCommand(t, "ip", "netns", "exec", namespace, "ping", "-6", "-c", "1", "-W", "3", ipv6+"::1")
+}
+
+func runNetworkCommand(t *testing.T, name string, args ...string) string {
+	t.Helper()
+	command := exec.Command(name, args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s failed: %v\n%s", name, strings.Join(args, " "), err, output)
+	}
+	return string(output)
+}
+
+func hostIPv6InternetAvailable() bool {
+	command := exec.Command("ping", "-6", "-c", "1", "-W", "2", "2606:4700:4700::1111")
+	return command.Run() == nil
+}
+
+func staticHostsOf(network domain.VirtualNetwork) []domain.NetworkDHCPHost {
+	hosts := make([]domain.NetworkDHCPHost, 0)
+	for _, address := range network.Addresses {
+		hosts = append(hosts, address.Hosts...)
+	}
+	return hosts
+}
+
 func containsDHCPHost(hosts []domain.NetworkDHCPHost, want domain.NetworkDHCPHost) bool {
 	for _, host := range hosts {
 		if strings.EqualFold(host.MAC, want.MAC) && host.IP == want.IP && host.Name == want.Name {

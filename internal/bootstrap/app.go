@@ -65,6 +65,7 @@ import (
 	"virtmgr/internal/platform/runtimeconfig"
 	"virtmgr/internal/platform/sqlite"
 	tasksplatform "virtmgr/internal/platform/tasks"
+	"virtmgr/internal/platform/tlsreload"
 	"virtmgr/internal/version"
 	"virtmgr/web"
 
@@ -241,7 +242,20 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	auditHistoryHandler := audithistoryhttp.New(audithistoryapp.New(store, audithistoryapp.WithAuditRecorder(store)))
 	usersHandler := usershttp.New(usersapp.New(store, store, cfg.ReadOnly, usersapp.WithReadOnlyMode(mode)))
 	settingsHandler := settingshttp.New(settingsapp.New(mode, store, settingsapp.WithAuditRetention(auditRetention)))
-	systemHandler := systemhttp.New(systemapp.New(store, store, systemapp.WithDatabasePath(cfg.DatabasePath)))
+	var tlsManager *tlsreload.Manager
+	if cfg.TLSEnabled() {
+		tlsManager, err = tlsreload.New(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			_ = backend.Close()
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	systemOptions := []systemapp.Option{systemapp.WithDatabasePath(cfg.DatabasePath)}
+	if tlsManager != nil {
+		systemOptions = append(systemOptions, systemapp.WithTLSStatus(tlsManager))
+	}
+	systemHandler := systemhttp.New(systemapp.New(store, store, systemOptions...))
 	handler := buildRouter(routerDependencies{
 		logger:           logger,
 		cfg:              cfg,
@@ -277,6 +291,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       90 * time.Second,
+	}
+	if tlsManager != nil {
+		server.TLSConfig = tlsManager.TLSConfig()
 	}
 	return &App{config: cfg, logger: logger, handler: handler, server: server, backend: backend, db: db, store: store, scheduler: snapshotPolicyService, backupScheduler: backupService, configVersions: configVersionService, monitoring: monitoringService, guestAgent: guestAgentService, auditRetention: auditRetention, eventBus: eventBus}, nil
 }
@@ -314,7 +331,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("virtmgr_started", "version", version.Version, "listen", a.config.Listen, "scheme", scheme, "demo", a.config.DemoMode, "read_only", a.config.ReadOnly)
 	var err error
 	if a.config.TLSEnabled() {
-		err = a.server.ListenAndServeTLS(a.config.TLSCertFile, a.config.TLSKeyFile)
+		err = a.server.ListenAndServeTLS("", "")
 	} else {
 		err = a.server.ListenAndServe()
 	}

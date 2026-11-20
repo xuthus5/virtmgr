@@ -10,6 +10,24 @@ type BuildInfo struct {
 
 type SystemInfo struct {
 	Build BuildInfo `json:"build"`
+	TLS   TLSInfo   `json:"tls"`
+}
+
+type TLSInfo struct {
+	Enabled            bool       `json:"enabled"`
+	Subject            string     `json:"subject,omitempty"`
+	Issuer             string     `json:"issuer,omitempty"`
+	NotBefore          *time.Time `json:"notBefore,omitempty"`
+	NotAfter           *time.Time `json:"notAfter,omitempty"`
+	DNSNames           []string   `json:"dnsNames,omitempty"`
+	IPAddresses        []string   `json:"ipAddresses,omitempty"`
+	RequestHost        string     `json:"requestHost,omitempty"`
+	RequestHostMatched bool       `json:"requestHostMatched"`
+	ExpiresInDays      int        `json:"expiresInDays,omitempty"`
+	KeyFileMode        string     `json:"keyFileMode,omitempty"`
+	LastReloadedAt     *time.Time `json:"lastReloadedAt,omitempty"`
+	ReloadError        string     `json:"reloadError,omitempty"`
+	Warnings           []string   `json:"warnings,omitempty"`
 }
 
 const (

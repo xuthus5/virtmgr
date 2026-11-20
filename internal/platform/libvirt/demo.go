@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1644,6 +1645,73 @@ func (d *DemoBackend) ListDHCPLeases(_ context.Context, networkName string) ([]d
 	return append([]domain.DHCPLease{}, d.leases[networkName]...), nil
 }
 
+func (d *DemoBackend) NetworkDiagnostics(_ context.Context, networkName string) (domain.NetworkDiagnostics, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	network, ok := d.networks[networkName]
+	if !ok {
+		return domain.NetworkDiagnostics{}, domain.ErrNotFound
+	}
+	ipv4Forward := readForwarding("/proc/sys/net/ipv4/ip_forward")
+	ipv6Forward := readForwarding("/proc/sys/net/ipv6/conf/all/forwarding")
+	result := domain.NetworkDiagnostics{
+		Network: network.Name, CheckedAt: time.Now().UTC(), Active: network.Active, Bridge: network.Bridge,
+		BridgeReady: network.Bridge != "", IPv4Forward: ipv4Forward, IPv6Forward: ipv6Forward,
+		IPv6Configured: networkHasIPv6(network),
+		NATIPv6:        network.NATIPv6, NAT66Firewall: network.NATIPv6, FirewallBackend: "nftables",
+		DHCPv6Service: network.Active && networkHasIPv6Mode(network, "dhcpv6"), RAService: network.Active && networkHasIPv6(network),
+		DNSService: network.Active, DNSResolution: network.Active, GatewayReachable: network.Active && networkHasIPv6(network),
+		OutboundReachable: network.Active && network.ForwardMode == "nat", LibvirtVersion: "12.0.0", DnsmasqVersion: "Dnsmasq 2.92-demo",
+		LeaseCount: len(d.leases[networkName]),
+	}
+	result.Checks = append(result.Checks, checkNetworkActive(network))
+	result.Checks = append(result.Checks, checkNetworkCompatibility(result.LibvirtVersion, result.DnsmasqVersion))
+	result.Checks = append(result.Checks, domain.NetworkCheck{ID: "bridge", Status: "ok", Title: "桥接口", Detail: "演示桥接口 " + network.Bridge + " 已就绪。"})
+	if network.ForwardMode == "bridge" {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "forwarding", Status: "ok", Title: "转发策略", Detail: "外部桥接网络使用上游转发策略。"})
+	} else {
+		result.Checks = append(result.Checks, checkNetworkForwarding(network, ipv4Forward, ipv6Forward))
+	}
+	result.Checks = append(result.Checks, checkNetworkIPv6DHCP(network, &result))
+	if networkHasIPv6Mode(network, "dhcpv6") {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "dhcpv6-service", Status: "ok", Title: "DHCPv6 服务", Detail: "演示 dnsmasq 进程正在提供 DHCPv6。"})
+	}
+	if networkHasIPv6(network) {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "ra", Status: "ok", Title: "RA 服务", Detail: "演示 dnsmasq 进程正在发布 RA。"})
+	}
+	if network.NATIPv6 {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "nat66", Status: "ok", Title: "IPv6 NAT 转发", Detail: "演示 NAT66 已启用。"})
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "nat66-firewall", Status: "ok", Title: "NAT66 防火墙规则", Detail: "演示 nftables 已包含 IPv6 masquerade 规则。"})
+	}
+	if networkHasIPv6(network) {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "gateway", Status: "ok", Title: "IPv6 网关", Detail: "演示 IPv6 网关可达。"})
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "outbound", Status: "ok", Title: "IPv6 出网", Detail: "演示 IPv6 出网可达；NAT66 仅承诺客户机出站访问。"})
+	}
+	result.Checks = append(result.Checks, domain.NetworkCheck{ID: "drift", Status: "ok", Title: "运行态配置漂移", Detail: "持久配置与 libvirt 运行态一致。"})
+	for _, warning := range network.Warnings {
+		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "warning", Status: "warning", Title: "配置警告", Detail: warning})
+	}
+	return result, nil
+}
+
+func networkHasIPv6(network domain.VirtualNetwork) bool {
+	for _, address := range network.Addresses {
+		if address.Family == "ipv6" {
+			return true
+		}
+	}
+	return false
+}
+
+func networkHasIPv6Mode(network domain.VirtualNetwork, mode string) bool {
+	for _, address := range network.Addresses {
+		if address.Family == "ipv6" && address.IPv6Mode == mode {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *DemoBackend) AddNetworkDHCPHost(_ context.Context, name string, host domain.NetworkDHCPHost) (domain.VirtualNetwork, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1655,7 +1723,7 @@ func (d *DemoBackend) AddNetworkDHCPHost(_ context.Context, name string, host do
 		return domain.VirtualNetwork{}, domain.ErrNetworkUnsupported
 	}
 	d.networks[name] = network
-	d.publish("network.dhcp.host.added", "info", "network", name, name, "虚拟网络 "+name+" 已添加静态主机 "+host.MAC)
+	d.publish("network.dhcp.host.added", "info", "network", name, name, "虚拟网络 "+name+" 已添加静态主机 "+demoDHCPHostLabel(host))
 	return cloneNetwork(network), nil
 }
 
@@ -1670,7 +1738,7 @@ func (d *DemoBackend) DeleteNetworkDHCPHost(_ context.Context, name string, host
 		return domain.VirtualNetwork{}, domain.ErrNetworkUnsupported
 	}
 	d.networks[name] = network
-	d.publish("network.dhcp.host.deleted", "warning", "network", name, name, "虚拟网络 "+name+" 已删除静态主机 "+host.MAC)
+	d.publish("network.dhcp.host.deleted", "warning", "network", name, name, "虚拟网络 "+name+" 已删除静态主机 "+demoDHCPHostLabel(host))
 	return cloneNetwork(network), nil
 }
 
@@ -1694,10 +1762,21 @@ func (d *DemoBackend) CreateNetwork(_ context.Context, definition domain.Virtual
 	network := domain.VirtualNetwork{
 		Name: definition.Name, UUID: uuid, Bridge: d.nextDemoBridgeLocked(), Active: definition.Start,
 		Persistent: true, Autostart: definition.Autostart, ForwardMode: definition.Mode,
-		Addresses: []domain.NetworkAddress{{
+		NATIPv6: definition.NATIPv6, DNSDomain: definition.DNSDomain, DNSServers: append([]string(nil), definition.DNSServers...),
+		Addresses: []domain.NetworkAddress{},
+	}
+	if definition.IPv4Address != "" {
+		network.Addresses = append(network.Addresses, domain.NetworkAddress{
 			Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix, DHCPEnabled: definition.DHCPStart != "",
 			DHCPStart: definition.DHCPStart, DHCPEnd: definition.DHCPEnd,
-		}},
+		})
+	}
+	if definition.IPv6Address != "" {
+		network.Addresses = append(network.Addresses, domain.NetworkAddress{
+			Family: "ipv6", Address: definition.IPv6Address, Prefix: definition.IPv6Prefix, IPv6Mode: definition.IPv6Mode,
+			DHCPEnabled: definition.IPv6Mode == "dhcpv6" && definition.IPv6DHCPStart != "",
+			DHCPStart:   definition.IPv6DHCPStart, DHCPEnd: definition.IPv6DHCPEnd,
+		})
 	}
 	if definition.Mode == "bridge" {
 		network.Bridge = definition.Bridge
@@ -1731,6 +1810,9 @@ func (d *DemoBackend) UpdateNetwork(_ context.Context, definition domain.Virtual
 	}
 	network.Autostart = definition.Autostart
 	network.ForwardMode = definition.Mode
+	network.NATIPv6 = definition.NATIPv6
+	network.DNSDomain = definition.DNSDomain
+	network.DNSServers = append([]string(nil), definition.DNSServers...)
 	if definition.Mode == "bridge" {
 		network.Bridge = definition.Bridge
 		network.Addresses = []domain.NetworkAddress{}
@@ -1738,23 +1820,56 @@ func (d *DemoBackend) UpdateNetwork(_ context.Context, definition domain.Virtual
 		d.publish("network.updated", "info", "network", network.Name, network.Name, "虚拟网络 "+network.Name+" 配置已更新")
 		return cloneNetwork(network), nil
 	}
-	network.Bridge = d.nextDemoBridgeLocked()
-	addresses := append([]domain.NetworkAddress(nil), network.Addresses...)
-	updatedAddress := domain.NetworkAddress{
-		Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix, DHCPEnabled: definition.DHCPStart != "",
-		DHCPStart: definition.DHCPStart, DHCPEnd: definition.DHCPEnd,
+	if network.Bridge == "" {
+		network.Bridge = d.nextDemoBridgeLocked()
 	}
-	replaced := false
+	addresses := append([]domain.NetworkAddress(nil), network.Addresses...)
+	ipv4Index := -1
 	for index := range addresses {
 		if addresses[index].Family == "" || addresses[index].Family == "ipv4" {
-			updatedAddress.Hosts = append([]domain.NetworkDHCPHost(nil), addresses[index].Hosts...)
-			addresses[index] = updatedAddress
-			replaced = true
+			ipv4Index = index
 			break
 		}
 	}
-	if !replaced {
-		addresses = append(addresses, updatedAddress)
+	if definition.IPv4Address == "" {
+		if ipv4Index >= 0 {
+			addresses = append(addresses[:ipv4Index], addresses[ipv4Index+1:]...)
+		}
+	} else {
+		updatedAddress := domain.NetworkAddress{
+			Family: "ipv4", Address: definition.IPv4Address, Prefix: definition.Prefix, DHCPEnabled: definition.DHCPStart != "",
+			DHCPStart: definition.DHCPStart, DHCPEnd: definition.DHCPEnd,
+		}
+		if ipv4Index >= 0 {
+			updatedAddress.Hosts = append([]domain.NetworkDHCPHost(nil), addresses[ipv4Index].Hosts...)
+			addresses[ipv4Index] = updatedAddress
+		} else {
+			addresses = append(addresses, updatedAddress)
+		}
+	}
+	ipv6Index := -1
+	for index := range addresses {
+		if strings.EqualFold(addresses[index].Family, "ipv6") {
+			ipv6Index = index
+			break
+		}
+	}
+	if definition.IPv6Address == "" {
+		if ipv6Index >= 0 {
+			addresses = append(addresses[:ipv6Index], addresses[ipv6Index+1:]...)
+		}
+	} else {
+		updatedIPv6 := domain.NetworkAddress{
+			Family: "ipv6", Address: definition.IPv6Address, Prefix: definition.IPv6Prefix,
+			IPv6Mode: definition.IPv6Mode, DHCPEnabled: definition.IPv6Mode == "dhcpv6" && definition.IPv6DHCPStart != "",
+			DHCPStart: definition.IPv6DHCPStart, DHCPEnd: definition.IPv6DHCPEnd,
+		}
+		if ipv6Index >= 0 {
+			updatedIPv6.Hosts = append([]domain.NetworkDHCPHost(nil), addresses[ipv6Index].Hosts...)
+			addresses[ipv6Index] = updatedIPv6
+		} else {
+			addresses = append(addresses, updatedIPv6)
+		}
 	}
 	network.Addresses = addresses
 	d.networks[definition.Name] = network
@@ -1828,18 +1943,28 @@ func cloneNetwork(network domain.VirtualNetwork) domain.VirtualNetwork {
 	for index := range network.Addresses {
 		network.Addresses[index].Hosts = append([]domain.NetworkDHCPHost(nil), network.Addresses[index].Hosts...)
 	}
+	network.DNSServers = append([]string(nil), network.DNSServers...)
+	network.Warnings = networkWarnings(network)
 	return network
 }
 
 func updateDemoNetworkDHCPHost(network *domain.VirtualNetwork, host domain.NetworkDHCPHost, remove bool) bool {
+	family := "ipv4"
+	if ip := net.ParseIP(host.IP); ip != nil && ip.To4() == nil {
+		family = "ipv6"
+	}
 	for addressIndex := range network.Addresses {
 		address := &network.Addresses[addressIndex]
-		if address.Family != "" && address.Family != "ipv4" {
+		addressFamily := strings.ToLower(address.Family)
+		if addressFamily == "" {
+			addressFamily = "ipv4"
+		}
+		if addressFamily != family {
 			continue
 		}
 		if remove {
 			for hostIndex := range address.Hosts {
-				if strings.EqualFold(address.Hosts[hostIndex].MAC, host.MAC) {
+				if address.Hosts[hostIndex].IP == host.IP {
 					address.Hosts = append(address.Hosts[:hostIndex], address.Hosts[hostIndex+1:]...)
 					return true
 				}
@@ -1852,16 +1977,33 @@ func updateDemoNetworkDHCPHost(network *domain.VirtualNetwork, host domain.Netwo
 	return false
 }
 
+func demoDHCPHostLabel(host domain.NetworkDHCPHost) string {
+	for _, value := range []string{host.MAC, host.ID, host.Name, host.IP} {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return "unknown"
+}
+
 func demoNetworks() []domain.VirtualNetwork {
 	return []domain.VirtualNetwork{
 		{
 			Name: "default", UUID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", Bridge: "virbr0",
-			Active: true, Persistent: true, Autostart: true, ForwardMode: "nat",
-			Addresses: []domain.NetworkAddress{{
-				Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,
-				DHCPStart: "192.168.122.2", DHCPEnd: "192.168.122.254",
-				Hosts: []domain.NetworkDHCPHost{{MAC: "52:54:00:12:34:56", IP: "192.168.122.101", Name: "demo-web-01"}},
-			}},
+			Active: true, Persistent: true, Autostart: true, ForwardMode: "nat", NATIPv6: true,
+			DNSDomain: "lab.example", DNSServers: []string{"2001:4860:4860::8888"},
+			Addresses: []domain.NetworkAddress{
+				{
+					Family: "ipv4", Address: "192.168.122.1", Prefix: 24, DHCPEnabled: true,
+					DHCPStart: "192.168.122.2", DHCPEnd: "192.168.122.254",
+					Hosts: []domain.NetworkDHCPHost{{MAC: "52:54:00:12:34:56", IP: "192.168.122.101", Name: "demo-web-01"}},
+				},
+				{
+					Family: "ipv6", Address: "fd00:122::1", Prefix: 64, DHCPEnabled: true,
+					IPv6Mode: "dhcpv6", DHCPStart: "fd00:122::2", DHCPEnd: "fd00:122::ffff",
+					Hosts: []domain.NetworkDHCPHost{{ID: "0:3:0:1:0:16:3e:11:22:33", IP: "fd00:122::50", Name: "demo-db-01"}},
+				},
+			},
 		},
 		{
 			Name: "br-prod", UUID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Bridge: "br0",
@@ -1880,6 +2022,7 @@ func demoNetworkLeases() map[string][]domain.DHCPLease {
 	now := time.Now().UTC()
 	webExpiry := now.Add(4 * time.Hour)
 	dbExpiry := now.Add(7 * time.Hour)
+	appExpiry := now.Add(6 * time.Hour)
 	return map[string][]domain.DHCPLease{
 		"default": {
 			{
@@ -1891,6 +2034,16 @@ func demoNetworkLeases() map[string][]domain.DHCPLease {
 				Interface: "vnet1", ExpiresAt: &dbExpiry, Family: "ipv4",
 				MAC: "52:54:00:65:43:21", IPAddress: "192.168.122.102", Prefix: 24,
 				Hostname: "demo-db-01", ClientID: "01:52:54:00:65:43:21", IAID: "db-01",
+			},
+			{
+				Interface: "vnet1", ExpiresAt: &dbExpiry, Family: "ipv6",
+				IPAddress: "fd00:122::50", Prefix: 64, Hostname: "demo-db-01",
+				ClientID: "0:3:0:1:0:16:3e:11:22:33", IAID: "db-01",
+			},
+			{
+				Interface: "vnet2", ExpiresAt: &appExpiry, Family: "ipv6",
+				IPAddress: "fd00:122::51", Prefix: 64, Hostname: "demo-app-01",
+				ClientID: "0:3:0:1:0:16:3e:11:22:44", IAID: "app-01",
 			},
 		},
 		"br-prod":      {},

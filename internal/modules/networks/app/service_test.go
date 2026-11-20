@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -22,6 +23,7 @@ type fakeRepository struct {
 	deleted     string
 	leaseFor    string
 	leases      []domain.DHCPLease
+	diagnostics domain.NetworkDiagnostics
 	err         error
 	called      bool
 }
@@ -37,6 +39,15 @@ func (f *fakeRepository) ListHostBridges(context.Context) ([]domain.HostBridge, 
 func (f *fakeRepository) ListDHCPLeases(_ context.Context, networkName string) ([]domain.DHCPLease, error) {
 	f.leaseFor = networkName
 	return append([]domain.DHCPLease(nil), f.leases...), f.err
+}
+
+func (f *fakeRepository) NetworkDiagnostics(_ context.Context, networkName string) (domain.NetworkDiagnostics, error) {
+	f.leaseFor = networkName
+	result := f.diagnostics
+	if result.Network == "" {
+		result.Network = networkName
+	}
+	return result, f.err
 }
 
 func (f *fakeRepository) CreateNetwork(_ context.Context, definition domain.VirtualNetworkDefinition) (domain.VirtualNetwork, error) {
@@ -218,9 +229,9 @@ func TestCreateNetworkNormalizesAndAudits(t *testing.T) {
 	}
 	want := domain.VirtualNetworkDefinition{
 		Name: "prod-net", Mode: "nat", IPv4Address: "10.20.30.1", Prefix: 24,
-		DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254", Autostart: true, Start: true,
+		DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254", DNSServers: []string{}, Autostart: true, Start: true,
 	}
-	if repository.created != want {
+	if !reflect.DeepEqual(repository.created, want) {
 		t.Fatalf("definition = %+v, want %+v", repository.created, want)
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "network.create" || audit.events[0].TargetID != "prod-net" {
@@ -232,7 +243,7 @@ func TestCreateNetworkNormalizesAndAudits(t *testing.T) {
 }
 
 func TestUpdateNetworkNormalizesAndAudits(t *testing.T) {
-	repository := &fakeRepository{}
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{{Name: "prod-net"}}}
 	audit := &auditRecorder{}
 	service := New(repository, audit, false)
 	network, err := service.Update(context.Background(), UpdateNetworkCommand{
@@ -248,9 +259,9 @@ func TestUpdateNetworkNormalizesAndAudits(t *testing.T) {
 	}
 	want := domain.VirtualNetworkDefinition{
 		Name: "prod-net", Mode: "isolated", IPv4Address: "10.50.0.1", Prefix: 24,
-		DHCPStart: "10.50.0.20", DHCPEnd: "10.50.0.120", Autostart: true,
+		DHCPStart: "10.50.0.20", DHCPEnd: "10.50.0.120", DNSServers: []string{}, Autostart: true,
 	}
-	if repository.updated != want {
+	if !reflect.DeepEqual(repository.updated, want) {
 		t.Fatalf("updated definition = %+v, want %+v", repository.updated, want)
 	}
 	if len(audit.events) != 1 || audit.events[0].Action != "network.update" || audit.events[0].TargetID != "prod-net" {
@@ -275,6 +286,24 @@ func TestCreateNetworkCustomDHCP(t *testing.T) {
 	}
 }
 
+func TestCreateNetworkNormalizesIPv6DualStack(t *testing.T) {
+	repository := &fakeRepository{}
+	_, err := New(repository, nil, false).Create(context.Background(), CreateNetworkCommand{
+		Spec: domain.VirtualNetworkCreateSpec{
+			Name: "dual-net", Mode: "nat", Subnet: "10.77.0.0/24",
+			IPv6Subnet: "fd00:77::/64", IPv6DHCPStart: "fd00:77::100", IPv6DHCPEnd: "fd00:77::1ff",
+		},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if repository.created.IPv6Address != "fd00:77::1" || repository.created.IPv6Prefix != 64 ||
+		repository.created.IPv6DHCPStart != "fd00:77::100" || repository.created.IPv6DHCPEnd != "fd00:77::1ff" {
+		t.Fatalf("definition = %+v", repository.created)
+	}
+}
+
 func TestCreateBridgeNetworkNormalizesAndAudits(t *testing.T) {
 	repository := &fakeRepository{}
 	audit := &auditRecorder{}
@@ -291,7 +320,7 @@ func TestCreateBridgeNetworkNormalizesAndAudits(t *testing.T) {
 		t.Fatalf("network = %+v", network)
 	}
 	want := domain.VirtualNetworkDefinition{Name: "prod-bridge", Mode: "bridge", Bridge: "br0", Autostart: true}
-	if repository.created != want {
+	if !reflect.DeepEqual(repository.created, want) {
 		t.Fatalf("definition = %+v, want %+v", repository.created, want)
 	}
 	if len(audit.events) != 1 || audit.events[0].Detail["mode"] != "bridge" || audit.events[0].Detail["bridge"] != "br0" {
@@ -315,6 +344,11 @@ func TestCreateNetworkValidation(t *testing.T) {
 		{name: "partial dhcp", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", DHCPStart: "10.0.0.10"}},
 		{name: "dhcp outside", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", DHCPStart: "10.0.1.10", DHCPEnd: "10.0.1.100"}},
 		{name: "dhcp order", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", DHCPStart: "10.0.0.100", DHCPEnd: "10.0.0.10"}},
+		{name: "invalid ipv6 subnet", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", IPv6Subnet: "not-ipv6"}},
+		{name: "ipv6 prefix too small", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", IPv6Subnet: "fd00::/48"}},
+		{name: "ipv6 dhcp without subnet", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", IPv6DHCPStart: "fd00::10", IPv6DHCPEnd: "fd00::20"}},
+		{name: "ipv6 dhcp outside", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "nat", Subnet: "10.0.0.0/24", IPv6Subnet: "fd00::/64", IPv6DHCPStart: "fd01::10", IPv6DHCPEnd: "fd01::20"}},
+		{name: "bridge with ipv6", spec: domain.VirtualNetworkCreateSpec{Name: "valid-net", Mode: "bridge", Bridge: "br0", IPv6Subnet: "fd00::/64"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -354,7 +388,7 @@ func TestNetworkMutationsRequireOperatorAndWritableMode(t *testing.T) {
 		if _, err := service.AddDHCPHost(context.Background(), AddNetworkDHCPHostCommand{Name: "valid-net", Spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:56", IP: "10.0.0.50"}, Request: request}); !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("role %s add DHCP host error = %v", role, err)
 		}
-		if _, err := service.DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{Name: "valid-net", MAC: "52:54:00:12:34:56", Request: request}); !errors.Is(err, domain.ErrForbidden) {
+		if _, err := service.DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{Name: "valid-net", Key: "52:54:00:12:34:56", Request: request}); !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("role %s delete DHCP host error = %v", role, err)
 		}
 	}
@@ -375,7 +409,7 @@ func TestNetworkMutationsRequireOperatorAndWritableMode(t *testing.T) {
 	if _, err := service.AddDHCPHost(context.Background(), AddNetworkDHCPHostCommand{Name: "valid-net", Spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:56", IP: "10.0.0.50"}, Request: adminRequest()}); !errors.Is(err, domain.ErrReadOnly) {
 		t.Fatalf("read-only add DHCP host error = %v", err)
 	}
-	if _, err := service.DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{Name: "valid-net", MAC: "52:54:00:12:34:56", Request: adminRequest()}); !errors.Is(err, domain.ErrReadOnly) {
+	if _, err := service.DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{Name: "valid-net", Key: "52:54:00:12:34:56", Request: adminRequest()}); !errors.Is(err, domain.ErrReadOnly) {
 		t.Fatalf("read-only delete DHCP host error = %v", err)
 	}
 }
@@ -426,7 +460,7 @@ func TestAddDHCPHostValidatesAddressAndConflicts(t *testing.T) {
 		want error
 	}{
 		{name: "invalid MAC", spec: domain.NetworkDHCPHostCreateSpec{MAC: "invalid", IP: "192.168.122.60"}, want: domain.ErrInvalidInput},
-		{name: "IPv6 address", spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:60", IP: "fd00::60"}, want: domain.ErrInvalidInput},
+		{name: "IPv6 address without IPv6 network", spec: domain.NetworkDHCPHostCreateSpec{ID: "00:03:00:01:52:54:00:12:34:60", IP: "fd00::60"}, want: domain.ErrNetworkUnsupported},
 		{name: "outside subnet", spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:60", IP: "192.168.123.60"}, want: domain.ErrInvalidInput},
 		{name: "gateway", spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:60", IP: "192.168.122.1"}, want: domain.ErrInvalidInput},
 		{name: "broadcast", spec: domain.NetworkDHCPHostCreateSpec{MAC: "52:54:00:12:34:60", IP: "192.168.122.255"}, want: domain.ErrInvalidInput},
@@ -447,6 +481,27 @@ func TestAddDHCPHostValidatesAddressAndConflicts(t *testing.T) {
 				t.Fatal("invalid DHCP host reached repository")
 			}
 		})
+	}
+}
+
+func TestAddIPv6DHCPHost(t *testing.T) {
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{{
+		Name: "dual-net", Active: true, Persistent: true,
+		Addresses: []domain.NetworkAddress{
+			{Family: "ipv4", Address: "10.20.30.1", Prefix: 24, DHCPEnabled: true, DHCPStart: "10.20.30.2", DHCPEnd: "10.20.30.254"},
+			{Family: "ipv6", Address: "fd00:20:30::1", Prefix: 64, IPv6Mode: "dhcpv6", DHCPEnabled: true, DHCPStart: "fd00:20:30::2", DHCPEnd: "fd00:20:30::ffff"},
+		},
+	}}}
+	_, err := New(repository, nil, false).AddDHCPHost(context.Background(), AddNetworkDHCPHostCommand{
+		Name:    "dual-net",
+		Spec:    domain.NetworkDHCPHostCreateSpec{ID: "00:03:00:01:52:54:00:12:34:60", IP: "fd00:20:30::50", Name: "db-ipv6"},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("AddDHCPHost() error = %v", err)
+	}
+	if repository.addedHost.IP != "fd00:20:30::50" || repository.addedHost.ID != "00:03:00:01:52:54:00:12:34:60" || repository.addedHost.MAC != "" {
+		t.Fatalf("added host = %+v", repository.addedHost)
 	}
 }
 
@@ -498,6 +553,28 @@ func TestImportDHCPHostsSkipsExistingAndAudits(t *testing.T) {
 	}
 }
 
+func TestImportDHCPHostsSupportsMultipleIPv6DUIDReservations(t *testing.T) {
+	network := domain.VirtualNetwork{Name: "dual-net", Active: true, Persistent: true, Addresses: []domain.NetworkAddress{
+		{Family: "ipv4", Address: "10.99.0.1", Prefix: 24, DHCPEnabled: true, DHCPStart: "10.99.0.2", DHCPEnd: "10.99.0.254"},
+		{Family: "ipv6", Address: "fd00:99::1", Prefix: 64, IPv6Mode: "dhcpv6", DHCPEnabled: true, DHCPStart: "fd00:99::2", DHCPEnd: "fd00:99::ffff"},
+	}}
+	repository := &fakeRepository{networks: []domain.VirtualNetwork{network}}
+	result, err := New(repository, nil, false).ImportDHCPHosts(context.Background(), ImportNetworkDHCPHostsCommand{
+		Name: "dual-net",
+		Hosts: []domain.NetworkDHCPHostCreateSpec{
+			{ID: "00:03:00:01:52:54:00:12:34:56", IP: "fd00:99::50", Name: "db-ipv6-a"},
+			{ID: "00:03:00:01:52:54:00:12:34:57", IP: "fd00:99::51", Name: "db-ipv6-b"},
+		},
+		Request: adminRequest(),
+	})
+	if err != nil {
+		t.Fatalf("ImportDHCPHosts() error = %v", err)
+	}
+	if result.Imported != 2 || result.Skipped != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestImportDHCPHostsRejectsConflictsBeforeWriting(t *testing.T) {
 	network := domain.VirtualNetwork{
 		Name: "default", Active: true, Persistent: true,
@@ -541,7 +618,7 @@ func TestDHCPHostCSVRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode error = %v", err)
 	}
-	if !strings.HasPrefix(string(data), "mac,ip,name\n") || !strings.Contains(string(data), `"db,01"`) {
+	if !strings.HasPrefix(string(data), "mac,id,ip,name\n") || !strings.Contains(string(data), `"db,01"`) {
 		t.Fatalf("CSV = %s", data)
 	}
 	hosts, err := ParseNetworkDHCPHostCSV(data)
@@ -559,7 +636,7 @@ func TestParseDHCPHostCSVValidation(t *testing.T) {
 		data string
 	}{
 		{name: "empty", data: ""},
-		{name: "header only", data: "mac,ip,name\n"},
+		{name: "header only", data: "mac,id,ip,name\n"},
 		{name: "missing ip", data: "52:54:00:12:34:56\n"},
 		{name: "too many columns", data: "52:54:00:12:34:56,192.168.122.50,web,extra\n"},
 		{name: "malformed quotes", data: `"52:54:00:12:34:56,192.168.122.50`},
@@ -573,6 +650,34 @@ func TestParseDHCPHostCSVValidation(t *testing.T) {
 	}
 }
 
+func TestDHCPHostCSVSupportsIPv6DUIDAndLegacyFormat(t *testing.T) {
+	network := domain.VirtualNetwork{Name: "dual-net", Addresses: []domain.NetworkAddress{{
+		Family: "ipv6", Address: "fd00:87::1", Prefix: 64,
+		Hosts: []domain.NetworkDHCPHost{{ID: "00:03:00:01:52:54:00:12:34:56", IP: "fd00:87::50", Name: "db-ipv6"}},
+	}}}
+	data, err := encodeNetworkDHCPHostsCSV(network)
+	if err != nil {
+		t.Fatalf("encode error = %v", err)
+	}
+	if !strings.HasPrefix(string(data), "mac,id,ip,name\n") || !strings.Contains(string(data), "00:03:00:01:52:54:00:12:34:56,fd00:87::50,db-ipv6") {
+		t.Fatalf("CSV = %s", data)
+	}
+	hosts, err := ParseNetworkDHCPHostCSV(data)
+	if err != nil || len(hosts) != 1 || hosts[0].ID != "00:03:00:01:52:54:00:12:34:56" || hosts[0].MAC != "" {
+		t.Fatalf("IPv6 hosts = %+v, %v", hosts, err)
+	}
+
+	legacy, err := ParseNetworkDHCPHostCSV([]byte("mac,ip,name\n52:54:00:12:34:56,192.168.122.50,web-01\n"))
+	if err != nil || len(legacy) != 1 || legacy[0].MAC != "52:54:00:12:34:56" || legacy[0].IP != "192.168.122.50" || legacy[0].Name != "web-01" {
+		t.Fatalf("legacy hosts = %+v, %v", legacy, err)
+	}
+
+	withBlankAndBOM, err := ParseNetworkDHCPHostCSV([]byte("\xef\xbb\xbf\nmac,id,ip,name\n\n,00:03:00:01:52:54:00:12:34:56,fd00:87::51,db-ipv6-2\n"))
+	if err != nil || len(withBlankAndBOM) != 1 || withBlankAndBOM[0].ID != "00:03:00:01:52:54:00:12:34:56" || withBlankAndBOM[0].IP != "fd00:87::51" {
+		t.Fatalf("BOM/blank-line hosts = %+v, %v", withBlankAndBOM, err)
+	}
+}
+
 func TestDeleteDHCPHostFindsEntryAndAudits(t *testing.T) {
 	repository := &fakeRepository{networks: []domain.VirtualNetwork{{
 		Name: "default", Active: true, Persistent: true,
@@ -583,7 +688,7 @@ func TestDeleteDHCPHostFindsEntryAndAudits(t *testing.T) {
 	}}}
 	audit := &auditRecorder{}
 	network, err := New(repository, audit, false).DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{
-		Name: "default", MAC: "52:54:00:12:34:56", Request: adminRequest(),
+		Name: "default", Key: "52:54:00:12:34:56", Request: adminRequest(),
 	})
 	if err != nil {
 		t.Fatalf("DeleteDHCPHost() error = %v", err)
@@ -597,7 +702,7 @@ func TestDeleteDHCPHostFindsEntryAndAudits(t *testing.T) {
 
 	repository = &fakeRepository{networks: []domain.VirtualNetwork{{Name: "default", Active: true, Persistent: true}}}
 	_, err = New(repository, nil, false).DeleteDHCPHost(context.Background(), DeleteNetworkDHCPHostCommand{
-		Name: "default", MAC: "52:54:00:12:34:56", Request: adminRequest(),
+		Name: "default", Key: "52:54:00:12:34:56", Request: adminRequest(),
 	})
 	if !errors.Is(err, domain.ErrNotFound) || repository.called {
 		t.Fatalf("missing host error = %v called=%v", err, repository.called)

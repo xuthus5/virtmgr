@@ -1,13 +1,13 @@
-import { RefreshCw, ScrollText } from "lucide-react";
+import { Check, RefreshCw, ScrollText } from "lucide-react";
 import type { DHCPLease, VirtualNetwork } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { leaseExpiry } from "@/features/networks/network-ui";
+import { leaseExpiry, leaseIsExpired, leaseReservationIssue } from "@/features/networks/network-ui";
 
-export function NetworkLeasesCard({ network, record, leases, loaded, loading, error, fetching, onRefresh }: {
+export function NetworkLeasesCard({ network, record, leases, loaded, loading, error, fetching, canManage, disabledReason, reservingIP, onRefresh, onReserve }: {
   network: string;
   record?: VirtualNetwork;
   leases: DHCPLease[];
@@ -15,7 +15,11 @@ export function NetworkLeasesCard({ network, record, leases, loaded, loading, er
   loading: boolean;
   error: Error | null;
   fetching: boolean;
+  canManage: boolean;
+  disabledReason?: string;
+  reservingIP?: string;
   onRefresh: () => void;
+  onReserve: (lease: DHCPLease) => void;
 }) {
   return <Card className="mt-4" data-testid="network-leases-card">
     <CardHeader>
@@ -43,19 +47,23 @@ export function NetworkLeasesCard({ network, record, leases, loaded, loading, er
         </div>
       ) : null}
       {leases.length > 0 ? (
-        <Table className="min-w-[880px]">
-          <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>IP 地址</TableHead><TableHead>MAC</TableHead><TableHead>接口</TableHead><TableHead>客户端标识</TableHead><TableHead>到期时间</TableHead></TableRow></TableHeader>
+        <Table className="min-w-[980px]">
+          <TableHeader><TableRow><TableHead>主机名</TableHead><TableHead>协议</TableHead><TableHead>IP 地址</TableHead><TableHead>MAC</TableHead><TableHead>接口</TableHead><TableHead>客户端标识</TableHead><TableHead>到期时间</TableHead><TableHead className="w-24 text-right">操作</TableHead></TableRow></TableHeader>
           <TableBody>
-            {leases.map((lease, index) => (
-              <TableRow key={`${lease.ipAddress}-${lease.mac}-${index}`} data-testid={`network-lease-row-${index}`}>
+            {leases.map((lease, index) => {
+              const expired = leaseIsExpired(lease);
+              const reservationIssue = leaseReservationIssue(lease);
+              return <TableRow key={`${lease.ipAddress}-${lease.mac}-${index}`} data-testid={`network-lease-row-${index}`}>
                 <TableCell>{lease.hostname || "-"}</TableCell>
+                <TableCell><Badge variant="outline" className="uppercase">{lease.family || "unknown"}</Badge></TableCell>
                 <TableCell><span className="font-mono text-xs">{lease.ipAddress}/{lease.prefix}</span></TableCell>
                 <TableCell><span className="font-mono text-xs">{lease.mac || "-"}</span></TableCell>
                 <TableCell><span className="font-mono text-xs">{lease.interface || "-"}</span></TableCell>
                 <TableCell><span className="block max-w-56 truncate font-mono text-[10px] text-muted-foreground" title={[lease.clientId, lease.iaid].filter(Boolean).join(" · ")}>{[lease.clientId, lease.iaid].filter(Boolean).join(" · ") || "-"}</span></TableCell>
-                <TableCell><span className="whitespace-nowrap text-xs text-muted-foreground">{leaseExpiry(lease.expiresAt)}</span></TableCell>
-              </TableRow>
-            ))}
+                <TableCell><div className="flex items-center gap-2 whitespace-nowrap"><span className="text-xs text-muted-foreground">{leaseExpiry(lease.expiresAt)}</span>{expired ? <Badge variant="warning">已过期</Badge> : null}</div></TableCell>
+                <TableCell className="text-right"><Button type="button" variant="ghost" size="sm" data-testid={`network-lease-reserve-${index}`} disabled={!canManage || Boolean(disabledReason) || Boolean(reservationIssue) || reservingIP === lease.ipAddress} title={disabledReason || reservationIssue || "将租约地址保留为静态 DHCPv6/ DHCP 主机"} onClick={() => onReserve(lease)}><Check className="h-3.5 w-3.5" />{reservingIP === lease.ipAddress ? "保留中" : "保留"}</Button></TableCell>
+              </TableRow>;
+            })}
           </TableBody>
         </Table>
       ) : null}

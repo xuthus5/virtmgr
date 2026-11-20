@@ -74,10 +74,12 @@ type UserSessionList struct {
 }
 
 type ListQuery struct {
-	Query string
-	State string
-	Tag   string
-	Owner string
+	Query  string
+	State  string
+	Tag    string
+	Owner  string
+	Folder string
+	Group  string
 }
 
 type ReadOnlyProvider interface {

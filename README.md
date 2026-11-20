@@ -62,7 +62,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Backups | Central cold-backup catalog, manual integrity checks, restore as a new VM, interval/daily schedules, retention, pinning, failed-task retry, and task SSE state |
 | Image library | Register existing qcow2/raw volumes with OS metadata; refresh allocation and SHA-256 on demand; bind images to templates and create VMs by full clone or same-pool qcow2 linked clone without deleting the source volume when unregistering |
 | Storage | Manage directory pools; start, stop, refresh, and delete definitions; create qcow2/raw volumes; stream ISO, qcow2, and raw image uploads; protect in-use volumes |
-| Networking | NAT, isolated, and external bridge networks, host bridge discovery, IPv4/DHCP configuration, live leases, static DHCP hosts with CSV import/export, create/edit/start/stop/delete |
+| Networking | NAT, isolated, and external bridge networks; IPv4-only, dual-stack, and IPv6-only managed networks; DHCP, SLAAC, stateful DHCPv6, NAT66, DNS; host bridge discovery, live leases, static IPv4/IPv6 reservations with CSV import/export, diagnostics, create/edit/start/stop/delete |
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
 | Observability | SSE events and task state, backup retry, seven-day host/running-VM history, Prometheus `/metrics`, CPU/memory threshold Webhook alerts, structured logs, and health endpoints |
 | Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, scoped and revocable Bearer API tokens, OpenAPI 3.1, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable/retention-managed audit trail, CSP and security headers |
@@ -234,6 +234,10 @@ Keep VirtMgr bound to `127.0.0.1:8443`, proxy all application paths, preserve We
 
 The console uses a same-origin `wss://` connection. Some browsers let users bypass a self-signed certificate for the HTTPS page while still blocking the WebSocket handshake, which leaves the console connecting although the server never receives an Upgrade request. Use a certificate and hostname trusted by the browser in production; do not rely on an IP address with a self-signed certificate as the long-term console entry point.
 
+**IPv6 management access**
+
+Set `listen: "[::]:8443"` to bind the management service on the Linux dual-stack wildcard. Add the reverse proxy's IPv6 addresses to `trusted_proxies` when using `X-Forwarded-For` or `X-Real-IP`. Browser access through a literal IPv6 address requires that address in the certificate SAN; because provider-assigned IPv6 prefixes can change, prefer a stable DNS name and certificate for production. Native TLS certificates reload automatically after the certificate or key file changes, and the system settings page reports SAN mismatches and expiry. Guest-network IPv6 forwarding and NAT66 depend on the host's `net.ipv6.conf.all.forwarding` setting and firewall policy; NAT66 is outbound-only. Use the network diagnostics page before exposing workloads. Run `scripts/ipv6-compat-check.sh` on each supported host distribution. See `docs/ipv6-commercial-readiness.md` for the verified matrix and remaining boundaries, and `docs/tls-rotation-runbook.md` for certificate rotation and rollback.
+
 Do not expose a writable VirtMgr instance directly to the public internet without TLS, a firewall, and a strong administrator password.
 
 ## Container deployment
@@ -330,7 +334,7 @@ Representative endpoint groups include:
 | Backup center | `/api/v1/backups`, `/backups/{id}/verify`, `/backups/{id}/restore`, `/backup-schedules`, `/backup-repositories` |
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
 | Images | `GET/POST /api/v1/images`, `GET/DELETE /api/v1/images/{id}`, `POST /api/v1/images/{id}/refresh` |
-| Networking | `/api/v1/networks`, `/networks/bridges`, `/leases`, `/hosts`, `/actions/{action}` |
+| Networking | `/api/v1/networks`, `/networks/bridges`, `/leases`, `/hosts`, `/diagnostics`, `/actions/{action}` |
 | System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/audit-events/export`, `/users`, `/users/me/password`, `/users/{id}/sessions`, `/settings` |
 
 Task cancellation is available at `POST /api/v1/tasks/{id}/cancel` for supported task kinds and safe checkpoints.
@@ -391,7 +395,7 @@ scripts/                  Development and E2E helpers
 - VM import supports active-pool QCOW2/RAW system disks and ISO installation media. ISO imports create a blank system disk and retain the source ISO as a read-only CD-ROM. OVA/OVF, VMDK, and VHDX are not accepted directly; existing idle qcow2/raw volumes can be converted or copied to another pool from the storage page.
 - The image library supports qcow2/raw uploads, full clones, and same-pool qcow2 linked clones. The storage page supports idle-volume qcow2/raw conversion and cross-pool copies, but cross-pool linked clones, automatic linked-clone flattening, and automatic VM reference switching are not implemented.
 - Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
-- External bridge networks attach to an existing host Linux bridge and use upstream addressing/DHCP. Per-interface inbound/outbound bandwidth QoS is available. VirtMgr does not create host bridges and does not manage VLAN, bond, OVS, SR-IOV, IPv6/RA, or security groups.
+- Managed NAT/isolated networks support IPv4-only, dual-stack, and IPv6-only addressing. IPv4 uses DHCP; IPv6 supports SLAAC (`/64`) and stateful DHCPv6 (`/64` to `/124`), with NAT66 enabled by default for NAT dual-stack networks. DNS forwarding, DHCPv6 DUID/Client-ID reservations, network diagnostics, and CSV import/export are available. External bridge networks attach to an existing host Linux bridge and use upstream addressing/DHCP. Per-interface inbound/outbound bandwidth QoS is available. VirtMgr does not create host bridges and does not manage VLAN, bond, OVS, SR-IOV, explicit RA flags/prefix delegation, IPv6 inbound port mapping, or security groups.
 - Alerts use the existing rule-level Webhook only. Notification centers, SMTP, Slack/Teams, PagerDuty, alert silencing, and escalation policies are not provided.
 - VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.
 - Modern Chrome, Edge, Firefox, and Safari are recommended.

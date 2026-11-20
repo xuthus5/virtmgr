@@ -9,13 +9,15 @@ import { Button } from "@/components/ui/button";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { NetworkCreateCard } from "@/features/networks/network-create-card";
 import { NetworkDeleteDialog, NetworkHostDeleteDialog } from "@/features/networks/network-dialogs";
+import { NetworkDiagnosticsCard } from "@/features/networks/network-diagnostics-card";
 import { NetworkEditCard } from "@/features/networks/network-edit-card";
 import { networkEditForm, networkUpdateInput, type NetworkEditFormState } from "@/features/networks/network-edit-model";
 import { NetworkHostsCard } from "@/features/networks/network-hosts-card";
 import { NetworkLeasesCard } from "@/features/networks/network-leases-card";
 import { NetworkTableCard } from "@/features/networks/network-table-card";
-import { actionError, initialCreateForm, initialHostForm, staticHosts, type CreateFormState, type HostFormState } from "@/features/networks/network-ui";
+import { actionError, createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialHostForm, staticHosts, type CreateFormState, type HostFormState } from "@/features/networks/network-ui";
 import { useHostBridgesQuery, useNetworksQuery } from "@/features/networks/use-networks-query";
+import { useNetworkDiagnosticsQuery } from "@/features/networks/use-network-diagnostics-query";
 import { useNetworkLeasesQuery } from "@/features/networks/use-network-leases-query";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -28,7 +30,7 @@ export function NetworksPage() {
   const [createForm, setCreateForm] = useState<CreateFormState>(initialCreateForm);
   const [createError, setCreateError] = useState("");
   const [editTarget, setEditTarget] = useState<VirtualNetwork | null>(null);
-  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", bridge: "", autostart: false });
+  const [editForm, setEditForm] = useState<NetworkEditFormState>({ mode: "nat", subnet: "", dhcpStart: "", dhcpEnd: "", ipv6Subnet: "", ipv6Mode: "dhcpv6", ipv6DhcpStart: "", ipv6DhcpEnd: "", natIpv6: true, dnsDomain: "", dnsServers: "", bridge: "", autostart: false });
   const [editError, setEditError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [actionErrorText, setActionErrorText] = useState("");
@@ -37,6 +39,7 @@ export function NetworksPage() {
   const [deleteError, setDeleteError] = useState("");
   const [leasesNetwork, setLeasesNetwork] = useState<string | null>(null);
   const [hostsNetwork, setHostsNetwork] = useState<string | null>(null);
+  const [diagnosticsNetwork, setDiagnosticsNetwork] = useState<string | null>(null);
   const [hostForm, setHostForm] = useState<HostFormState>(initialHostForm);
   const [hostError, setHostError] = useState("");
   const [hostTransfer, setHostTransfer] = useState<"import" | "export" | "">("");
@@ -44,11 +47,12 @@ export function NetworksPage() {
   const networks = query.data?.items ?? [];
   const hostBridges = hostBridgesQuery.data?.items ?? [];
   const leasesQuery = useNetworkLeasesQuery(leasesNetwork);
+  const diagnosticsQuery = useNetworkDiagnosticsQuery(diagnosticsNetwork);
   const leases = leasesQuery.data?.items ?? [];
   const leasesNetworkRecord = networks.find((network) => network.name === leasesNetwork);
   const hostsNetworkRecord = networks.find((network) => network.name === hostsNetwork);
   const hosts = staticHosts(hostsNetworkRecord);
-  const hostsHaveDHCP = Boolean(hostsNetworkRecord?.addresses.some((address) => (address.family === "" || address.family === "ipv4") && (address.dhcpEnabled || address.dhcpStart)));
+  const hostsHaveDHCP = Boolean(hostsNetworkRecord?.addresses.some((address) => address.dhcpEnabled || address.dhcpStart));
   const active = networks.filter((network) => network.active).length;
   const bridges = networks.filter((network) => network.forwardMode === "bridge").length;
   const nat = networks.filter((network) => network.forwardMode === "nat").length;
@@ -79,6 +83,7 @@ export function NetworksPage() {
       setEditTarget(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.leases(network.name) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
     },
     onError: (cause) => setEditError(actionError(cause, "更新虚拟网络失败，请稍后重试。")),
   });
@@ -90,6 +95,7 @@ export function NetworksPage() {
       setActionErrorText("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.leases(variables.name) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(variables.name) });
     },
     onError: (cause) => setActionErrorText(actionError(cause, "更新网络状态失败，请稍后重试。")),
   });
@@ -105,7 +111,9 @@ export function NetworksPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
       setLeasesNetwork((current) => current === name ? null : current);
       setHostsNetwork((current) => current === name ? null : current);
+      setDiagnosticsNetwork((current) => current === name ? null : current);
       queryClient.removeQueries({ queryKey: queryKeys.networks.leases(name) });
+      queryClient.removeQueries({ queryKey: queryKeys.networks.diagnostics(name) });
     },
     onError: (cause) => setDeleteError(actionError(cause, "删除虚拟网络失败，请稍后重试。")),
   });
@@ -118,20 +126,34 @@ export function NetworksPage() {
       setActionErrorText("");
       setHostForm(initialHostForm);
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
     },
     onError: (cause) => setHostError(actionError(cause, "添加静态主机失败，请稍后重试。")),
   });
 
   const deleteHostMutation = useMutation({
-    mutationFn: ({ name, host }: { name: string; host: NetworkDHCPHost }) => api.deleteNetworkDHCPHost(name, host.mac),
+    mutationFn: ({ name, host }: { name: string; host: NetworkDHCPHost }) => api.deleteNetworkDHCPHost(name, hostIdentity(host)),
     onSuccess: (network, variables) => {
-      setSuccessMessage(`网络 ${network.name} 的静态主机 ${variables.host.mac} 已删除。`);
+      setSuccessMessage(`网络 ${network.name} 的静态主机 ${hostIdentity(variables.host)} 已删除。`);
       setHostError("");
       setActionErrorText("");
       setHostDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
     },
     onError: (cause) => setHostError(actionError(cause, "删除静态主机失败，请稍后重试。")),
+  });
+
+  const reserveLeaseMutation = useMutation({
+    mutationFn: ({ name, ip }: { name: string; ip: string }) => api.reserveNetworkLease(name, { ip }),
+    onSuccess: (network, variables) => {
+      setSuccessMessage(`租约 ${variables.ip} 已保留为网络 ${network.name} 的静态主机。`);
+      setActionErrorText("");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.list });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.leases(network.name) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.networks.diagnostics(network.name) });
+    },
+    onError: (cause) => setActionErrorText(actionError(cause, "保留租约地址失败，请稍后重试。")),
   });
 
   function updateCreateForm<K extends keyof CreateFormState>(key: K, value: CreateFormState[K]) {
@@ -189,19 +211,11 @@ export function NetworksPage() {
     setCreateError("");
     setSuccessMessage("");
     setActionErrorText("");
-    createMutation.mutate({
-      name: createForm.name.trim(),
-      mode: createForm.mode,
-      ...(createForm.mode === "bridge"
-        ? { bridge: createForm.bridge.trim() }
-        : {
-            subnet: createForm.subnet.trim(),
-            dhcpStart: createForm.dhcpStart.trim() || undefined,
-            dhcpEnd: createForm.dhcpEnd.trim() || undefined,
-          }),
-      autostart: createForm.autostart,
-      start: createForm.start,
-    });
+    if (createForm.mode !== "bridge" && !createForm.subnet.trim() && !createForm.ipv6Subnet.trim()) {
+      setCreateError("IPv4 与 IPv6 子网至少需要填写一项。");
+      return;
+    }
+    createMutation.mutate(createNetworkInput(createForm));
   }
 
   function openEdit(network: VirtualNetwork) {
@@ -248,10 +262,16 @@ export function NetworksPage() {
     if (!hostsNetwork || !canManage || !hostsHaveDHCP) return;
     setHostError("");
     setSuccessMessage("");
+    const ipv6 = hostIsIPv6(hostForm);
+    if (ipv6 && !hostForm.id.trim() && !hostForm.name.trim()) {
+      setHostError("DHCPv6 静态主机需要填写 DUID/Client ID 或主机名。");
+      return;
+    }
     addHostMutation.mutate({
       name: hostsNetwork,
       input: {
-        mac: hostForm.mac.trim(),
+        mac: ipv6 ? undefined : hostForm.mac.trim(),
+        id: ipv6 ? hostForm.id.trim() || undefined : undefined,
         ip: hostForm.ip.trim(),
         name: hostForm.name.trim() || undefined,
       },
@@ -315,9 +335,12 @@ export function NetworksPage() {
             onDelete={openDelete}
             onLeases={(network) => setLeasesNetwork((current) => current === network.name ? null : network.name)}
             onHosts={toggleHosts}
+            diagnosticsNetwork={diagnosticsNetwork}
+            onDiagnostics={(network) => { setDiagnosticsNetwork((current) => current === network.name ? null : network.name); setHostError(""); }}
           />
 
-          {leasesNetwork ? <NetworkLeasesCard network={leasesNetwork} record={leasesNetworkRecord} leases={leases} loaded={Boolean(leasesQuery.data)} loading={leasesQuery.isLoading} error={leasesQuery.error} fetching={leasesQuery.isFetching} onRefresh={() => void leasesQuery.refetch()} /> : null}
+          {leasesNetwork ? <NetworkLeasesCard network={leasesNetwork} record={leasesNetworkRecord} leases={leases} loaded={Boolean(leasesQuery.data)} loading={leasesQuery.isLoading} error={leasesQuery.error} fetching={leasesQuery.isFetching} canManage={canManage} disabledReason={disabledReason} reservingIP={reserveLeaseMutation.isPending ? reserveLeaseMutation.variables?.ip : undefined} onRefresh={() => void leasesQuery.refetch()} onReserve={(lease) => { setSuccessMessage(""); setActionErrorText(""); reserveLeaseMutation.mutate({ name: leasesNetwork, ip: lease.ipAddress }); }} /> : null}
+          {diagnosticsNetwork ? <NetworkDiagnosticsCard network={diagnosticsNetwork} diagnostics={diagnosticsQuery.data} loading={diagnosticsQuery.isLoading} error={diagnosticsQuery.error} fetching={diagnosticsQuery.isFetching} onRefresh={() => void diagnosticsQuery.refetch()} /> : null}
           {hostsNetwork ? (
             <NetworkHostsCard
               network={hostsNetwork}

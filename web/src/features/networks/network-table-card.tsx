@@ -1,4 +1,4 @@
-import { Activity, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Router, ScrollText, Square, Trash2 } from "lucide-react";
+import { Activity, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Router, ScrollText, Square, Stethoscope, Trash2 } from "lucide-react";
 import type { Role, VirtualNetwork, VirtualNetworkAction } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { networkActionHint, networkEditDisabledReason } from "@/features/networks/network-edit-model";
 import { addressLabel, staticHostCount } from "@/features/networks/network-ui";
 
-export function NetworkTableCard({ networks, total, active, bridges, nat, role, readOnly, canManage, editTargetName, leasesNetwork, hostsNetwork, actionPendingName, actionPendingAction, updatePending, deletePending, onEdit, onAction, onDelete, onLeases, onHosts }: {
+export function NetworkTableCard({ networks, total, active, bridges, nat, role, readOnly, canManage, editTargetName, leasesNetwork, hostsNetwork, diagnosticsNetwork, actionPendingName, actionPendingAction, updatePending, deletePending, onEdit, onAction, onDelete, onLeases, onHosts, onDiagnostics }: {
   networks: VirtualNetwork[];
   total: number;
   active: number;
@@ -20,6 +20,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
   editTargetName?: string;
   leasesNetwork: string | null;
   hostsNetwork: string | null;
+  diagnosticsNetwork: string | null;
   actionPendingName?: string;
   actionPendingAction?: VirtualNetworkAction;
   updatePending: boolean;
@@ -29,6 +30,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
   onDelete: (network: VirtualNetwork) => void;
   onLeases: (network: VirtualNetwork) => void;
   onHosts: (network: VirtualNetwork) => void;
+  onDiagnostics: (network: VirtualNetwork) => void;
 }) {
   return <>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -65,7 +67,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                     <TableCell>
                       {network.addresses.length ? network.addresses.map((address) => (
                         <div key={`${address.family}-${address.address}`} className="py-0.5">
-                          <p className="font-mono text-xs">{addressLabel(address)}</p>
+                          <p className="flex items-center gap-1.5 font-mono text-xs"><Badge variant="outline" className="px-1 py-0 text-[9px] uppercase">{address.family || "ipv4"}</Badge>{addressLabel(address)}{address.ipv6Mode ? <Badge variant="secondary" className="px-1 py-0 text-[9px] uppercase">{address.ipv6Mode}</Badge> : null}</p>
                           {address.dhcpStart || address.dhcpEnd ? (
                             <p className="font-mono text-[10px] text-muted-foreground">DHCP {address.dhcpStart || "-"} - {address.dhcpEnd || "-"}</p>
                           ) : null}
@@ -74,6 +76,9 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                           ) : null}
                         </div>
                       )) : <span className="text-xs text-muted-foreground">{network.forwardMode === "bridge" ? "由上游网桥分配" : "未配置地址"}</span>}
+                      {network.natIpv6 ? <p className="mt-1 text-[10px] text-muted-foreground" title="NAT66 仅提供客户机出站访问，不含 IPv6 入站端口映射">NAT66 已启用（仅出站）</p> : null}
+                      {network.dnsDomain || network.dnsServers?.length ? <p className="mt-1 truncate text-[10px] text-muted-foreground" title={[network.dnsDomain, ...(network.dnsServers ?? [])].filter(Boolean).join(" · ")}>DNS {[network.dnsDomain, ...(network.dnsServers ?? [])].filter(Boolean).join(" · ")}</p> : null}
+                      {network.warnings?.length ? <p className="mt-1 flex items-start gap-1 text-[10px] text-warning" title={network.warnings.join("\n")}><Info className="mt-0.5 h-3 w-3 shrink-0" />{network.warnings.length} 条配置警告</p> : null}
                     </TableCell>
                     <TableCell>{network.autostart ? "是" : "否"}</TableCell>
                     <TableCell className="align-top">
@@ -103,6 +108,9 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                           </Button>
                           <Button type="button" variant={hostsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-hosts-${network.name}`} aria-label={`管理网络 ${network.name} 的静态主机`} title={network.forwardMode === "bridge" ? "外部桥接网络不提供 libvirt DHCP 静态主机配置" : staticHostCount(network) ? `管理静态主机（${staticHostCount(network)} 条）` : "管理静态主机条目"} disabled={network.forwardMode === "bridge"} onClick={() => onHosts(network)}>
                             <ListPlus className="h-3.5 w-3.5" />静态主机
+                          </Button>
+                          <Button type="button" variant={diagnosticsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-diagnostics-${network.name}`} aria-label={`诊断网络 ${network.name}`} title="检查 IPv6、转发、DHCPv6、NAT66 与 DNS 状态" onClick={() => onDiagnostics(network)}>
+                            <Stethoscope className="h-3.5 w-3.5" />诊断
                           </Button>
                         </div>
                         {hint ? (

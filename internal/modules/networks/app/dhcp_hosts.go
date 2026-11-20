@@ -65,7 +65,9 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 	existingByIP := map[string]domain.NetworkDHCPHost{}
 	for _, address := range network.Addresses {
 		for _, host := range address.Hosts {
-			existingByMAC[strings.ToLower(host.MAC)] = host
+			if host.MAC != "" {
+				existingByMAC[strings.ToLower(host.MAC)] = host
+			}
 			existingByIP[host.IP] = host
 		}
 	}
@@ -85,7 +87,7 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 				skipped++
 				continue
 			}
-			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("%w: DHCP host %s or %s already exists with different values", domain.ErrConflict, host.MAC, host.IP)
+			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("%w: DHCP host %s or %s already exists with different values", domain.ErrConflict, dhcpHostDisplayKey(host), host.IP)
 		}
 		batchMAC, seenMAC := batchByMAC[strings.ToLower(host.MAC)]
 		batchIP, seenIP := batchByIP[host.IP]
@@ -94,7 +96,7 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 				skipped++
 				continue
 			}
-			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("%w: duplicate DHCP host %s or %s in import", domain.ErrConflict, host.MAC, host.IP)
+			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("%w: duplicate DHCP host %s or %s in import", domain.ErrConflict, dhcpHostDisplayKey(host), host.IP)
 		}
 		address, err := validateNetworkDHCPHost(validation, host)
 		if err != nil {
@@ -106,7 +108,9 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 				break
 			}
 		}
-		batchByMAC[strings.ToLower(host.MAC)] = host
+		if host.MAC != "" {
+			batchByMAC[strings.ToLower(host.MAC)] = host
+		}
 		batchByIP[host.IP] = host
 		accepted = append(accepted, host)
 	}
@@ -119,7 +123,7 @@ func (s *Service) ImportDHCPHosts(ctx context.Context, command ImportNetworkDHCP
 			for _, importedHost := range slices.Backward(imported) {
 				_, _ = s.repository.DeleteNetworkDHCPHost(ctx, command.Name, importedHost)
 			}
-			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("import DHCP host %s: %w", host.MAC, err)
+			return domain.NetworkDHCPHostImportResult{}, fmt.Errorf("import DHCP host %s: %w", dhcpHostDisplayKey(host), err)
 		}
 		updated = next
 		imported = append(imported, host)
@@ -147,6 +151,8 @@ func ParseNetworkDHCPHostCSV(data []byte) ([]domain.NetworkDHCPHostCreateSpec, e
 		return nil, fmt.Errorf("%w: invalid CSV: %v", domain.ErrInvalidInput, err)
 	}
 	hosts := make([]domain.NetworkDHCPHostCreateSpec, 0, len(records))
+	format := ""
+	headerChecked := false
 	for index, record := range records {
 		fields := make([]string, len(record))
 		empty := true
@@ -159,13 +165,31 @@ func ParseNetworkDHCPHostCSV(data []byte) ([]domain.NetworkDHCPHostCreateSpec, e
 		if empty {
 			continue
 		}
-		if index == 0 && len(fields) >= 2 && strings.EqualFold(fields[0], "mac") && strings.EqualFold(fields[1], "ip") {
-			continue
+		if !headerChecked {
+			headerChecked = true
+			switch {
+			case len(fields) == 4 && strings.EqualFold(fields[0], "mac") && strings.EqualFold(fields[1], "id") && strings.EqualFold(fields[2], "ip"):
+				format = "extended"
+				continue
+			case len(fields) >= 2 && len(fields) <= 3 && strings.EqualFold(fields[0], "mac") && strings.EqualFold(fields[1], "ip"):
+				format = "legacy"
+				continue
+			default:
+				format = "legacy"
+			}
 		}
-		if len(fields) < 2 || len(fields) > 3 {
-			return nil, fmt.Errorf("%w: CSV row %d must contain mac, ip and optional name", domain.ErrInvalidInput, index+1)
+		switch format {
+		case "extended":
+			if len(fields) != 4 {
+				return nil, fmt.Errorf("%w: CSV row %d must contain mac,id,ip,name", domain.ErrInvalidInput, index+1)
+			}
+			hosts = append(hosts, domain.NetworkDHCPHostCreateSpec{MAC: fields[0], ID: fields[1], IP: fields[2], Name: fields[3]})
+		case "legacy":
+			if len(fields) < 2 || len(fields) > 3 {
+				return nil, fmt.Errorf("%w: CSV row %d must contain mac,ip,name or mac,id,ip,name", domain.ErrInvalidInput, index+1)
+			}
+			hosts = append(hosts, domain.NetworkDHCPHostCreateSpec{MAC: fields[0], IP: fields[1], Name: optionalCSVField(fields, 2)})
 		}
-		hosts = append(hosts, domain.NetworkDHCPHostCreateSpec{MAC: fields[0], IP: fields[1], Name: optionalCSVField(fields, 2)})
 	}
 	if len(hosts) == 0 {
 		return nil, fmt.Errorf("%w: CSV file contains no DHCP hosts", domain.ErrInvalidInput)
@@ -193,11 +217,11 @@ func encodeNetworkDHCPHostsCSV(network domain.VirtualNetwork) ([]byte, error) {
 	})
 	var output bytes.Buffer
 	writer := csv.NewWriter(&output)
-	if err := writer.Write([]string{"mac", "ip", "name"}); err != nil {
+	if err := writer.Write([]string{"mac", "id", "ip", "name"}); err != nil {
 		return nil, fmt.Errorf("write DHCP host CSV header: %w", err)
 	}
 	for _, host := range hosts {
-		if err := writer.Write([]string{host.MAC, host.IP, host.Name}); err != nil {
+		if err := writer.Write([]string{host.MAC, host.ID, host.IP, host.Name}); err != nil {
 			return nil, fmt.Errorf("write DHCP host CSV row: %w", err)
 		}
 	}
@@ -219,7 +243,7 @@ func cloneVirtualNetwork(network domain.VirtualNetwork) domain.VirtualNetwork {
 }
 
 func sameNetworkDHCPHost(left, right domain.NetworkDHCPHost) bool {
-	return strings.EqualFold(left.MAC, right.MAC) && left.IP == right.IP && left.Name == right.Name
+	return strings.EqualFold(left.MAC, right.MAC) && strings.EqualFold(left.ID, right.ID) && left.IP == right.IP && left.Name == right.Name
 }
 
 func optionalCSVField(fields []string, index int) string {

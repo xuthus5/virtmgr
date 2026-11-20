@@ -18,24 +18,24 @@ func TestVMMetadataStoreUpsertAndList(t *testing.T) {
 		t.Fatalf("missing metadata error = %v", err)
 	}
 	created, err := store.UpsertVMMetadata(ctx, domain.VMMetadata{
-		VMUUID: "vm-a", Tags: []string{"prod", "数据库"}, Note: "主业务虚拟机", Owner: "ops",
+		VMUUID: "vm-a", Tags: []string{"prod", "数据库"}, Note: "主业务虚拟机", Owner: "ops", Folder: "生产/数据库", ResourceGroup: "核心业务",
 		UpdatedBy: "admin", UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("UpsertVMMetadata() error = %v", err)
 	}
-	if created.VMUUID != "vm-a" || len(created.Tags) != 2 || created.Tags[1] != "数据库" || !created.UpdatedAt.Equal(now) {
+	if created.VMUUID != "vm-a" || len(created.Tags) != 2 || created.Tags[1] != "数据库" || created.Folder != "生产/数据库" || created.ResourceGroup != "核心业务" || !created.UpdatedAt.Equal(now) {
 		t.Fatalf("created metadata = %+v", created)
 	}
 
 	updated, err := store.UpsertVMMetadata(ctx, domain.VMMetadata{
-		VMUUID: "vm-a", Tags: []string{"test"}, Note: "更新", Owner: "dev",
+		VMUUID: "vm-a", Tags: []string{"test"}, Note: "更新", Owner: "dev", Folder: "测试", ResourceGroup: "研发",
 		UpdatedBy: "operator", UpdatedAt: now.Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("second UpsertVMMetadata() error = %v", err)
 	}
-	if len(updated.Tags) != 1 || updated.Tags[0] != "test" || updated.Owner != "dev" || updated.UpdatedBy != "operator" {
+	if len(updated.Tags) != 1 || updated.Tags[0] != "test" || updated.Owner != "dev" || updated.Folder != "测试" || updated.ResourceGroup != "研发" || updated.UpdatedBy != "operator" {
 		t.Fatalf("updated metadata = %+v", updated)
 	}
 
