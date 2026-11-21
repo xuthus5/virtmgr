@@ -1,8 +1,10 @@
-import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, CapacityForecastList, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DataPlaneOperation, DataPlaneOperationList, DataPlaneOperationResult, DatabaseRestoreStatus, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, GuestFilesystemSampleList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, NetworkDNSHostInput, NetworkDiagnostics, NetworkLeaseReservationInput, Overview, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkModelInput, VMNetworkQoSInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
+import type { AlertRule, AlertRuleInput, AlertRuleList, APITokenCreateInput, APITokenCreated, APITokenList, AuditEventFilters, AuditEventList, AuditExportFormat, Backup, BackupCreateInput, BackupFilters, BackupList, BackupPinInput, BackupRepository, BackupRepositoryInput, BackupRepositoryList, BackupSchedule, BackupScheduleInput, BackupScheduleList, BackupSummary, CapacityForecastList, ChangePasswordInput, ConsoleTicket, ConsoleTokenInput, DataPlaneOperation, DataPlaneOperationList, DataPlaneOperationResult, DatabaseRestoreStatus, DHCPLeaseList, GuestAgentActionInput, GuestAgentAuthorizedKeys, GuestAgentCloudInit, GuestAgentDiagnostics, GuestAgentFileContent, GuestAgentFileWriteInput, GuestAgentFileWriteResponse, GuestAgentFilesystemResizeInput, GuestAgentFilesystemResizeResponse, GuestAgentHealthHistory, GuestAgentInfo, GuestAgentPackageInventory, GuestAgentPasswordInput, GuestAgentPolicy, GuestAgentPolicyInput, GuestAgentProcessList, GuestAgentProcessSignalInput, GuestAgentServiceList, GuestAgentSSHKeyInput, GuestAgentUserList, GuestFilesystemSampleList, HostBridgeList, HostDetails, HostDeviceList, HostMetrics, MetricHistoryFilters, MetricSampleList, NetworkDHCPHostImportResult, NetworkDHCPHostInput, NetworkDNSHostInput, NetworkDiagnostics, NetworkLeaseReservationInput, Overview, PortForward, PortForwardInput, PortForwardList, SendConsoleKeyInput, Session, Settings, SettingsUpdateInput, SnapshotPolicy, SnapshotPolicyInput, SnapshotPolicyList, SnapshotPolicyRunResult, StoragePool, StoragePoolAction, StoragePoolCreateInput, StoragePoolList, StorageVolume, StorageVolumeConvertInput, StorageVolumeCreateInput, StorageVolumeFlattenInput, StorageVolumeList, SystemInfo, Task, TaskFilters, TaskList, User, UserCreateInput, UserList, UserSessionList, UserUpdateInput, VirtualNetwork, VirtualNetworkAction, VirtualNetworkCreateInput, VirtualNetworkList, VirtualNetworkUpdateInput, VMAction, VMAutostartInput, VMBackupInput, VMBatchActionInput, VMBatchActionResult, VMCloneInput, VMConfigVersion, VMConfigVersionDetail, VMConfigVersionList, VMConfigVersionProtectInput, VMConfigVersionRollbackInput, VMBootInput, VMCPUUpdateInput, VMCreateInput, VMDeviceInput, VMDiskAttachInput, VMDiskMigrateInput, VMDiskQoSInput, VMDiskResizeInput, VMExport, VMImage, VMImageInput, VMImageList, VMImportInput, VMISOAttachInput, VMMetadata, VMMetadataInput, VMNetworkAttachInput, VMNetworkModelInput, VMNetworkQoSInput, VMPlacementInput, VMResourcesInput, VMRestoreInput, VM, VMMetrics, VMSnapshot, VMSnapshotCreateInput, VMSnapshotList, VMSummaryList, VMState, VMTemplate, VMTemplateInput, VMTemplateList, VMXML, VMXMLFormat, VMXMLUpdateInput } from "@/api/types";
 
 let csrfToken = "";
 
 export const openapiUrl = "/api/v1/openapi.json";
+
+export const backupExportUrl = (id: string) => `/api/v1/backups/${encodeURIComponent(id)}/export`;
 
 export const unauthorizedEvent = "virtmgr:unauthorized";
 
@@ -142,6 +144,19 @@ export const api = {
   networkBridges: () => request<HostBridgeList>("/api/v1/networks/bridges"),
   networkLeases: (name: string) => request<DHCPLeaseList>(`/api/v1/networks/${encodeURIComponent(name)}/leases`),
   networkDiagnostics: (name: string) => request<NetworkDiagnostics>(`/api/v1/networks/${encodeURIComponent(name)}/diagnostics`),
+  networkPortForwards: (name: string) => request<PortForwardList>(`/api/v1/networks/${encodeURIComponent(name)}/port-forwards`),
+  createNetworkPortForward: (name: string, input: PortForwardInput) => request<PortForward>(
+    `/api/v1/networks/${encodeURIComponent(name)}/port-forwards`,
+    { method: "POST", body: JSON.stringify(input) },
+  ),
+  updateNetworkPortForward: (name: string, id: string, input: PortForwardInput) => request<PortForward>(
+    `/api/v1/networks/${encodeURIComponent(name)}/port-forwards/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  ),
+  deleteNetworkPortForward: (name: string, id: string) => request<void>(
+    `/api/v1/networks/${encodeURIComponent(name)}/port-forwards/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  ),
   createNetwork: (input: VirtualNetworkCreateInput) => request<VirtualNetwork>("/api/v1/networks", {
     method: "POST",
     body: JSON.stringify(input),
@@ -194,6 +209,9 @@ export const api = {
   vm: (uuid: string) => request<VM>(`/api/v1/vms/${encodeURIComponent(uuid)}`),
   guestAgent: (uuid: string, refresh = false) => request<GuestAgentInfo>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent${refresh ? "?refresh=true" : ""}`,
+  ),
+  guestAgentPackages: (uuid: string) => request<GuestAgentPackageInventory>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/packages`,
   ),
   performGuestAgentAction: (uuid: string, input: GuestAgentActionInput) => request<Task>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/guest-agent/actions`,
@@ -361,6 +379,17 @@ export const api = {
     return request<BackupList>(`/api/v1/backups${suffix ? `?${suffix}` : ""}`);
   },
   backup: (id: string) => request<Backup>(`/api/v1/backups/${encodeURIComponent(id)}`),
+  importBackup: (file: File, input: { name?: string; repositoryId?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (input.name?.trim()) params.set("name", input.name.trim());
+    if (input.repositoryId) params.set("repositoryId", input.repositoryId);
+    const suffix = params.toString();
+    return request<Backup>(`/api/v1/backups/import${suffix ? `?${suffix}` : ""}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: file,
+    });
+  },
   backupSummary: (vmUuid = "") => request<BackupSummary>(`/api/v1/backups/summary${vmUuid ? `?vmUuid=${encodeURIComponent(vmUuid)}` : ""}`),
   createBackup: (input: BackupCreateInput) => request<Task>("/api/v1/backups", {
     method: "POST",
@@ -407,6 +436,10 @@ export const api = {
   ),
   updateVMResources: (uuid: string, input: VMResourcesInput) => request<VM>(
     `/api/v1/vms/${encodeURIComponent(uuid)}/resources`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  ),
+  updateVMPlacement: (uuid: string, input: VMPlacementInput) => request<VM>(
+    `/api/v1/vms/${encodeURIComponent(uuid)}/placement`,
     { method: "PATCH", body: JSON.stringify(input) },
   ),
   updateVMBoot: (uuid: string, input: VMBootInput) => request<VM>(

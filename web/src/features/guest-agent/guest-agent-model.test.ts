@@ -29,6 +29,7 @@ function connectedInfo(overrides: Partial<GuestAgentInfo> = {}): GuestAgentInfo 
       users: false,
       timezone: false,
       networkRoutes: false,
+      packages: false,
     },
     probedAt: "2026-01-01T00:00:00Z",
     ...overrides,

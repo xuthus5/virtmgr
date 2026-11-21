@@ -375,7 +375,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
       ) : null}
       {activeTab === "guest" ? (
         <div role="tabpanel" id="vm-tabpanel-guest" aria-labelledby="vm-tab-guest" data-testid="vm-tabpanel-guest">
-          <VMGuestAgentCard vm={vm} canMutate={canMutate} disabledReason={snapshotDisabledReason} />
+          <VMGuestAgentCard vm={vm} canMutate={canMutate} canReadGuestData={!viewer} disabledReason={snapshotDisabledReason} />
         </div>
       ) : null}
       {activeTab === "snapshots" ? (

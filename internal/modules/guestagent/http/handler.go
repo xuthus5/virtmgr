@@ -297,6 +297,21 @@ func (h *Handler) ListUsers(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, map[string]any{"items": result, "total": len(result)})
 }
 
+func (h *Handler) ListPackages(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	context, ok := h.mutationContext(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListPackages(r.Context(), guestagentapp.PackageCommand{
+		UUID: chi.URLParam(r, "uuid"), Request: context,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) GetPolicy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	context, ok := h.mutationContext(w, r)
 	if !ok {
@@ -366,6 +381,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/vms/{uuid}/guest-agent/diagnostics", h.Diagnostics)
 	r.Get("/vms/{uuid}/guest-agent/cloud-init", h.CloudInit)
 	r.Get("/vms/{uuid}/guest-agent/users", h.ListUsers)
+	r.Get("/vms/{uuid}/guest-agent/packages", h.ListPackages)
 	r.Get("/vms/{uuid}/guest-agent/policy", h.GetPolicy)
 	r.Get("/vms/{uuid}/guest-agent/health", h.Health)
 	r.Group(func(mutating chi.Router) {

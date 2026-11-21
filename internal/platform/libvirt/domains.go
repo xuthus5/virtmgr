@@ -402,6 +402,7 @@ func domainFromLibvirt(dom *libvirt.Domain) (domain.VM, error) {
 		AgentConfigured: agentConfigured,
 		AgentState:      agentState,
 		AllowedActions:  allowedActions(state),
+		Placement:       details.Placement,
 	}, nil
 }
 

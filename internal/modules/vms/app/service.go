@@ -56,6 +56,10 @@ type VMDiskMigrationRepository interface {
 	MigrateVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskMigrateSpec) (domain.VM, error)
 }
 
+type VMPlacementRepository interface {
+	UpdateVMPlacement(ctx context.Context, uuid string, spec domain.VMPlacementSpec) (domain.VM, error)
+}
+
 type VMMetadataRepository interface {
 	ListVMMetadata(ctx context.Context) (map[string]domain.VMMetadata, error)
 	GetVMMetadata(ctx context.Context, uuid string) (domain.VMMetadata, error)
@@ -300,6 +304,12 @@ type SetAutostartCommand struct {
 type UpdateResourcesCommand struct {
 	UUID    string
 	Spec    domain.VMResourcesSpec
+	Request MutationContext
+}
+
+type UpdatePlacementCommand struct {
+	UUID    string
+	Spec    domain.VMPlacementSpec
 	Request MutationContext
 }
 
@@ -876,6 +886,58 @@ func (s *Service) UpdateResources(ctx context.Context, command UpdateResourcesCo
 		return domain.VM{}, fmt.Errorf("record VM resources audit: %w", err)
 	}
 	return updated, nil
+}
+
+func (s *Service) UpdatePlacement(ctx context.Context, command UpdatePlacementCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	detail := placementDetail(command.Spec)
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, domain.ErrReadOnly)
+	}
+	updater, ok := s.repository.(VMPlacementRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, domain.ErrUnavailable)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, domain.ErrActionNotAllowed)
+	}
+	normalized, err := domain.NormalizeVMPlacement(command.Spec, uint64(max(vm.VCPUs, uint(1))), max(vm.MemoryBytes/(1024*1024), uint64(1)))
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, err)
+	}
+	detail = placementDetail(normalized)
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	updated, err := updater.UpdateVMPlacement(ctx, command.UUID, normalized)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.placement.update", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourcePlacement, 0, "更新 CPU 亲和性、NUMA 或 HugePages 后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.placement.update", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM placement audit: %w", err)
+	}
+	return updated, nil
+}
+
+func placementDetail(spec domain.VMPlacementSpec) map[string]any {
+	return map[string]any{
+		"hugePageSize": spec.HugePageSize,
+		"numaCells":    len(spec.NUMACells),
+		"vcpuPins":     len(spec.VCPUPins),
+		"emulatorPin":  spec.EmulatorPin,
+	}
 }
 
 func vmResourcesLive(state domain.VMState) bool {
@@ -1651,6 +1713,13 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 	}
 	if spec.MemoryMiB < minMemoryMiB || spec.MemoryMiB > maxMemoryMiB {
 		return domain.VMCreateSpec{}, fmt.Errorf("%w: memory must be between %d and %d MiB", domain.ErrInvalidInput, minMemoryMiB, maxMemoryMiB)
+	}
+	if spec.Placement != nil {
+		normalized, err := domain.NormalizeVMPlacement(*spec.Placement, uint64(spec.VCPUs), spec.MemoryMiB)
+		if err != nil {
+			return domain.VMCreateSpec{}, err
+		}
+		spec.Placement = &normalized
 	}
 	if spec.ImageID > 0 {
 		if spec.DiskPath != "" {

@@ -59,10 +59,10 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 域 XML | 使用 CodeMirror 查看 live 或持久配置；管理员可在可写模式中校验并编辑持久配置 |
 | 配置版本历史 | 配置变更和外部 libvirt 修改后自动归档持久域 XML；支持对比、固定、下载和回滚到早期定义 |
 | 快照 | 创建、回滚、删除快照，并按固定间隔或每日时刻和保留策略配置定时快照 |
-| 备份中心 | 集中管理冷备份和运行中虚拟机在线备份、Guest Agent 静默、一致性/vTPM 状态、恢复为新虚拟机、固定间隔/每日计划、保留清理、固定保留、失败重试和任务 SSE 状态 |
+| 备份中心 | 集中管理冷备份和运行中虚拟机在线备份、Guest Agent 静默、一致性/vTPM 状态、备份 ZIP 包导出/导入、恢复为新虚拟机、固定间隔/每日计划、保留清理、固定保留、失败重试和任务 SSE 状态 |
 | 镜像库 | 登记已有 qcow2/raw 卷及 OS 元数据；按需刷新容量和 SHA-256；模板可绑定镜像；从镜像全量克隆，或对同存储池 qcow2 镜像创建链接克隆；移除登记不会删除底层卷 |
 | 存储 | 管理目录型存储池；启动、停止、刷新和删除定义；创建 qcow2/raw 卷；流式上传 ISO、qcow2 和 raw 镜像；阻止删除仍在使用的卷 |
-| 网络 | NAT、隔离和外部桥接网络；IPv4-only、双栈和 IPv6-only 管理型网络；DHCP、SLAAC、有状态 DHCPv6、NAT66、网络 MTU、DNS 转发与静态 A/AAAA 记录；宿主机网桥发现、实时租约、IPv4/IPv6 静态主机及 CSV 批量导入/导出、网络诊断，以及创建、编辑、启停和删除 |
+| 网络 | NAT、隔离和外部桥接网络；IPv4-only、双栈和 IPv6-only 管理型网络；DHCP、SLAAC、有状态 DHCPv6、NAT66、网络 MTU、DNS 转发与静态 A/AAAA 记录；NAT 网络 IPv4/IPv6 TCP/UDP 入站端口转发、宿主机网桥发现、实时租约、IPv4/IPv6 静态主机及 CSV 批量导入/导出、网络诊断，以及创建、编辑、启停和删除 |
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
 | 可观测性 | SSE 实时事件与任务状态、任务失败重试、宿主机和运行中 VM 的 7 天历史指标、Prometheus `/metrics`、CPU/内存阈值 Webhook 告警、结构化日志和健康检查 |
 | 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、带作用域且可撤销的 Bearer API Token、OpenAPI 3.1、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选/导出/按保留期清理的审计、CSP 和安全响应头 |
@@ -317,7 +317,7 @@ sudo -u virtmgr /usr/local/bin/virtmgr reset-password --username admin --config 
 - **Cloud-init 内容不写入审计。** 审计仅记录是否启用、存储池和字节数，不保存用户数据正文。
 - **XML 编辑受到严格限制。** 只有可写模式下的管理员才能更新持久配置；名称和 UUID 不可变，QEMU commandline 命名空间会被拒绝，保存前由 libvirt 完成语义校验。
 - **配置回滚只恢复 XML。** 版本历史保存压缩后的持久定义，不包含磁盘、快照或运行内存。回滚仅限管理员，会校验当前 SHA-256 以避免覆盖并发修改，先自动归档当前配置；运行中的虚拟机需重启后生效。
-- **Guest Agent 为可选组件并按能力授权。** 新建虚拟机默认挂载 QGA 通道，已有持久域只能在关机或异常停止时补齐。虚拟机详情顶部始终提供“修改客户机密码”入口并打开聚焦弹窗；即使 Agent 未连接也不会静默隐藏入口，而是显示安装/连接原因和恢复指引。Agent 关机、重启、时间同步、TRIM、静默快照、受限文件读写、密码重置、SSH 公钥、登录用户、SIGTERM/SIGKILL 进程操作和非根文件系统在线扩容仅在客户机声明对应能力时开放。Linux 客户机还可读取 Cloud-init 执行状态、失败 systemd 服务、内核/系统错误、OOM 事件和固定日志尾部；这些诊断只执行固定路径的 `systemctl`/`journalctl` 查询，并限制条数和输出大小。VirtMgr **不提供通用任意命令接口**：进程读取只调用固定路径的 `/bin/ps` 或 `/usr/bin/ps`，终止只调用固定路径的 `/bin/kill` 或 `/usr/bin/kill`。文件操作只允许绝对路径、单次最多 1 MiB、按 64 KiB 分块；密码和完整 SSH 公钥永不写入审计，仅保留指纹与数量。
+- **Guest Agent 为可选组件并按能力授权。** 新建虚拟机默认挂载 QGA 通道，已有持久域只能在关机或异常停止时补齐。虚拟机详情顶部始终提供“修改客户机密码”入口并打开聚焦弹窗；即使 Agent 未连接也不会静默隐藏入口，而是显示安装/连接原因和恢复指引。Agent 关机、重启、时间同步、TRIM、静默快照、受限文件读写、密码重置、SSH 公钥、登录用户、SIGTERM/SIGKILL 进程操作、非根文件系统在线扩容和只读软件包/更新清单仅在客户机声明对应能力时开放。Linux 客户机还可读取 Cloud-init 执行状态、失败 systemd 服务、内核/系统错误、OOM 事件和固定日志尾部；这些诊断只执行固定路径的 `systemctl`/`journalctl` 查询，并限制条数和输出大小。软件包清单同样只读，使用固定 `dpkg-query`/`apt-get -s`、`rpm`、`dnf`/`yum` 或 `zypper` 查询，不执行安装、升级、卸载或软件源刷新。VirtMgr **不提供通用任意命令接口**：进程读取只调用固定路径的 `/bin/ps` 或 `/usr/bin/ps`，终止只调用固定路径的 `/bin/kill` 或 `/usr/bin/kill`。文件操作只允许绝对路径、单次最多 1 MiB、按 64 KiB 分块；密码和完整 SSH 公钥永不写入审计，仅保留指纹与数量。
 
 ## API
 
@@ -392,12 +392,12 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 运行环境为 Linux + KVM/QEMU + libvirt Go binding；构建需要 CGO 和 libvirt 开发头文件。
 - 图形控制台当前仅支持 VNC，不支持 SPICE。串口控制台支持 libvirt PTY 设备，同一串口设备同时只允许一个交互会话。
 - 容器部署需要挂载宿主机 libvirt socket，并使用与 socket 组 ID 匹配的补充组；需要直接访问存储路径时还应以相同路径挂载对应目录。
-- 备份支持持久虚拟机的冷全量备份，以及运行中虚拟机的在线全量备份；在线模式仅支持文件型源存储池，使用外部磁盘快照和活动 block commit。增量备份、原地覆盖恢复、跨宿主机复制和浏览器下载备份均未实现。
+- 备份支持持久虚拟机的冷全量备份，以及运行中虚拟机的在线全量备份；在线模式仅支持文件型源存储池，使用外部磁盘快照和活动 block commit。已完成备份可下载为自包含 ZIP 包并重新导入备份目录，导入会生成新的备份 ID 和产物名称。增量备份、原地覆盖恢复、跨宿主机复制和自动内容校验未实现。
 - 虚拟机导入支持活跃存储池中的 QCOW2/RAW 系统盘和 ISO 安装介质；ISO 模式会创建空白系统盘并保留 ISO 作为只读光驱。导入不直接接受 OVA/OVF、VMDK 和 VHDX；已有空闲 qcow2/raw 卷可在存储页转换格式或复制到其他池。
 - 镜像库支持上传 qcow2/raw、从镜像全量克隆，以及同存储池 qcow2 镜像的链接克隆；存储页支持空闲卷 qcow2/raw 格式转换、跨池复制和链接克隆展平。关机/异常停止虚拟机的数据盘可跨池迁移并自动切换持久域引用，但跨池链接克隆尚未实现。
 - 创建和导入虚拟机时，架构与机型来自宿主机 libvirt 能力探测；可显式选择架构和机型，并校验 UEFI、Secure Boot 与镜像架构兼容性。未指定时保持 x86_64/BIOS 兼容默认，ARM64 宿主默认使用 `virt` 机型。
 - 自动备份校验和夏令时特殊处理不在当前范围；每日调度使用服务端本地时区。
-- 管理型 NAT/隔离网络支持 IPv4-only、双栈和 IPv6-only。IPv4 使用 DHCP；IPv6 支持 SLAAC（`/64`）和有状态 DHCPv6（`/64` 至 `/124`），NAT 双栈网络默认启用 NAT66。支持 DNS 转发、DHCPv6 DUID/Client ID 静态主机、网络诊断及 CSV 批量导入/导出。外部桥接网络接入宿主机已有 Linux 网桥，并使用上游网络提供的地址/DHCP；单块网卡可设置入站/出站带宽 QoS。VirtMgr 不创建宿主机网桥，也不管理 VLAN、bond、OVS、SR-IOV、显式 RA 参数/前缀委派、IPv6 入站端口映射或安全组。
+- 管理型 NAT/隔离网络支持 IPv4-only、双栈和 IPv6-only。IPv4 使用 DHCP；IPv6 支持 SLAAC（`/64`）和有状态 DHCPv6（`/64` 至 `/124`），NAT 双栈网络默认启用 NAT66。支持 DNS 转发、DHCPv6 DUID/Client ID 静态主机、网络诊断及 CSV 批量导入/导出。NAT 网络支持 IPv4/IPv6 TCP/UDP 入站端口转发，通过受控 `virtmgr_pf` nftables 表实现，运行服务需要 `CAP_NET_ADMIN`。外部桥接网络接入宿主机已有 Linux 网桥，并使用上游网络提供的地址/DHCP；单块网卡可设置入站/出站带宽 QoS。VirtMgr 不创建宿主机网桥，也不管理 VLAN、bond、OVS、SR-IOV、显式 RA 参数/前缀委派或安全组。
 - 告警仅支持现有规则级 Webhook；不提供通知中心、SMTP、Slack/Teams、PagerDuty、通知静默或升级策略。
 - 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。
 - 建议使用较新的 Chrome、Edge、Firefox 或 Safari。

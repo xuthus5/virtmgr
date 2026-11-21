@@ -1,4 +1,4 @@
-import { Activity, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Router, ScrollText, Square, Stethoscope, Trash2 } from "lucide-react";
+import { Activity, ArrowRightLeft, GitBranch, Info, ListPlus, LoaderCircle, Network, Pencil, Play, Router, ScrollText, Square, Stethoscope, Trash2 } from "lucide-react";
 import type { Role, VirtualNetwork, VirtualNetworkAction } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { networkActionHint, networkEditDisabledReason } from "@/features/networks/network-edit-model";
 import { addressLabel, staticHostCount } from "@/features/networks/network-ui";
 
-export function NetworkTableCard({ networks, total, active, bridges, nat, role, readOnly, canManage, editTargetName, leasesNetwork, hostsNetwork, diagnosticsNetwork, actionPendingName, actionPendingAction, updatePending, deletePending, onEdit, onAction, onDelete, onLeases, onHosts, onDiagnostics }: {
+export function NetworkTableCard({ networks, total, active, bridges, nat, role, readOnly, canManage, editTargetName, leasesNetwork, hostsNetwork, diagnosticsNetwork, portForwardsNetwork, actionPendingName, actionPendingAction, updatePending, deletePending, onEdit, onAction, onDelete, onLeases, onHosts, onDiagnostics, onPortForwards }: {
   networks: VirtualNetwork[];
   total: number;
   active: number;
@@ -21,6 +21,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
   leasesNetwork: string | null;
   hostsNetwork: string | null;
   diagnosticsNetwork: string | null;
+  portForwardsNetwork: string | null;
   actionPendingName?: string;
   actionPendingAction?: VirtualNetworkAction;
   updatePending: boolean;
@@ -31,6 +32,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
   onLeases: (network: VirtualNetwork) => void;
   onHosts: (network: VirtualNetwork) => void;
   onDiagnostics: (network: VirtualNetwork) => void;
+  onPortForwards: (network: VirtualNetwork) => void;
 }) {
   return <>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -113,6 +115,9 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
                           </Button>
                           <Button type="button" variant={diagnosticsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-diagnostics-${network.name}`} aria-label={`诊断网络 ${network.name}`} title="检查 IPv6、转发、DHCPv6、NAT66 与 DNS 状态" onClick={() => onDiagnostics(network)}>
                             <Stethoscope className="h-3.5 w-3.5" />诊断
+                          </Button>
+                          <Button type="button" variant={portForwardsNetwork === network.name ? "secondary" : "outline"} size="sm" data-testid={`network-port-forwards-${network.name}`} aria-label={`管理网络 ${network.name} 的入站端口转发`} title={network.forwardMode === "nat" ? "管理 IPv4/IPv6 入站端口转发" : "仅 NAT 网络支持入站端口转发"} disabled={network.forwardMode !== "nat"} onClick={() => onPortForwards(network)}>
+                            <ArrowRightLeft className="h-3.5 w-3.5" />端口转发
                           </Button>
                         </div>
                         {hint ? (

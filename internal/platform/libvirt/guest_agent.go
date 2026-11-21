@@ -393,6 +393,7 @@ func guestAgentCapabilities(response guestInfoResponse) domain.GuestAgentCapabil
 		NetworkRoutes: commands["guest-network-get-route"],
 	}
 	capabilities.FilesystemResize = capabilities.Processes && capabilities.FSInfo
+	capabilities.Packages = capabilities.Processes && capabilities.OSInfo
 	return capabilities
 }
 

@@ -117,6 +117,9 @@ type NetworkDiagnostics struct {
 	NATIPv6           bool           `json:"natIpv6"`
 	NAT66Firewall     bool           `json:"nat66Firewall"`
 	FirewallBackend   string         `json:"firewallBackend,omitempty"`
+	PortForwardRules  int            `json:"portForwardRules"`
+	PortForwardReady  bool           `json:"portForwardReady"`
+	PortForwardError  string         `json:"portForwardError,omitempty"`
 	DHCPv6Range       bool           `json:"dhcpv6Range"`
 	DHCPv6Service     bool           `json:"dhcpv6Service"`
 	RAService         bool           `json:"raService"`
@@ -210,6 +213,56 @@ type VirtualNetworkDefinition struct {
 	Bridge        string
 	Autostart     bool
 	Start         bool
+}
+
+type PortForwardProtocol string
+
+const (
+	PortForwardProtocolTCP PortForwardProtocol = "tcp"
+	PortForwardProtocolUDP PortForwardProtocol = "udp"
+)
+
+func NormalizePortForwardProtocol(value string) (PortForwardProtocol, bool) {
+	switch PortForwardProtocol(value) {
+	case PortForwardProtocolTCP, PortForwardProtocolUDP:
+		return PortForwardProtocol(value), true
+	default:
+		return "", false
+	}
+}
+
+// PortForward describes an inbound DNAT rule owned by VirtMgr.
+// HostAddress is optional; an empty value matches all host addresses.
+type PortForward struct {
+	ID           string              `json:"id"`
+	Network      string              `json:"network"`
+	Name         string              `json:"name"`
+	Family       string              `json:"family"`
+	Protocol     PortForwardProtocol `json:"protocol"`
+	HostAddress  string              `json:"hostAddress,omitempty"`
+	HostPort     uint16              `json:"hostPort"`
+	GuestAddress string              `json:"guestAddress"`
+	GuestPort    uint16              `json:"guestPort"`
+	Enabled      bool                `json:"enabled"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+}
+
+type PortForwardSpec struct {
+	Name         string              `json:"name"`
+	Family       string              `json:"family"`
+	Protocol     PortForwardProtocol `json:"protocol"`
+	HostAddress  string              `json:"hostAddress,omitempty"`
+	HostPort     uint16              `json:"hostPort"`
+	GuestAddress string              `json:"guestAddress"`
+	GuestPort    uint16              `json:"guestPort"`
+	Enabled      bool                `json:"enabled"`
+}
+
+type PortForwardList struct {
+	Network string        `json:"network"`
+	Items   []PortForward `json:"items"`
+	Total   int           `json:"total"`
 }
 
 func CanManageNetworks(role Role) bool {

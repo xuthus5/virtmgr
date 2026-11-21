@@ -1,4 +1,4 @@
-import { Info, LoaderCircle, Pin, PinOff, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { Download, Info, LoaderCircle, Pin, PinOff, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import type { Backup, Role } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,12 +6,14 @@ import { actionReason, backupStatusMeta, formatBytes, formatTime, verifyMeta } f
 import { cn } from "@/lib/utils";
 
 
-export function BackupActions({ backup, role, readOnly, pinPending, onDetail, onVerify, onRestore, onDelete, onPin }: {
+export function BackupActions({ backup, role, readOnly, pinPending, exportPending, onDetail, onExport, onVerify, onRestore, onDelete, onPin }: {
   backup: Backup;
   role: Role | undefined;
   readOnly: boolean;
   pinPending: boolean;
+  exportPending: boolean;
   onDetail: () => void;
+  onExport: () => void;
   onVerify: () => void;
   onRestore: () => void;
   onDelete: () => void;
@@ -20,8 +22,10 @@ export function BackupActions({ backup, role, readOnly, pinPending, onDetail, on
   const verifyReason = actionReason(role, readOnly, "verify") || (backup.status !== "completed" ? "只有已完成的备份可校验" : "");
   const restoreReason = actionReason(role, readOnly, "restore") || (backup.status !== "completed" ? "只有已完成的备份可恢复" : "");
   const deleteReason = actionReason(role, readOnly, "delete") || (backup.status === "running" || backup.status === "deleting" ? "执行中的备份不能删除" : "");
+  const exportReason = actionReason(role, readOnly, "create") || (backup.status !== "completed" ? "只有已完成的备份可导出" : "");
   return <div className="flex flex-wrap justify-end gap-1">
     <Button variant="ghost" size="sm" title="查看备份详情" aria-label={`查看 ${backup.name} 详情`} data-testid={`backup-detail-${backup.id}`} onClick={onDetail}><Info className="h-4 w-4" />详情</Button>
+    <Button variant="ghost" size="sm" disabled={Boolean(exportReason) || exportPending} title={exportReason || "下载可移植备份 ZIP 包"} aria-label={`下载 ${backup.name} 备份包`} data-testid={`backup-export-${backup.id}`} onClick={onExport}>{exportPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{exportPending ? "下载中" : "下载包"}</Button>
     <Button variant="ghost" size="sm" disabled={Boolean(verifyReason)} title={verifyReason || "校验备份完整性"} aria-label={`校验 ${backup.name}`} data-testid={`backup-verify-${backup.id}`} onClick={onVerify}><ShieldCheck className="h-4 w-4" />校验</Button>
     <Button variant="ghost" size="sm" disabled={Boolean(restoreReason)} title={restoreReason || "恢复为一台新虚拟机"} aria-label={`恢复 ${backup.name}`} data-testid={`backup-restore-${backup.id}`} onClick={onRestore}><RotateCcw className="h-4 w-4" />恢复</Button>
     <Button variant="ghost" size="sm" disabled={Boolean(actionReason(role, readOnly, "create")) || pinPending} title={pinPending ? "正在更新固定保留状态" : actionReason(role, readOnly, "create") || (backup.pinned ? "取消固定保留" : "固定保留，自动清理时跳过")} aria-label={backup.pinned ? `取消固定 ${backup.name}` : `固定 ${backup.name}`} data-testid={`backup-pin-${backup.id}`} onClick={onPin}>{pinPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : backup.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}{pinPending ? "更新中" : backup.pinned ? "取消固定" : "固定"}</Button>

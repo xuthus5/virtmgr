@@ -29,6 +29,7 @@ type fakeBackend struct {
 	diagnostics domain.GuestAgentDiagnostics
 	resize      domain.GuestAgentFilesystemResizeResult
 	resizeSpec  domain.GuestAgentFilesystemResizeSpec
+	packages    domain.GuestAgentPackageInventory
 }
 
 func (f *fakeBackend) GetGuestAgentInfo(context.Context, string, bool) (domain.GuestAgentInfo, error) {
@@ -101,6 +102,10 @@ func (f *fakeBackend) SignalGuestAgentProcess(_ context.Context, _ string, spec 
 
 func (f *fakeBackend) ListGuestAgentUsers(context.Context, string) ([]domain.GuestAgentUser, error) {
 	return f.users, nil
+}
+
+func (f *fakeBackend) ListGuestAgentPackages(context.Context, string) (domain.GuestAgentPackageInventory, error) {
+	return f.packages, nil
 }
 
 func (f *fakeBackend) GetGuestAgentCloudInit(context.Context, string) (domain.GuestAgentCloudInit, error) {
@@ -348,6 +353,40 @@ func TestGuestAgentListOperationsAuditCounts(t *testing.T) {
 		if event.Result != "success" || event.Detail["count"] != want[event.Action] {
 			t.Fatalf("audit event = %+v", event)
 		}
+	}
+}
+
+func TestGuestAgentPackagesPermissionsAndCompactAudit(t *testing.T) {
+	backend := &fakeBackend{packages: domain.GuestAgentPackageInventory{
+		Manager: "dpkg/apt", Total: 128, Upgradable: 7, SecurityUpdates: 2, Truncated: true,
+		Items: []domain.GuestAgentPackage{{Name: "private-package-name", Version: "1.2.3"}},
+	}}
+	audit := &fakeAudit{}
+	service := New(backend, audit, false)
+	result, err := service.ListPackages(context.Background(), PackageCommand{UUID: " vm-1 ", Request: operatorRequest()})
+	if err != nil {
+		t.Fatalf("ListPackages() error = %v", err)
+	}
+	if result.Total != 128 || result.Upgradable != 7 || len(result.Items) != 1 {
+		t.Fatalf("inventory = %+v", result)
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("audit events = %+v", audit.events)
+	}
+	event := audit.events[0]
+	if event.Action != "vm.guest_agent.packages.list" || event.Result != "success" || event.Detail["total"] != 128 || event.Detail["securityUpdates"] != 2 {
+		t.Fatalf("audit event = %+v", event)
+	}
+	if _, exists := event.Detail["items"]; exists {
+		t.Fatalf("audit leaked package list: %+v", event.Detail)
+	}
+	viewer := operatorRequest()
+	viewer.Session.User.Role = domain.RoleViewer
+	if _, err := service.ListPackages(context.Background(), PackageCommand{UUID: "vm-1", Request: viewer}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("viewer packages error = %v", err)
+	}
+	if _, err := service.ListPackages(context.Background(), PackageCommand{UUID: " ", Request: operatorRequest()}); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("empty UUID error = %v", err)
 	}
 }
 

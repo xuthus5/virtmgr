@@ -39,6 +39,7 @@ type VMBackend interface {
 	GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
+	ListGuestAgentPackages(ctx context.Context, uuid string) (domain.GuestAgentPackageInventory, error)
 	GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error)
 }
 
@@ -144,6 +145,11 @@ type FilesystemGrowResponse struct {
 type PolicyCommand struct {
 	UUID    string
 	Spec    domain.GuestAgentPolicySpec
+	Request MutationContext
+}
+
+type PackageCommand struct {
+	UUID    string
 	Request MutationContext
 }
 
@@ -573,6 +579,30 @@ func (s *Service) ListUsers(ctx context.Context, command ProcessCommand) ([]doma
 		return nil, fmt.Errorf("record guest agent users audit: %w", err)
 	}
 	return users, nil
+}
+
+func (s *Service) ListPackages(ctx context.Context, command PackageCommand) (domain.GuestAgentPackageInventory, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	if command.UUID == "" {
+		return domain.GuestAgentPackageInventory{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.GuestAgentPackageInventory{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.packages.list", command.UUID, nil, domain.ErrForbidden)
+	}
+	started := time.Now()
+	inventory, err := s.backend.ListGuestAgentPackages(ctx, command.UUID)
+	if err != nil {
+		return domain.GuestAgentPackageInventory{}, s.recordFailure(ctx, command.Request, "vm.guest_agent.packages.list", command.UUID, nil, err)
+	}
+	detail := map[string]any{
+		"manager": inventory.Manager, "total": inventory.Total, "upgradable": inventory.Upgradable,
+		"securityUpdates": inventory.SecurityUpdates, "truncated": inventory.Truncated,
+		"durationMs": time.Since(started).Milliseconds(),
+	}
+	if err := s.recordAudit(ctx, command.Request, "vm.guest_agent.packages.list", command.UUID, "success", detail, nil); err != nil {
+		return domain.GuestAgentPackageInventory{}, fmt.Errorf("record guest agent packages audit: %w", err)
+	}
+	return inventory, nil
 }
 
 func (s *Service) GetPolicy(ctx context.Context, query PolicyQuery) (domain.GuestAgentPolicy, error) {

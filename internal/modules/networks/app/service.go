@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -47,10 +48,12 @@ type AuditRecorder interface {
 }
 
 type Service struct {
-	repository   Repository
-	audit        AuditRecorder
-	readOnly     bool
-	readOnlyMode domain.ReadOnlyProvider
+	repository    Repository
+	audit         AuditRecorder
+	portForwards  PortForwardStore
+	portForwardMu sync.Mutex
+	readOnly      bool
+	readOnlyMode  domain.ReadOnlyProvider
 }
 
 type Option func(*Service)
@@ -58,6 +61,12 @@ type Option func(*Service)
 func WithReadOnlyMode(mode domain.ReadOnlyProvider) Option {
 	return func(service *Service) {
 		service.readOnlyMode = mode
+	}
+}
+
+func WithPortForwardStore(store PortForwardStore) Option {
+	return func(service *Service) {
+		service.portForwards = store
 	}
 }
 
@@ -259,6 +268,25 @@ func (s *Service) Update(ctx context.Context, command UpdateNetworkCommand) (dom
 	}
 	if err := s.validateNetworkUpdateHosts(ctx, command.Name, definition); err != nil {
 		return domain.VirtualNetwork{}, err
+	}
+	if s.portForwards != nil {
+		existing, err := s.repository.ListNetworks(ctx)
+		if err != nil {
+			return domain.VirtualNetwork{}, err
+		}
+		for _, current := range existing {
+			if current.Name != command.Name {
+				continue
+			}
+			count, err := s.portForwardCount(ctx, command.Name)
+			if err != nil {
+				return domain.VirtualNetwork{}, err
+			}
+			if count > 0 && (definition.Mode != "nat" || current.ForwardMode != "nat" || !networkAddressesEqual(current.Addresses, proposedNetworkAddresses(definition))) {
+				return domain.VirtualNetwork{}, fmt.Errorf("%w: remove or disable inbound port forwards before changing the network mode or subnets", domain.ErrConflict)
+			}
+			break
+		}
 	}
 	network, err := s.repository.UpdateNetwork(ctx, definition)
 	if err != nil {
@@ -810,6 +838,11 @@ func (s *Service) Delete(ctx context.Context, command DeleteNetworkCommand) erro
 	command.Name = strings.TrimSpace(command.Name)
 	if !networkNamePattern.MatchString(command.Name) {
 		return domain.ErrInvalidInput
+	}
+	if count, err := s.portForwardCount(ctx, command.Name); err != nil {
+		return err
+	} else if count > 0 {
+		return fmt.Errorf("%w: network still has inbound port forwarding rules", domain.ErrConflict)
 	}
 	if err := s.repository.DeleteNetwork(ctx, command.Name); err != nil {
 		return err

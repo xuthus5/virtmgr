@@ -27,6 +27,11 @@ func (c *Client) CreateVM(ctx context.Context, spec domain.VMCreateSpec) (domain
 	if spec.TPM && platform.known && !platform.capabilities.TPM {
 		return domain.VM{}, fmt.Errorf("%w: vTPM 2.0 is not available on this host", domain.ErrInvalidInput)
 	}
+	if spec.Placement != nil {
+		if err := validateHostPlacement(platform, *spec.Placement); err != nil {
+			return domain.VM{}, err
+		}
+	}
 	spec.Architecture = architecture
 	spec.Machine = machine
 	if existing, err := c.conn.LookupDomainByName(spec.Name); err == nil {
@@ -55,7 +60,14 @@ func (c *Client) CreateVM(ctx context.Context, spec domain.VMCreateSpec) (domain
 		seedPath = seed.path
 	}
 
-	dom, err := c.conn.DomainDefineXML(buildDomainXMLWithCloudInit(spec, seedPath))
+	xmlText := buildDomainXMLWithCloudInit(spec, seedPath)
+	if spec.Placement != nil {
+		xmlText, err = domain.SetVMXMLPlacement(xmlText, *spec.Placement)
+		if err != nil {
+			return domain.VM{}, err
+		}
+	}
+	dom, err := c.conn.DomainDefineXML(xmlText)
 	if err != nil {
 		return domain.VM{}, fmt.Errorf("define domain %s: %w", spec.Name, err)
 	}

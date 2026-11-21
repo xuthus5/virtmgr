@@ -22,6 +22,7 @@ type Backend interface {
 	GetVMXML(ctx context.Context, uuid string, format domain.VMXMLFormat) (domain.VMXML, error)
 	DefineVMXML(ctx context.Context, uuid, xmlText string) (domain.VMXML, error)
 	UpdateVMResources(ctx context.Context, uuid string, spec domain.VMResourcesSpec) (domain.VM, error)
+	UpdateVMPlacement(ctx context.Context, uuid string, spec domain.VMPlacementSpec) (domain.VM, error)
 	ResizeVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskResizeSpec) (domain.VM, error)
 	MigrateVMDisk(ctx context.Context, uuid, target string, spec domain.VMDiskMigrateSpec) (domain.VM, error)
 	AttachVMDisk(ctx context.Context, uuid string, spec domain.VMDiskAttachSpec) (domain.VM, error)
@@ -55,6 +56,7 @@ type Backend interface {
 	GrowGuestAgentFilesystem(ctx context.Context, uuid string, spec domain.GuestAgentFilesystemResizeSpec) (domain.GuestAgentFilesystemResizeResult, error)
 	SignalGuestAgentProcess(ctx context.Context, uuid string, spec domain.GuestAgentProcessSignalSpec) error
 	ListGuestAgentUsers(ctx context.Context, uuid string) ([]domain.GuestAgentUser, error)
+	ListGuestAgentPackages(ctx context.Context, uuid string) (domain.GuestAgentPackageInventory, error)
 	GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error)
 	ListSnapshots(ctx context.Context, uuid string) ([]domain.VMSnapshot, error)
 	CreateSnapshot(ctx context.Context, uuid string, spec domain.VMSnapshotCreateSpec) (domain.VMSnapshot, error)
@@ -213,6 +215,9 @@ func (c *Client) Host(ctx context.Context) (domain.Host, error) {
 		CPUThreads:     info.Threads,
 		CPUMHz:         info.MHz,
 		MemoryBytes:    info.Memory * 1024,
+		NUMA:           capabilities.NUMA,
+		NUMANodes:      capabilities.NUMANodes,
+		HugePages:      capabilities.HugePages,
 	}, nil
 }
 

@@ -60,7 +60,7 @@ func (d *DemoBackend) GetGuestAgentInfo(_ context.Context, uuid string, _ bool) 
 		Hostname: true, Network: true, OSInfo: true, FSInfo: true,
 		Shutdown: true, Reboot: true, TimeSync: true, Trim: true, Quiesce: true,
 		FileAccess: true, PasswordReset: true, SSHKeys: true, Processes: true, Users: true,
-		Timezone: true, NetworkRoutes: true, FilesystemResize: true,
+		Timezone: true, NetworkRoutes: true, FilesystemResize: true, Packages: true,
 	}
 	info.Timezone = "Asia/Shanghai"
 	info.Routes = []domain.GuestAgentRoute{
@@ -381,6 +381,22 @@ func (d *DemoBackend) ListGuestAgentUsers(ctx context.Context, uuid string) ([]d
 		return cmp.Compare(right.LoginTime, left.LoginTime)
 	})
 	return users, nil
+}
+
+func (d *DemoBackend) ListGuestAgentPackages(ctx context.Context, uuid string) (domain.GuestAgentPackageInventory, error) {
+	if _, err := d.demoGuestAgentCapability(ctx, uuid, func(capabilities domain.GuestAgentCapabilities) bool { return capabilities.Packages }); err != nil {
+		return domain.GuestAgentPackageInventory{}, err
+	}
+	items := []domain.GuestAgentPackage{
+		{Name: "openssl", Version: "3.0.13-1ubuntu1", Architecture: "amd64", Summary: "Secure Sockets Layer toolkit", Upgradable: true, UpdateVersion: "3.0.13-1ubuntu1.1", SecurityUpdate: true},
+		{Name: "linux-image-generic", Version: "6.8.0-45.45", Architecture: "amd64", Summary: "Generic Linux kernel image", Upgradable: true, UpdateVersion: "6.8.0-51.52"},
+		{Name: "qemu-guest-agent", Version: "1:8.2.2-0ubuntu2", Architecture: "amd64", Summary: "QEMU Guest Agent"},
+		{Name: "systemd", Version: "255.4-1ubuntu8", Architecture: "amd64", Summary: "system and service manager"},
+	}
+	return domain.GuestAgentPackageInventory{
+		Manager: "dpkg/apt", Items: items, Total: len(items), Upgradable: 2, SecurityUpdates: 1,
+		Warnings: []string{}, CheckedAt: time.Now().UTC(),
+	}, nil
 }
 
 func (d *DemoBackend) GetGuestAgentCloudInit(ctx context.Context, uuid string) (domain.GuestAgentCloudInit, error) {

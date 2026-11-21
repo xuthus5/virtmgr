@@ -1,9 +1,11 @@
 package http
 
 import (
+	"mime"
 	stdhttp "net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"virtmgr/internal/domain"
 	backupsapp "virtmgr/internal/modules/backups/app"
@@ -72,6 +74,58 @@ func (h *Handler) Summary(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) Export(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	item, err := h.service.Get(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	filename := backupExportFilename(item)
+	stream := &packageDownloadWriter{
+		ResponseWriter: w,
+		disposition:    mime.FormatMediaType("attachment", map[string]string{"filename": filename}),
+	}
+	err = h.service.Export(r.Context(), backupsapp.ExportCommand{
+		ID: item.ID, Writer: stream, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		if !stream.started {
+			httpx.Error(w, r, err)
+		}
+		return
+	}
+	stream.start()
+}
+
+func (h *Handler) Import(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if r.ContentLength > int64(backupsapp.MaxImportPackageBytes) {
+		httpx.Error(w, r, domain.ErrTooLarge)
+		return
+	}
+	_ = stdhttp.NewResponseController(w).SetReadDeadline(time.Time{})
+	item, err := h.service.Import(r.Context(), backupsapp.ImportCommand{
+		Spec: domain.BackupImportSpec{
+			Name: r.URL.Query().Get("name"), RepositoryID: r.URL.Query().Get("repositoryId"),
+		},
+		Reader: r.Body, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
 }
 
 func (h *Handler) CreateBackup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -323,11 +377,13 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/backups", h.ListBackups)
 	r.Get("/backups/summary", h.Summary)
 	r.Get("/backups/{id}", h.GetBackup)
+	r.Get("/backups/{id}/export", h.Export)
 	r.Get("/backup-repositories", h.ListRepositories)
 	r.Get("/backup-schedules", h.ListSchedules)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
 		mutating.Post("/backups", h.CreateBackup)
+		mutating.Post("/backups/import", h.Import)
 		mutating.Post("/backups/{id}/verify", h.Verify)
 		mutating.Post("/backups/{id}/restore", h.Restore)
 		mutating.Patch("/backups/{id}", h.UpdatePin)
@@ -340,6 +396,48 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Delete("/backup-schedules/{id}", h.DeleteSchedule)
 		mutating.Post("/backup-schedules/{id}/run", h.RunSchedule)
 	})
+}
+
+type packageDownloadWriter struct {
+	stdhttp.ResponseWriter
+	started     bool
+	disposition string
+}
+
+func (w *packageDownloadWriter) start() {
+	if w.started {
+		return
+	}
+	w.started = true
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", w.disposition)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(stdhttp.StatusOK)
+}
+
+func (w *packageDownloadWriter) Write(body []byte) (int, error) {
+	w.start()
+	return w.ResponseWriter.Write(body)
+}
+
+func backupExportFilename(item domain.Backup) string {
+	name := strings.TrimSpace(item.Name)
+	if name == "" {
+		name = item.ID
+	}
+	var builder strings.Builder
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
+			builder.WriteRune(char)
+		} else {
+			builder.WriteByte('_')
+		}
+	}
+	cleaned := strings.Trim(builder.String(), "._-")
+	if cleaned == "" {
+		cleaned = "backup"
+	}
+	return cleaned + ".virtmgr-backup.zip"
 }
 
 func parseBackupQuery(r *stdhttp.Request) (domain.BackupQuery, error) {

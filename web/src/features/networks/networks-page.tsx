@@ -15,6 +15,7 @@ import { NetworkEditCard } from "@/features/networks/network-edit-card";
 import { networkEditForm, networkUpdateInput, type NetworkEditFormState } from "@/features/networks/network-edit-model";
 import { NetworkHostsCard } from "@/features/networks/network-hosts-card";
 import { NetworkLeasesCard } from "@/features/networks/network-leases-card";
+import { NetworkPortForwardsCard } from "@/features/networks/network-port-forwards-card";
 import { NetworkTableCard } from "@/features/networks/network-table-card";
 import { actionError, createNetworkInput, hostIdentity, hostIsIPv6, initialCreateForm, initialDNSHostForm, initialHostForm, mtuInputError, splitDNSHostnames, staticDNSHosts, staticHosts, type CreateFormState, type DNSHostFormState, type HostFormState } from "@/features/networks/network-ui";
 import { useHostBridgesQuery, useNetworksQuery } from "@/features/networks/use-networks-query";
@@ -41,6 +42,7 @@ export function NetworksPage() {
   const [leasesNetwork, setLeasesNetwork] = useState<string | null>(null);
   const [hostsNetwork, setHostsNetwork] = useState<string | null>(null);
   const [diagnosticsNetwork, setDiagnosticsNetwork] = useState<string | null>(null);
+  const [portForwardsNetwork, setPortForwardsNetwork] = useState<string | null>(null);
   const [hostForm, setHostForm] = useState<HostFormState>(initialHostForm);
   const [hostError, setHostError] = useState("");
   const [hostTransfer, setHostTransfer] = useState<"import" | "export" | "">("");
@@ -117,8 +119,10 @@ export function NetworksPage() {
       setLeasesNetwork((current) => current === name ? null : current);
       setHostsNetwork((current) => current === name ? null : current);
       setDiagnosticsNetwork((current) => current === name ? null : current);
+      setPortForwardsNetwork((current) => current === name ? null : current);
       queryClient.removeQueries({ queryKey: queryKeys.networks.leases(name) });
       queryClient.removeQueries({ queryKey: queryKeys.networks.diagnostics(name) });
+      queryClient.removeQueries({ queryKey: queryKeys.networks.portForwards(name) });
     },
     onError: (cause) => setDeleteError(actionError(cause, "删除虚拟网络失败，请稍后重试。")),
   });
@@ -400,11 +404,14 @@ export function NetworksPage() {
             onLeases={(network) => setLeasesNetwork((current) => current === network.name ? null : network.name)}
             onHosts={toggleHosts}
             diagnosticsNetwork={diagnosticsNetwork}
+            portForwardsNetwork={portForwardsNetwork}
             onDiagnostics={(network) => { setDiagnosticsNetwork((current) => current === network.name ? null : network.name); setHostError(""); }}
+            onPortForwards={(network) => setPortForwardsNetwork((current) => current === network.name ? null : network.name)}
           />
 
           {leasesNetwork ? <NetworkLeasesCard network={leasesNetwork} record={leasesNetworkRecord} leases={leases} loaded={Boolean(leasesQuery.data)} loading={leasesQuery.isLoading} error={leasesQuery.error} fetching={leasesQuery.isFetching} canManage={canManage} disabledReason={disabledReason} reservingIP={reserveLeaseMutation.isPending ? reserveLeaseMutation.variables?.ip : undefined} onRefresh={() => void leasesQuery.refetch()} onReserve={(lease) => { setSuccessMessage(""); setActionErrorText(""); reserveLeaseMutation.mutate({ name: leasesNetwork, ip: lease.ipAddress }); }} /> : null}
           {diagnosticsNetwork ? <NetworkDiagnosticsCard network={diagnosticsNetwork} diagnostics={diagnosticsQuery.data} loading={diagnosticsQuery.isLoading} error={diagnosticsQuery.error} fetching={diagnosticsQuery.isFetching} onRefresh={() => void diagnosticsQuery.refetch()} /> : null}
+          {portForwardsNetwork ? <NetworkPortForwardsCard network={networks.find((network) => network.name === portForwardsNetwork) ?? { name: portForwardsNetwork, active: false, persistent: false, autostart: false, addresses: [] }} canManage={canManage} disabledReason={disabledReason} onClose={() => setPortForwardsNetwork(null)} /> : null}
           {hostsNetwork ? (
             <>
               <NetworkHostsCard

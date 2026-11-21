@@ -161,6 +161,26 @@ export type VMResourcesInput = {
   memoryMiB: number;
 };
 
+export type VMNUMACell = {
+  id: number;
+  cpuset: string;
+  memoryMiB: number;
+};
+
+export type VMCpuPin = {
+  vcpu: number;
+  cpuset: string;
+};
+
+export type VMPlacement = {
+  numaCells: VMNUMACell[];
+  hugePageSize?: string;
+  vcpuPins: VMCpuPin[];
+  emulatorPin?: string;
+};
+
+export type VMPlacementInput = VMPlacement;
+
 export type VMDiskResizeInput = {
   capacityBytes: number;
 };
@@ -241,6 +261,7 @@ export type VMCreateInput = {
   tpm?: boolean;
   cloudInit?: CloudInitInput;
   guestAgent?: boolean;
+  placement?: VMPlacementInput;
   autostart: boolean;
   start: boolean;
 };
@@ -577,6 +598,7 @@ export type VM = {
   agentState?: GuestAgentState;
   allowedActions: VMAction[];
   metadata?: VMMetadata;
+  placement?: VMPlacement;
 };
 
 export type VMBootDevice = "hd" | "cdrom" | "network";
@@ -824,6 +846,28 @@ export type GuestAgentCapabilities = {
   timezone: boolean;
   networkRoutes: boolean;
   filesystemResize?: boolean;
+  packages: boolean;
+};
+
+export type GuestAgentPackage = {
+  name: string;
+  version: string;
+  architecture?: string;
+  summary?: string;
+  upgradable: boolean;
+  updateVersion?: string;
+  securityUpdate: boolean;
+};
+
+export type GuestAgentPackageInventory = {
+  manager: string;
+  items: GuestAgentPackage[];
+  total: number;
+  upgradable: number;
+  securityUpdates: number;
+  truncated: boolean;
+  warnings: string[];
+  checkedAt: string;
 };
 
 export type GuestAgentRoute = {
@@ -1503,6 +1547,9 @@ export type NetworkDiagnostics = {
   natIpv6: boolean;
   nat66Firewall: boolean;
   firewallBackend?: string;
+  portForwardRules: number;
+  portForwardReady: boolean;
+  portForwardError?: string;
   dhcpv6Range: boolean;
   dhcpv6Service: boolean;
   raService: boolean;
@@ -1517,6 +1564,40 @@ export type NetworkDiagnostics = {
   dnsmasqVersion?: string;
   leaseCount: number;
   checks: NetworkCheck[];
+};
+
+export type PortForwardProtocol = "tcp" | "udp";
+
+export type PortForward = {
+  id: string;
+  network: string;
+  name: string;
+  family: "ipv4" | "ipv6";
+  protocol: PortForwardProtocol;
+  hostAddress?: string;
+  hostPort: number;
+  guestAddress: string;
+  guestPort: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PortForwardInput = {
+  name: string;
+  family: "ipv4" | "ipv6";
+  protocol: PortForwardProtocol;
+  hostAddress?: string;
+  hostPort: number;
+  guestAddress: string;
+  guestPort: number;
+  enabled: boolean;
+};
+
+export type PortForwardList = {
+  network: string;
+  items: PortForward[];
+  total: number;
 };
 
 export type VirtualNetworkAction = "start" | "stop";

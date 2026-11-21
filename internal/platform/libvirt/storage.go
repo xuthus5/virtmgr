@@ -412,6 +412,10 @@ func (c *Client) UploadStorageVolume(ctx context.Context, poolName string, spec 
 		return domain.StorageVolume{}, fmt.Errorf("create storage volume %s in %s: %w", spec.Name, poolName, err)
 	}
 	defer func() { _ = volume.Free() }()
+	uploadBytes := spec.CapacityBytes
+	if spec.UploadBytes > 0 && spec.UploadBytes <= spec.CapacityBytes {
+		uploadBytes = spec.UploadBytes
+	}
 	committed := false
 	defer func() {
 		if !committed {
@@ -423,11 +427,11 @@ func (c *Client) UploadStorageVolume(ctx context.Context, poolName string, spec 
 		return domain.StorageVolume{}, fmt.Errorf("open libvirt upload stream for %s: %w", spec.Name, err)
 	}
 	defer func() { _ = stream.Free() }()
-	if err := volume.Upload(stream, 0, spec.CapacityBytes, 0); err != nil {
+	if err := volume.Upload(stream, 0, uploadBytes, 0); err != nil {
 		_ = stream.Abort()
 		return domain.StorageVolume{}, fmt.Errorf("start upload for storage volume %s: %w", spec.Name, err)
 	}
-	if err := copyToStorageStream(stream, reader, spec.CapacityBytes); err != nil {
+	if err := copyToStorageStream(stream, reader, uploadBytes); err != nil {
 		_ = stream.Abort()
 		return domain.StorageVolume{}, err
 	}

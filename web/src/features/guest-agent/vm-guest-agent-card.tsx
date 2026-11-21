@@ -44,6 +44,7 @@ import { Modal } from "@/components/ui/modal";
 import { guestAgentQueryKey, useGuestAgentQuery } from "@/features/guest-agent/use-guest-agent-query";
 import { guestAgentActionUnavailableReason, guestAgentCanAddChannel } from "@/features/guest-agent/guest-agent-model";
 import { GuestAgentControls } from "@/features/guest-agent/guest-agent-controls";
+import { GuestAgentPackages } from "@/features/guest-agent/guest-agent-packages";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { queryKeys } from "@/lib/query-keys";
 import { cn, formatBytes, percent } from "@/lib/utils";
@@ -97,6 +98,7 @@ function capabilityBadges(info: GuestAgentInfo) {
     ["进程管理", info.capabilities.processes],
     ["登录用户", info.capabilities.users],
     ["在线扩容", info.capabilities.filesystemResize],
+    ["软件包", info.capabilities.packages],
     ["时区/路由", info.capabilities.timezone || info.capabilities.networkRoutes],
   ] as const;
   return capabilities.map(([label, enabled]) => (
@@ -104,9 +106,10 @@ function capabilityBadges(info: GuestAgentInfo) {
   ));
 }
 
-export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
+export function VMGuestAgentCard({ vm, canMutate, canReadGuestData = canMutate, disabledReason }: {
   vm: VM;
   canMutate: boolean;
+  canReadGuestData?: boolean;
   disabledReason: string;
 }) {
   const queryClient = useQueryClient();
@@ -337,6 +340,8 @@ export function VMGuestAgentCard({ vm, canMutate, disabledReason }: {
                     ) : <p className="px-3 py-4 text-xs text-muted-foreground">代理未返回文件系统信息。</p>}
                   </div>
                 </div>
+
+                {info.capabilities.packages ? <GuestAgentPackages uuid={vm.uuid} canRead={canReadGuestData} /> : null}
 
                 <div className="rounded-md border" data-testid="guest-agent-diagnostics">
                   <button

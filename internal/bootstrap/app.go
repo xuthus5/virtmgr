@@ -223,7 +223,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	))
 	configVersionsHandler := configversionshttp.New(configVersionService)
 	storageHandler := storagehttp.New(storageapp.New(backend, store, cfg.ReadOnly, storageapp.WithReadOnlyMode(mode), storageapp.WithTaskRecorder(taskRecorder), storageapp.WithDataPlane(locks, journal)))
-	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode)))
+	networksHandler := networkshttp.New(networksapp.New(backend, store, cfg.ReadOnly, networksapp.WithReadOnlyMode(mode), networksapp.WithPortForwardStore(store)))
 	consoleTokens := consoletoken.New(30 * time.Second)
 	vmsHandler := vmshttp.New(vmsapp.New(backend, store, cfg.ReadOnly, vmsapp.WithReadOnlyMode(mode), vmsapp.WithConsoleTokens(consoleTokens), vmsapp.WithTaskRecorder(taskRecorder), vmsapp.WithMetrics(metricsService), vmsapp.WithBackupService(backupService), vmsapp.WithConfigVersionRecorder(configVersionService), vmsapp.WithVMMetadata(store), vmsapp.WithGuestAgentSnapshotRecorder(store), vmsapp.WithGuestAgentDataCleaner(store), vmsapp.WithImages(store, backend), vmsapp.WithImportVolumes(backend), vmsapp.WithISOVolumes(backend), vmsapp.WithHostProvider(backend), vmsapp.WithDataPlane(locks, journal)))
 	imagesHandler := imageshttp.New(imagesapp.New(store, backend, store, cfg.ReadOnly, imagesapp.WithReadOnlyMode(mode)))

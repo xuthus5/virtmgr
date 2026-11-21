@@ -94,6 +94,7 @@ type StorageVolumeCreateSpec struct {
 	Name          string `json:"name"`
 	Format        string `json:"format"`
 	CapacityBytes uint64 `json:"capacityBytes"`
+	UploadBytes   uint64 `json:"-"`
 }
 
 type StorageVolumeConvertSpec struct {

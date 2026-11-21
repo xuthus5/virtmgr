@@ -99,9 +99,26 @@ type domainXML struct {
 		Value uint64 `xml:",chardata"`
 	} `xml:"memory"`
 	VCPU struct {
-		Current uint `xml:"current,attr"`
-		Value   uint `xml:",chardata"`
+		Placement string `xml:"placement,attr"`
+		Current   uint   `xml:"current,attr"`
+		Value     uint   `xml:",chardata"`
 	} `xml:"vcpu"`
+	MemoryBacking struct {
+		HugePages []struct {
+			Size    uint64 `xml:"size,attr"`
+			Unit    string `xml:"unit,attr"`
+			Nodeset string `xml:"nodeset,attr"`
+		} `xml:"hugepages>page"`
+	} `xml:"memoryBacking"`
+	CPUTune struct {
+		VCPUPins []struct {
+			VCPU   uint   `xml:"vcpu,attr"`
+			Cpuset string `xml:"cpuset,attr"`
+		} `xml:"vcpupin"`
+		EmulatorPin struct {
+			Cpuset string `xml:"cpuset,attr"`
+		} `xml:"emulatorpin"`
+	} `xml:"cputune"`
 	OS struct {
 		Type struct {
 			Arch    string `xml:"arch,attr"`
@@ -137,6 +154,14 @@ type domainXML struct {
 			Cores   uint `xml:"cores,attr"`
 			Threads uint `xml:"threads,attr"`
 		} `xml:"topology"`
+		NUMA struct {
+			Cells []struct {
+				ID     uint   `xml:"id,attr"`
+				Cpuset string `xml:"cpus,attr"`
+				Memory uint64 `xml:"memory,attr"`
+				Unit   string `xml:"unit,attr"`
+			} `xml:"cell"`
+		} `xml:"numa"`
 	} `xml:"cpu"`
 	Devices struct {
 		Controllers []struct {
@@ -201,6 +226,7 @@ type domainDetails struct {
 	CPUSockets  uint
 	CPUCores    uint
 	CPUThreads  uint
+	Placement   *domain.VMPlacement
 }
 
 func parseDomainXML(text string) (domainDetails, error) {
@@ -231,6 +257,33 @@ func parseDomainXML(text string) (domainDetails, error) {
 		CPUSockets:  parsed.CPU.Topology.Sockets,
 		CPUCores:    parsed.CPU.Topology.Cores,
 		CPUThreads:  parsed.CPU.Topology.Threads,
+	}
+	placement := domain.VMPlacement{NUMACells: []domain.VMNUMACell{}, VCPUPins: []domain.VMCpuPin{}}
+	for _, cell := range parsed.CPU.NUMA.Cells {
+		memory := cell.Memory
+		switch strings.ToLower(strings.TrimSpace(cell.Unit)) {
+		case "", "kib", "kb":
+			memory = (memory + 1023) / 1024
+		case "gib", "gb":
+			memory *= 1024
+		case "bytes", "b":
+			memory = (memory + (1 << 20) - 1) >> 20
+		}
+		placement.NUMACells = append(placement.NUMACells, domain.VMNUMACell{ID: cell.ID, Cpuset: strings.TrimSpace(cell.Cpuset), MemoryMiB: memory})
+	}
+	for _, page := range parsed.MemoryBacking.HugePages {
+		if page.Size == 0 {
+			continue
+		}
+		placement.HugePageSize = fmt.Sprintf("%d%s", page.Size, normalizeHugePageUnit(page.Unit))
+		break
+	}
+	for _, pin := range parsed.CPUTune.VCPUPins {
+		placement.VCPUPins = append(placement.VCPUPins, domain.VMCpuPin{VCPU: pin.VCPU, Cpuset: strings.TrimSpace(pin.Cpuset)})
+	}
+	placement.EmulatorPin = strings.TrimSpace(parsed.CPUTune.EmulatorPin.Cpuset)
+	if len(placement.NUMACells) > 0 || len(placement.VCPUPins) > 0 || placement.EmulatorPin != "" || placement.HugePageSize != "" {
+		details.Placement = &placement
 	}
 	for _, boot := range parsed.OS.Boot {
 		if device, ok := domain.NormalizeVMBootDevices([]string{boot.Dev}); ok {
@@ -299,6 +352,19 @@ func parseDomainXML(text string) (domainDetails, error) {
 		}
 	}
 	return details, nil
+}
+
+func normalizeHugePageUnit(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return "KiB"
+	case "kib", "kb":
+		return "KiB"
+	case "gib", "gb":
+		return "GiB"
+	default:
+		return "MiB"
+	}
 }
 
 func domainMemoryBytes(unit string, value uint64) uint64 {

@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Archive, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Database,
-  HardDrive, LoaderCircle, Plus, RefreshCw, RotateCcw, ShieldCheck, Trash2, TriangleAlert,
+  Download, HardDrive, LoaderCircle, Plus, RefreshCw, RotateCcw, ShieldCheck, Trash2, TriangleAlert, Upload,
 } from "lucide-react";
-import { api } from "@/api/client";
+import { api, backupExportUrl } from "@/api/client";
 import type { Backup, BackupStatus } from "@/api/types";
 import { MetricCard } from "@/components/data/metric-card";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
@@ -46,6 +46,11 @@ export function BackupsPage() {
   const [restoreTarget, setRestoreTarget] = useState<Backup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Backup | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [exportingID, setExportingID] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importName, setImportName] = useState("");
+  const [importRepositoryID, setImportRepositoryID] = useState("");
   const [notice, setNotice] = useState<BackupNotice | null>(null);
   const [activeTaskID, setActiveTaskID] = useState<string | null>(null);
   const [taskLabel, setTaskLabel] = useState("任务");
@@ -61,6 +66,19 @@ export function BackupsPage() {
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => api.pinBackup(id, { pinned }),
   });
   const deleteMutation = useMutation({ mutationFn: api.deleteBackup });
+  const importMutation = useMutation({
+    mutationFn: ({ file, name, repositoryId }: { file: File; name: string; repositoryId: string }) => api.importBackup(file, { name, repositoryId }),
+    onSuccess: (backup) => {
+      setImportOpen(false);
+      setImportFile(null);
+      setImportName("");
+      setImportRepositoryID("");
+      setNotice({ tone: "success", text: `备份包已导入为“${backup.name}”，可在备份集列表中选择恢复。` });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.backups.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storage.pools });
+    },
+    onError: (cause) => setNotice({ tone: "error", text: errorText(cause, "导入备份包失败") }),
+  });
   const backups = backupsQuery.data?.items ?? [];
   const repositories = repositoriesQuery.data?.items ?? [];
   const total = backupsQuery.data?.total ?? 0;
@@ -109,6 +127,20 @@ export function BackupsPage() {
     }
   }
 
+  function exportBackup(backup: Backup) {
+    if (exportingID) return;
+    setExportingID(backup.id);
+    setNotice(null);
+    const anchor = document.createElement("a");
+    anchor.href = backupExportUrl(backup.id);
+    anchor.rel = "noopener";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setNotice({ tone: "success", text: `已开始下载“${backup.name}”备份包。` });
+    setExportingID(null);
+  }
+
   return (
     <>
       <PageHeader
@@ -137,7 +169,10 @@ export function BackupsPage() {
           const Icon = item.icon;
           return <Button key={item.id} role="tab" aria-selected={tab === item.id} variant={tab === item.id ? "default" : "outline"} size="sm" data-testid={`backup-tab-${item.id}`} onClick={() => setTab(item.id)}><Icon className="h-4 w-4" />{item.label}</Button>;
         })}
-        {tab === "backups" ? <Button className="sm:ml-auto" size="sm" data-testid="backup-create-open" disabled={Boolean(actionReason(role, readOnly, "create"))} title={actionReason(role, readOnly, "create") || "创建虚拟机冷备份或在线一致性备份"} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建备份</Button> : null}
+        {tab === "backups" ? <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <Button variant="outline" size="sm" data-testid="backup-import-open" disabled={Boolean(actionReason(role, readOnly, "create"))} title={actionReason(role, readOnly, "create") || "从 VirtMgr 备份 ZIP 包导入备份集"} onClick={() => setImportOpen(true)}><Upload className="h-4 w-4" />导入备份包</Button>
+          <Button size="sm" data-testid="backup-create-open" disabled={Boolean(actionReason(role, readOnly, "create"))} title={actionReason(role, readOnly, "create") || "创建虚拟机冷备份或在线一致性备份"} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建备份</Button>
+        </div> : null}
       </div>
 
       {tab === "backups" ? (
@@ -193,7 +228,9 @@ export function BackupsPage() {
                       role={role}
                       readOnly={readOnly}
                       pinPending={pinMutation.isPending && pinMutation.variables?.id === backup.id}
+                      exportPending={exportingID === backup.id}
                       onDetail={() => setDetail(backup)}
+                      onExport={() => exportBackup(backup)}
                       onVerify={() => setVerifyTarget(backup)}
                       onRestore={() => setRestoreTarget(backup)}
                       onDelete={() => { setDeleteTarget(backup); setDeleteConfirm(""); }}
@@ -228,6 +265,7 @@ export function BackupsPage() {
       />
 
       <Modal open={Boolean(detail)} onClose={() => setDetail(null)} title={detail?.name ?? "备份详情"} description="备份产物清单与校验信息" testId="backup-detail-modal" className="max-w-3xl" footer={detail ? <>
+        <Button variant="outline" size="sm" disabled={Boolean(actionReason(role, readOnly, "create")) || detail.status !== "completed" || exportingID === detail.id} title={actionReason(role, readOnly, "create") || (detail.status !== "completed" ? "只有已完成的备份可导出" : "下载可移植备份 ZIP 包")} onClick={() => exportBackup(detail)}>{exportingID === detail.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{exportingID === detail.id ? "下载中" : "下载备份包"}</Button>
         <Button variant="outline" size="sm" disabled={Boolean(actionReason(role, readOnly, "verify"))} title={actionReason(role, readOnly, "verify") || "校验备份完整性"} onClick={() => { setVerifyTarget(detail); setDetail(null); }}><ShieldCheck className="h-4 w-4" />校验</Button>
         <Button variant="outline" size="sm" disabled={Boolean(actionReason(role, readOnly, "restore")) || detail.status !== "completed"} title={actionReason(role, readOnly, "restore") || (detail.status !== "completed" ? "只有已完成的备份可恢复" : "恢复为新虚拟机")} onClick={() => { setRestoreTarget(detail); setDetail(null); }}><RotateCcw className="h-4 w-4" />恢复为新虚拟机</Button>
       </> : null}>
@@ -237,6 +275,33 @@ export function BackupsPage() {
       <VerifyBackupModal target={verifyTarget} onClose={() => setVerifyTarget(null)} onStarted={(taskID) => { setVerifyTarget(null); beginTask(taskID, "校验备份"); }} onNotice={setNotice} />
 
       <RestoreBackupModal target={restoreTarget} repositories={repositories} onClose={() => setRestoreTarget(null)} onStarted={(taskID) => { setRestoreTarget(null); beginTask(taskID, "恢复虚拟机"); }} onNotice={setNotice} />
+
+      <Modal open={importOpen} onClose={() => { if (!importMutation.isPending) setImportOpen(false); }} title="导入备份包" description="上传由 VirtMgr 导出的 .zip 备份包。导入只登记备份集，不会自动创建或覆盖虚拟机。" testId="backup-import-modal" footer={<>
+        <Button variant="ghost" disabled={importMutation.isPending} onClick={() => setImportOpen(false)}>取消</Button>
+        <Button data-testid="backup-import-submit" disabled={!importFile || importMutation.isPending} onClick={() => { if (importFile) importMutation.mutate({ file: importFile, name: importName, repositoryId: importRepositoryID }); }}>{importMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{importMutation.isPending ? "正在导入..." : "上传并导入"}</Button>
+      </>}>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="backup-import-file">备份包文件</Label>
+            <Input id="backup-import-file" data-testid="backup-import-file" type="file" accept=".zip,application/zip" disabled={importMutation.isPending} onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} />
+            {importFile ? <p className="break-all text-xs text-muted-foreground">{importFile.name} · {formatBytes(importFile.size)}</p> : <p className="text-xs text-muted-foreground">文件在服务器端会再次校验 ZIP 结构、路径、条目数量和解压大小。</p>}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="backup-import-name">备份名称（可选）</Label>
+              <Input id="backup-import-name" data-testid="backup-import-name" value={importName} maxLength={64} placeholder="留空沿用包内名称" onChange={(event) => setImportName(event.target.value)} disabled={importMutation.isPending} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="backup-import-repository">备份存储库</Label>
+              <select id="backup-import-repository" data-testid="backup-import-repository" value={importRepositoryID} onChange={(event) => setImportRepositoryID(event.target.value)} disabled={importMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm">
+                <option value="">使用默认存储库</option>
+                {repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.name} · {repository.poolName}{repository.isDefault ? " · 默认" : ""}</option>)}
+              </select>
+            </div>
+          </div>
+          <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">导入会为备份集生成新的 ID 和产物卷名，不会覆盖已有备份。最大包大小 512 GiB，仅接受 VirtMgr v1 备份包。</p>
+        </div>
+      </Modal>
 
       <Modal open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} title="删除备份集" description="删除会移除存储池中的配置、清单和全部磁盘副本，无法撤销。" testId="backup-delete-modal" footer={<>
         <Button variant="ghost" onClick={() => setDeleteTarget(null)}>取消</Button>

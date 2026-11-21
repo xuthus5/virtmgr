@@ -25,6 +25,7 @@ export const queryKeys = {
     bridges: ["networks", "bridges"] as const,
     leases: (name: string | null) => ["networks", name, "leases"] as const,
     diagnostics: (name: string | null) => ["networks", name, "diagnostics"] as const,
+    portForwards: (name: string | null) => ["networks", name, "port-forwards"] as const,
   },
   host: {
     root: ["host"] as const,
@@ -44,6 +45,7 @@ export const queryKeys = {
     snapshots: ["vm", uuid, "snapshots"] as const,
     snapshotPolicies: ["vm", uuid, "snapshot-policies"] as const,
     guestAgent: ["vm", uuid, "guest-agent"] as const,
+    guestAgentPackages: ["vm", uuid, "guest-agent", "packages"] as const,
     guestAgentDiagnostics: ["vm", uuid, "guest-agent", "diagnostics"] as const,
     configVersions: ["vm", uuid, "config-versions"] as const,
     configVersion: (versionNo: number) => ["vm", uuid, "config-versions", versionNo] as const,

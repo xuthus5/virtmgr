@@ -28,8 +28,8 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
-# Read-only nftables/ip6tables inspection is required by network diagnostics.
-# VirtMgr does not modify firewall rules; it only verifies libvirt-managed NAT66.
+# CAP_NET_ADMIN is required for network diagnostics and the isolated
+# nftables table `inet virtmgr_pf` used for inbound port forwarding.
 CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN
 

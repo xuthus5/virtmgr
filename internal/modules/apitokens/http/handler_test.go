@@ -197,7 +197,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms", "/vms/import", "/vms/batch-actions", "/vms/{uuid}", "/vms/{uuid}/xml", "/vms/{uuid}/export",
 		"/vms/{uuid}/snapshots", "/vms/{uuid}/snapshots/{snapshot}", "/vms/{uuid}/snapshots/{snapshot}/revert",
 		"/vms/{uuid}/metrics", "/vms/{uuid}/clone", "/vms/{uuid}/backups", "/vms/{uuid}/iso/eject", "/vms/{uuid}/iso/attach",
-		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
+		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/placement", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
 		"/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}", "/vms/{uuid}/disks/{target}/migrate", "/vms/{uuid}/disks/{target}/qos",
 		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/network-interfaces/{mac}/qos",
 		"/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
@@ -209,7 +209,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms/{uuid}/guest-agent/files", "/vms/{uuid}/guest-agent/password", "/vms/{uuid}/guest-agent/ssh-keys",
 		"/vms/{uuid}/guest-agent/ssh-keys/add", "/vms/{uuid}/guest-agent/ssh-keys/remove",
 		"/vms/{uuid}/guest-agent/processes", "/vms/{uuid}/guest-agent/processes/signal",
-		"/vms/{uuid}/guest-agent/services", "/vms/{uuid}/guest-agent/users", "/vms/{uuid}/guest-agent/policy",
+		"/vms/{uuid}/guest-agent/services", "/vms/{uuid}/guest-agent/users", "/vms/{uuid}/guest-agent/packages", "/vms/{uuid}/guest-agent/policy",
 		"/vms/{uuid}/guest-agent/health", "/vms/{uuid}/guest-agent/diagnostics", "/vms/{uuid}/guest-agent/filesystem/grow",
 		"/storage/pools", "/storage/pools/{pool}", "/storage/pools/{pool}/actions/{action}",
 		"/storage/pools/{pool}/volumes", "/storage/pools/{pool}/volumes/upload", "/storage/pools/{pool}/volumes/{volume}",
@@ -217,7 +217,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/storage/pools/{pool}/volumes/{volume}/flatten",
 		"/networks", "/networks/bridges", "/networks/{name}", "/networks/{name}/leases", "/networks/{name}/diagnostics", "/networks/{name}/hosts",
 		"/networks/{name}/hosts/import", "/networks/{name}/hosts/{host}", "/networks/{name}/hosts/export",
-		"/networks/{name}/actions/{action}",
+		"/networks/{name}/actions/{action}", "/networks/{name}/port-forwards", "/networks/{name}/port-forwards/{id}",
 		"/images", "/images/{id}", "/images/{id}/refresh", "/templates", "/templates/{id}",
 		"/tasks", "/tasks/stream", "/tasks/{id}", "/tasks/{id}/retry", "/tasks/{id}/cancel",
 		"/events", "/events/stream", "/audit-events", "/audit-events/export",
@@ -225,13 +225,20 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/users/{id}/sessions/{sessionId}", "/settings", "/settings/audit-retention",
 		"/system/info", "/system/database-export", "/system/database-restore",
 		"/dataplane/operations", "/dataplane/operations/{id}", "/dataplane/operations/{id}/recheck", "/dataplane/operations/{id}/unblock",
-		"/backups", "/backups/summary", "/backups/{id}", "/backups/{id}/verify", "/backups/{id}/restore",
+		"/backups", "/backups/summary", "/backups/import", "/backups/{id}", "/backups/{id}/export", "/backups/{id}/verify", "/backups/{id}/restore",
 		"/backup-repositories", "/backup-repositories/{id}", "/backup-schedules", "/backup-schedules/{id}",
 		"/backup-schedules/{id}/run", "/metrics/history", "/metrics/guest-filesystems", "/metrics/capacity-forecast", "/alert-rules", "/alert-rules/{id}",
 	}
 	for _, path := range requiredPaths {
 		if _, exists := paths[path]; !exists {
 			t.Errorf("OpenAPI path %q is missing", path)
+		}
+	}
+	components, _ := document["components"].(map[string]any)
+	schemas, _ := components["schemas"].(map[string]any)
+	for _, schema := range []string{"VMPlacement", "VMPlacementRequest", "GuestAgentPackage", "GuestAgentPackageInventory", "PortForward", "PortForwardRequest", "PortForwardList"} {
+		if _, ok := schemas[schema]; !ok {
+			t.Errorf("OpenAPI schema %q is missing", schema)
 		}
 	}
 

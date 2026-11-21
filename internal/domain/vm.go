@@ -205,6 +205,26 @@ type VMCPUConfigSpec struct {
 	Threads uint   `json:"threads"`
 }
 
+type VMCpuPin struct {
+	VCPU   uint   `json:"vcpu"`
+	Cpuset string `json:"cpuset"`
+}
+
+type VMNUMACell struct {
+	ID        uint   `json:"id"`
+	Cpuset    string `json:"cpuset"`
+	MemoryMiB uint64 `json:"memoryMiB"`
+}
+
+// VMPlacementSpec controls host CPU placement, explicit guest NUMA topology
+// and memory backing. Empty slices map to libvirt's automatic placement.
+type VMPlacementSpec struct {
+	NUMACells    []VMNUMACell `json:"numaCells,omitempty"`
+	HugePageSize string       `json:"hugePageSize,omitempty"`
+	VCPUPins     []VMCpuPin   `json:"vcpuPins,omitempty"`
+	EmulatorPin  string       `json:"emulatorPin,omitempty"`
+}
+
 type VMCreateSpec struct {
 	Name           string           `json:"name"`
 	Architecture   string           `json:"architecture,omitempty"`
@@ -226,6 +246,7 @@ type VMCreateSpec struct {
 	TPM            bool             `json:"tpm,omitempty"`
 	CloudInit      *CloudInitSpec   `json:"cloudInit,omitempty"`
 	GuestAgent     *bool            `json:"guestAgent,omitempty"`
+	Placement      *VMPlacementSpec `json:"placement,omitempty"`
 	Autostart      bool             `json:"autostart"`
 	Start          bool             `json:"start"`
 }
@@ -499,6 +520,14 @@ type VM struct {
 	AgentState      GuestAgentState     `json:"agentState,omitempty"`
 	AllowedActions  []VMAction          `json:"allowedActions"`
 	Metadata        *VMMetadata         `json:"metadata,omitempty"`
+	Placement       *VMPlacement        `json:"placement,omitempty"`
+}
+
+type VMPlacement struct {
+	NUMACells    []VMNUMACell `json:"numaCells"`
+	HugePageSize string       `json:"hugePageSize,omitempty"`
+	VCPUPins     []VMCpuPin   `json:"vcpuPins"`
+	EmulatorPin  string       `json:"emulatorPin,omitempty"`
 }
 
 type VMXMLFormat string
@@ -537,22 +566,25 @@ func ValidVMXMLFormat(value string) (VMXMLFormat, bool) {
 }
 
 type Host struct {
-	Name           string   `json:"name"`
-	LibvirtVersion string   `json:"libvirtVersion"`
-	Architecture   string   `json:"architecture"`
-	Architectures  []string `json:"architectures,omitempty"`
-	MachineTypes   []string `json:"machineTypes,omitempty"`
-	Virtualization string   `json:"virtualization,omitempty"`
-	UEFI           bool     `json:"uefi"`
-	SecureBoot     bool     `json:"secureBoot"`
-	TPM            bool     `json:"tpm"`
-	CPUModel       string   `json:"cpuModel"`
-	CPUs           uint     `json:"cpus"`
-	CPUSockets     uint32   `json:"cpuSockets"`
-	CPUCores       uint32   `json:"cpuCores"`
-	CPUThreads     uint32   `json:"cpuThreads"`
-	CPUMHz         uint     `json:"cpuMhz"`
-	MemoryBytes    uint64   `json:"memoryBytes"`
+	Name           string         `json:"name"`
+	LibvirtVersion string         `json:"libvirtVersion"`
+	Architecture   string         `json:"architecture"`
+	Architectures  []string       `json:"architectures,omitempty"`
+	MachineTypes   []string       `json:"machineTypes,omitempty"`
+	Virtualization string         `json:"virtualization,omitempty"`
+	UEFI           bool           `json:"uefi"`
+	SecureBoot     bool           `json:"secureBoot"`
+	TPM            bool           `json:"tpm"`
+	CPUModel       string         `json:"cpuModel"`
+	CPUs           uint           `json:"cpus"`
+	CPUSockets     uint32         `json:"cpuSockets"`
+	CPUCores       uint32         `json:"cpuCores"`
+	CPUThreads     uint32         `json:"cpuThreads"`
+	CPUMHz         uint           `json:"cpuMhz"`
+	MemoryBytes    uint64         `json:"memoryBytes"`
+	NUMA           bool           `json:"numa"`
+	NUMANodes      []HostNUMANode `json:"numaNodes,omitempty"`
+	HugePages      []HostHugePage `json:"hugePages,omitempty"`
 }
 
 type VMCounts struct {

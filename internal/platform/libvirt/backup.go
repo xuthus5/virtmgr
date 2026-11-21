@@ -28,44 +28,10 @@ type backupArtifact struct {
 	target        string
 }
 
-type backupManifest struct {
-	FormatVersion string                 `json:"formatVersion"`
-	BackupID      string                 `json:"backupId,omitempty"`
-	CreatedAt     time.Time              `json:"createdAt"`
-	ToolVersion   string                 `json:"toolVersion,omitempty"`
-	Source        *backupManifestSource  `json:"source,omitempty"`
-	Config        *backupManifestConfig  `json:"config,omitempty"`
-	Restore       *backupManifestRestore `json:"restore,omitempty"`
-	VMUUID        string                 `json:"vmUuid,omitempty"`
-	VMName        string                 `json:"vmName,omitempty"`
-	ConfigVolume  string                 `json:"configVolume,omitempty"`
-	ConfigSHA256  string                 `json:"configSha256,omitempty"`
-	Disks         []domain.VMBackupDisk  `json:"disks"`
-	Online        bool                   `json:"online,omitempty"`
-	Quiesced      bool                   `json:"quiesced,omitempty"`
-	Consistent    bool                   `json:"consistent,omitempty"`
-	ContainsTPM   bool                   `json:"containsTpm,omitempty"`
-	TPMStateSaved bool                   `json:"tpmStateSaved,omitempty"`
-}
-
-type backupManifestSource struct {
-	VMUUID     string         `json:"vmUuid"`
-	VMName     string         `json:"vmName"`
-	State      domain.VMState `json:"state"`
-	Persistent bool           `json:"persistent"`
-}
-
-type backupManifestConfig struct {
-	Artifact  string `json:"artifact"`
-	SizeBytes uint64 `json:"sizeBytes"`
-	SHA256    string `json:"sha256"`
-}
-
-type backupManifestRestore struct {
-	DefaultTargetPool string `json:"defaultTargetPool"`
-	RequiresNewMAC    bool   `json:"requiresNewMac"`
-	ContainsMemory    bool   `json:"containsMemory"`
-}
+type backupManifest = domain.BackupManifest
+type backupManifestSource = domain.BackupManifestSource
+type backupManifestConfig = domain.BackupManifestConfig
+type backupManifestRestore = domain.BackupManifestRestore
 
 func (c *Client) BackupVM(ctx context.Context, uuid string, spec domain.VMBackupSpec, progress VMBackupProgress) (result domain.VMBackup, resultErr error) {
 	if err := ctx.Err(); err != nil {

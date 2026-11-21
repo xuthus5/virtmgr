@@ -59,6 +59,72 @@ func (h *Handler) Diagnostics(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
+func (h *Handler) ListPortForwards(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	result, err := h.service.ListPortForwards(r.Context(), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) CreatePortForward(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.PortForwardSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	item, err := h.service.CreatePortForward(r.Context(), networksapp.PortForwardCommand{
+		Network: chi.URLParam(r, "name"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
+}
+
+func (h *Handler) UpdatePortForward(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.PortForwardSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	item, err := h.service.UpdatePortForward(r.Context(), networksapp.PortForwardUpdateCommand{
+		Network: chi.URLParam(r, "name"), ID: chi.URLParam(r, "id"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) DeletePortForward(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	if err := h.service.DeletePortForward(r.Context(), networksapp.PortForwardDeleteCommand{
+		Network: chi.URLParam(r, "name"), ID: chi.URLParam(r, "id"), Request: mutationContext(r, session),
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
 func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VirtualNetworkCreateSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -319,6 +385,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 	r.Get("/networks/bridges", h.ListHostBridges)
 	r.Get("/networks/{name}/leases", h.Leases)
 	r.Get("/networks/{name}/diagnostics", h.Diagnostics)
+	r.Get("/networks/{name}/port-forwards", h.ListPortForwards)
 	r.Get("/networks/{name}/hosts/export", h.ExportDHCPHosts)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
@@ -331,6 +398,9 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Delete("/networks/{name}/hosts/{host}", h.DeleteDHCPHost)
 		mutating.Delete("/networks/{name}/dns/hosts/{ip}", h.DeleteDNSHost)
 		mutating.Post("/networks/{name}/actions/{action}", h.Action)
+		mutating.Post("/networks/{name}/port-forwards", h.CreatePortForward)
+		mutating.Patch("/networks/{name}/port-forwards/{id}", h.UpdatePortForward)
+		mutating.Delete("/networks/{name}/port-forwards/{id}", h.DeletePortForward)
 		mutating.Delete("/networks/{name}", h.Delete)
 	})
 }

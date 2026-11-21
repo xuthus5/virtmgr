@@ -138,6 +138,11 @@ type BackupCreateSpec struct {
 	Quiesce      bool   `json:"quiesce,omitempty"`
 }
 
+type BackupImportSpec struct {
+	Name         string `json:"name,omitempty"`
+	RepositoryID string `json:"repositoryId,omitempty"`
+}
+
 type BackupQuery struct {
 	VMUUID       string
 	Status       BackupStatus

@@ -48,6 +48,14 @@ func (c *Client) NetworkDiagnostics(ctx context.Context, name string) (domain.Ne
 	result.Checks = append(result.Checks, checkNetworkDHCPv6Service(record, dnsmasqRunning, &result))
 	result.Checks = append(result.Checks, checkNetworkRAService(record, dnsmasqRunning, &result))
 
+	if record.ForwardMode == "nat" {
+		portForwards := inspectPortForwardFirewall(probeContext, record.Name)
+		result.PortForwardRules = portForwards.count
+		result.PortForwardReady = portForwards.ready
+		result.PortForwardError = portForwards.error
+		result.Checks = append(result.Checks, checkNetworkPortForwards(record, portForwards))
+	}
+
 	if record.ForwardMode == "nat" && record.NATIPv6 {
 		result.Checks = append(result.Checks, checkNetworkNAT66(record, result.IPv6Forward))
 		firewall := inspectNetworkFirewall(probeContext, record)
@@ -72,6 +80,16 @@ func (c *Client) NetworkDiagnostics(ctx context.Context, name string) (domain.Ne
 		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "warning", Status: "warning", Title: "配置警告", Detail: warning})
 	}
 	return result, nil
+}
+
+func checkNetworkPortForwards(network domain.VirtualNetwork, inspection portForwardInspection) domain.NetworkCheck {
+	if inspection.error != "" {
+		return domain.NetworkCheck{ID: "port-forward-firewall", Status: "warning", Title: "入站端口转发", Detail: "无法读取受控 nftables 规则：" + inspection.error + "。请确认 nft 可用且服务具有 CAP_NET_ADMIN。"}
+	}
+	if inspection.count > 0 {
+		return domain.NetworkCheck{ID: "port-forward-firewall", Status: "ok", Title: "入站端口转发", Detail: fmt.Sprintf("受控 nftables 表已加载 %d 条 NAT 规则。", inspection.count)}
+	}
+	return domain.NetworkCheck{ID: "port-forward-firewall", Status: "ok", Title: "入站端口转发", Detail: "当前网络没有启用的入站端口转发规则。"}
 }
 
 func waitForNetworkIPv6Ready(ctx context.Context, network domain.VirtualNetwork) {

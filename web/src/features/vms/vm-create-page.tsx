@@ -21,6 +21,8 @@ import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage
 import { templateVMCreateDefaults } from "@/features/templates/template-form";
 import { useTemplatesQuery } from "@/features/templates/use-templates-query";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { VMPlacementFields } from "@/features/vms/vm-placement-fields";
+import { buildPlacement, emptyPlacementForm, placementHasValues, placementSummary, type PlacementFormState } from "@/features/vms/vm-placement-model";
 import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
@@ -93,6 +95,7 @@ export function VMCreatePage() {
   const [error, setError] = useState("");
   const [selectedTemplateID, setSelectedTemplateID] = useState("");
   const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
+  const [placementForm, setPlacementForm] = useState<PlacementFormState>(emptyPlacementForm);
   const presetApplied = useRef(false);
   const activeNetworks = (networksQuery.data?.items ?? []).filter((network) => network.active);
   const selectedNetwork = activeNetworks.find((network) => network.name === form.network);
@@ -238,6 +241,13 @@ export function VMCreatePage() {
       setError(cloudInitError);
       return;
     }
+    const placement = placementHasValues(placementForm)
+      ? buildPlacement(placementForm, Number(form.vcpus), Number(form.memoryMiB))
+      : { input: undefined };
+    if (placement.error) {
+      setError(placement.error);
+      return;
+    }
     mutation.mutate({
       name: form.name.trim(),
       ...(form.architecture ? { architecture: form.architecture } : {}),
@@ -260,6 +270,7 @@ export function VMCreatePage() {
         pool: diskPool,
       } : undefined,
       guestAgent: form.guestAgent,
+      ...(placement.input ? { placement: placement.input } : {}),
       autostart: form.autostart,
       start: form.start,
     });
@@ -619,6 +630,16 @@ export function VMCreatePage() {
             </CardContent>
           </Card>
 
+          <Card className="mb-4" data-testid="vm-placement-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base"><Server className="h-4 w-4 text-primary" />性能与拓扑（可选）</CardTitle>
+              <CardDescription>为延迟敏感型虚拟机配置 HugePages、显式 NUMA 拓扑、vCPU 亲和性和模拟器线程绑定。留空使用 libvirt 自动放置。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <VMPlacementFields form={placementForm} onChange={setPlacementForm} vcpus={Math.max(1, Number(form.vcpus) || 1)} memoryMiB={Math.max(1, Number(form.memoryMiB) || 1)} disabled={!canCreate} prefix="vm-create-placement" />
+            </CardContent>
+          </Card>
+
           <div className="space-y-4">
             <Card>
               <CardHeader>
@@ -650,6 +671,7 @@ export function VMCreatePage() {
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">vTPM</span><span className="font-medium">{form.tpm ? "2.0 已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Cloud-init</span><span className="font-medium">{form.cloudInit ? "已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Guest Agent</span><span className="font-medium">{form.guestAgent ? "通道已启用" : "未启用"}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">性能拓扑</span><span className="max-w-56 text-right font-medium">{placementHasValues(placementForm) ? placementSummary(placementForm) || "已配置" : "自动放置"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">网络</span><Badge variant="outline">{form.network || "-"}</Badge></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">启动</span><span className="font-medium">{form.start ? "创建后启动" : "保持关机"}</span></div>
               </CardContent>

@@ -11,6 +11,7 @@ type VMConfigVersionSource string
 const (
 	VMConfigSourceManualXML      VMConfigVersionSource = "manual_xml"
 	VMConfigSourceResources      VMConfigVersionSource = "resources"
+	VMConfigSourcePlacement      VMConfigVersionSource = "placement"
 	VMConfigSourcePassthrough    VMConfigVersionSource = "passthrough"
 	VMConfigSourceSnapshotRevert VMConfigVersionSource = "snapshot_revert"
 	VMConfigSourceExternal       VMConfigVersionSource = "external"
@@ -31,7 +32,7 @@ const (
 
 func ValidVMConfigVersionSource(value VMConfigVersionSource) bool {
 	switch value {
-	case VMConfigSourceManualXML, VMConfigSourceResources, VMConfigSourcePassthrough,
+	case VMConfigSourceManualXML, VMConfigSourceResources, VMConfigSourcePlacement, VMConfigSourcePassthrough,
 		VMConfigSourceSnapshotRevert, VMConfigSourceExternal, VMConfigSourceCreate,
 		VMConfigSourceClone, VMConfigSourceImport, VMConfigSourceBackupRestore, VMConfigSourceRollback,
 		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceDiskMigrate, VMConfigSourceBaseline:

@@ -70,6 +70,28 @@ type GuestAgentCapabilities struct {
 	Timezone         bool `json:"timezone"`
 	NetworkRoutes    bool `json:"networkRoutes"`
 	FilesystemResize bool `json:"filesystemResize"`
+	Packages         bool `json:"packages"`
+}
+
+type GuestAgentPackage struct {
+	Name           string `json:"name"`
+	Version        string `json:"version"`
+	Architecture   string `json:"architecture,omitempty"`
+	Summary        string `json:"summary,omitempty"`
+	Upgradable     bool   `json:"upgradable"`
+	UpdateVersion  string `json:"updateVersion,omitempty"`
+	SecurityUpdate bool   `json:"securityUpdate"`
+}
+
+type GuestAgentPackageInventory struct {
+	Manager         string              `json:"manager"`
+	Items           []GuestAgentPackage `json:"items"`
+	Total           int                 `json:"total"`
+	Upgradable      int                 `json:"upgradable"`
+	SecurityUpdates int                 `json:"securityUpdates"`
+	Truncated       bool                `json:"truncated"`
+	Warnings        []string            `json:"warnings"`
+	CheckedAt       time.Time           `json:"checkedAt"`
 }
 
 type GuestAgentFilesystemResizeSpec struct {

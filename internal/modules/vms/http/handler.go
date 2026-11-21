@@ -352,6 +352,27 @@ func (h *Handler) UpdateResources(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	httpx.JSON(w, stdhttp.StatusOK, vm)
 }
 
+func (h *Handler) UpdatePlacement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var spec domain.VMPlacementSpec
+	if err := httpx.DecodeJSON(r, &spec); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	session, ok := authctx.Session(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.ErrUnauthorized)
+		return
+	}
+	vm, err := h.service.UpdatePlacement(r.Context(), vmsapp.UpdatePlacementCommand{
+		UUID: chi.URLParam(r, "uuid"), Spec: spec, Request: mutationContext(r, session),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, vm)
+}
+
 func (h *Handler) UpdateBootOrder(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var spec domain.VMBootSpec
 	if err := httpx.DecodeJSON(r, &spec); err != nil {
@@ -767,6 +788,7 @@ func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler
 		mutating.Delete("/vms/{uuid}", h.Delete)
 		mutating.Patch("/vms/{uuid}/autostart", h.SetAutostart)
 		mutating.Patch("/vms/{uuid}/resources", h.UpdateResources)
+		mutating.Patch("/vms/{uuid}/placement", h.UpdatePlacement)
 		mutating.Patch("/vms/{uuid}/boot", h.UpdateBootOrder)
 		mutating.Patch("/vms/{uuid}/cpu", h.UpdateCPUConfig)
 		mutating.Patch("/vms/{uuid}/disks/{target}", h.ResizeDisk)

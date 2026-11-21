@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Cpu, LoaderCircle, MemoryStick, Save, Settings2 } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { VMBootDevice, VM, VMCPUUpdateInput } from "@/api/types";
+import type { VMBootDevice, VM, VMCPUUpdateInput, VMPlacementInput } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,8 @@ import {
   validateVMResources,
 } from "@/features/vms/vm-resources-model";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { VMPlacementFields } from "@/features/vms/vm-placement-fields";
+import { buildPlacement, emptyPlacementForm, placementFormFrom, placementSummary, type PlacementFormState } from "@/features/vms/vm-placement-model";
 import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
@@ -40,6 +42,7 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
   const [cpuSockets, setCpuSockets] = useState("1");
   const [cpuCores, setCpuCores] = useState("1");
   const [cpuThreads, setCpuThreads] = useState("1");
+  const [placementForm, setPlacementForm] = useState<PlacementFormState>(emptyPlacementForm);
   const [advancedError, setAdvancedError] = useState("");
 
   const bootDevices = availableBootDevices(vm);
@@ -85,6 +88,16 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     onError: (error) => setAdvancedError(error instanceof ApiError ? error.message : "更新 CPU 型号与拓扑失败，请稍后重试。"),
   });
 
+  const placementMutation = useMutation({
+    mutationFn: (input: VMPlacementInput) => api.updateVMPlacement(vm.uuid, input),
+    onSuccess: (updated) => {
+      applyUpdatedVM(updated);
+      const summary = placementSummary(placementFormFrom(updated.placement));
+      setNotice({ tone: "success", text: summary ? `性能与拓扑已更新：${summary}。` : "已清除性能拓扑覆盖，恢复 libvirt 自动放置。" });
+    },
+    onError: (error) => setAdvancedError(error instanceof ApiError ? error.message : "更新性能与拓扑失败，请稍后重试。"),
+  });
+
   function applyUpdatedVM(updated: VM) {
     queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
     void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
@@ -103,6 +116,7 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     setCpuSockets(String(target.cpuSockets || 1));
     setCpuCores(String(target.cpuCores || target.vcpus || 1));
     setCpuThreads(String(target.cpuThreads || 1));
+    setPlacementForm(placementFormFrom(target.placement));
     setAdvancedError("");
   }
 
@@ -131,6 +145,13 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     cpuMutation.mutate({ model: cpuModel.trim(), sockets, cores, threads });
   }
 
+  function submitPlacement() {
+    const result = buildPlacement(placementForm, vm.vcpus, Math.round(vm.memoryBytes / (1024 * 1024)));
+    if (!result.input) return setAdvancedError(result.error ?? "请检查性能拓扑配置。");
+    setAdvancedError("");
+    placementMutation.mutate(result.input);
+  }
+
   function submit() {
     setNotice(null);
     const result = validateVMResources(vm, vcpus, memoryMiB);
@@ -154,8 +175,8 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" data-testid="vm-resources-max">上限 {limits.vcpus} vCPU / {formatBytes(limits.memoryMiB * 1024 * 1024)}</Badge>
-            <Button type="button" variant="outline" size="sm" data-testid="vm-advanced-config-open" disabled={!canMutate} title={!canMutate ? disabledReason : "修改启动顺序、CPU 型号和拓扑"} onClick={openAdvanced}>
-              <Settings2 className="h-4 w-4" />启动与 CPU
+            <Button type="button" variant="outline" size="sm" data-testid="vm-advanced-config-open" disabled={!canMutate} title={!canMutate ? disabledReason : "修改启动顺序、CPU 型号、NUMA、HugePages 和 CPU 绑定"} onClick={openAdvanced}>
+              <Settings2 className="h-4 w-4" />启动与性能
             </Button>
           </div>
         </div>
@@ -244,9 +265,9 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
 
       <Modal
         open={advancedOpen}
-        onClose={() => { if (!bootMutation.isPending && !cpuMutation.isPending) setAdvancedOpen(false); }}
-        title="启动与 CPU 配置"
-        description="启动顺序可随时更新并在下次启动生效；CPU 型号与拓扑只允许在关机或异常停止状态下修改。"
+        onClose={() => { if (!bootMutation.isPending && !cpuMutation.isPending && !placementMutation.isPending) setAdvancedOpen(false); }}
+        title="启动、CPU 与性能拓扑"
+        description="启动顺序可随时更新并在下次启动生效；CPU、NUMA、HugePages 与 CPU 绑定只允许在关机或异常停止状态下修改。"
         testId="vm-advanced-config-modal"
       >
         <div className="space-y-5">
@@ -281,6 +302,12 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
             </div>
             {!cpuEditable ? <p className="text-xs text-muted-foreground">当前状态不支持修改 CPU 型号与拓扑，请先正常关机。</p> : null}
             <div className="flex justify-end"><Button type="button" size="sm" data-testid="vm-cpu-save" disabled={!cpuEditable || cpuMutation.isPending} onClick={submitCPU}>{cpuMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{cpuMutation.isPending ? "正在保存..." : "保存 CPU 配置"}</Button></div>
+          </section>
+
+          <section className="space-y-3 border-t pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">NUMA、HugePages 与 CPU 绑定</p><p className="mt-0.5 text-xs text-muted-foreground">留空表示自动放置；显式 NUMA 会写入客户机拓扑和内存后端。</p></div><Badge variant={cpuEditable ? "outline" : "warning"}>{cpuEditable ? "可修改" : "需先关机"}</Badge></div>
+            <VMPlacementFields form={placementForm} onChange={(next) => { setPlacementForm(next); setAdvancedError(""); }} vcpus={vm.vcpus} memoryMiB={Math.round(vm.memoryBytes / (1024 * 1024))} disabled={!cpuEditable || placementMutation.isPending} prefix="vm-placement" />
+            <div className="flex justify-end"><Button type="button" size="sm" data-testid="vm-placement-save" disabled={!cpuEditable || placementMutation.isPending} onClick={submitPlacement}>{placementMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{placementMutation.isPending ? "正在保存..." : "保存性能拓扑"}</Button></div>
           </section>
 
           {advancedError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{advancedError}</p> : null}

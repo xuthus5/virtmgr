@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,9 @@ type VMBackend interface {
 	GetVM(ctx context.Context, uuid string) (domain.VM, error)
 	ListStoragePools(ctx context.Context) ([]domain.StoragePool, error)
 	ListStorageVolumes(ctx context.Context, poolName string) ([]domain.StorageVolume, error)
+	DownloadStorageVolume(ctx context.Context, poolName, volumeName string, writer io.Writer) (domain.StorageVolume, error)
+	UploadStorageVolume(ctx context.Context, poolName string, spec domain.StorageVolumeCreateSpec, reader io.Reader) (domain.StorageVolume, error)
+	DeleteStorageVolume(ctx context.Context, poolName, volumeName string) error
 	BackupVM(ctx context.Context, uuid string, spec domain.VMBackupSpec, progress func(percent int, step string)) (domain.VMBackup, error)
 	VerifyVMBackup(ctx context.Context, backup domain.Backup, deep bool) (domain.BackupVerification, error)
 	RestoreVMBackup(ctx context.Context, backup domain.Backup, spec domain.VMRestoreSpec, progress func(percent int, step string)) (domain.VM, error)

@@ -702,7 +702,13 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 		}(),
 		AllowedActions: domain.AllowedVMActions(state),
 	}
+	if spec.Placement != nil {
+		vm.Placement = placementFromSpec(*spec.Placement)
+	}
 	xmlText := demoVMDomainXML(vm)
+	if spec.Placement != nil {
+		xmlText, _ = domain.SetVMXMLPlacement(xmlText, *spec.Placement)
+	}
 	if spec.GuestAgentEnabled() {
 		xmlText, _ = addGuestAgentChannelXML(xmlText)
 	}
@@ -713,6 +719,40 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 		d.publish("domain.started", "info", "vm", uuid, vm.Name, "虚拟机已启动")
 	}
 	return cloneVM(vm), nil
+}
+
+func (d *DemoBackend) UpdateVMPlacement(_ context.Context, uuid string, spec domain.VMPlacementSpec) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	xmlText := d.xmlConfig[uuid]
+	if xmlText == "" {
+		xmlText = demoVMDomainXML(vm)
+	}
+	updated, err := domain.SetVMXMLPlacement(xmlText, spec)
+	if err != nil {
+		return domain.VM{}, err
+	}
+	vm.Placement = placementFromSpec(spec)
+	d.vms[uuid] = vm
+	d.xmlConfig[uuid] = updated
+	d.publish("domain.updated", "info", "vm", uuid, vm.Name, "虚拟机 CPU/NUMA/HugePages 配置已更新")
+	return cloneVM(vm), nil
+}
+
+func placementFromSpec(spec domain.VMPlacementSpec) *domain.VMPlacement {
+	return &domain.VMPlacement{
+		NUMACells:    spec.NUMACells,
+		HugePageSize: spec.HugePageSize,
+		VCPUPins:     spec.VCPUPins,
+		EmulatorPin:  spec.EmulatorPin,
+	}
 }
 
 func (d *DemoBackend) CloneVM(_ context.Context, uuid string, spec domain.VMCloneSpec, progress VMCloneProgress) (domain.VM, error) {
@@ -1494,13 +1534,17 @@ func (d *DemoBackend) UploadStorageVolume(_ context.Context, poolName string, sp
 			return domain.StorageVolume{}, domain.ErrConflict
 		}
 	}
-	written, err := io.CopyN(io.Discard, reader, int64(spec.CapacityBytes))
-	if err != nil || uint64(written) != spec.CapacityBytes {
+	uploadBytes := spec.CapacityBytes
+	if spec.UploadBytes > 0 && spec.UploadBytes <= spec.CapacityBytes {
+		uploadBytes = spec.UploadBytes
+	}
+	written, err := io.CopyN(io.Discard, reader, int64(uploadBytes))
+	if err != nil || uint64(written) != uploadBytes {
 		return domain.StorageVolume{}, fmt.Errorf("%w: upload ended before declared size", domain.ErrInvalidInput)
 	}
 	volume := domain.StorageVolume{
 		Name: spec.Name, Path: filepath.Join(targetPath, spec.Name), Type: "file", Format: spec.Format,
-		CapacityBytes: spec.CapacityBytes, AllocationBytes: spec.CapacityBytes,
+		CapacityBytes: spec.CapacityBytes, AllocationBytes: uploadBytes,
 	}
 	d.volumes[poolName] = append(d.volumes[poolName], volume)
 	d.publish("storage.volume.uploaded", "info", "storage_volume", poolName+"/"+volume.Name, volume.Name, "存储卷 "+volume.Name+" 已上传")
@@ -1698,6 +1742,10 @@ func (d *DemoBackend) NetworkDiagnostics(_ context.Context, networkName string) 
 		result.Checks = append(result.Checks, domain.NetworkCheck{ID: "warning", Status: "warning", Title: "配置警告", Detail: warning})
 	}
 	return result, nil
+}
+
+func (d *DemoBackend) ApplyPortForwards(context.Context, []domain.PortForward) error {
+	return nil
 }
 
 func networkHasIPv6(network domain.VirtualNetwork) bool {

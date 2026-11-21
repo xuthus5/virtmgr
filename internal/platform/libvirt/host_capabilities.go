@@ -74,6 +74,8 @@ func (c *Client) hostPlatformLocked(ctx context.Context) hostPlatform {
 		parsed, parseErr := parseLibvirtCapabilities(xmlText)
 		if parseErr == nil && parsed.Architecture != "" {
 			platform.capabilities = parsed
+			platform.capabilities.NUMANodes, platform.capabilities.HugePages = readHostTopology()
+			platform.capabilities.NUMA = len(platform.capabilities.NUMANodes) > 0
 			platform.known = true
 			platform.guestArches = parseGuestArchitectures(xmlText)
 			platform.capabilities.UEFI, platform.capabilities.SecureBoot, platform.capabilities.TPM = c.domainFirmwareCapabilitiesLocked(ctx, platform)
