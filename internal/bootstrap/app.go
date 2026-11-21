@@ -62,6 +62,7 @@ import (
 	"virtmgr/internal/platform/httpx"
 	libvirtbackend "virtmgr/internal/platform/libvirt"
 	resourcemetrics "virtmgr/internal/platform/metrics"
+	"virtmgr/internal/platform/releasecheck"
 	"virtmgr/internal/platform/runtimeconfig"
 	"virtmgr/internal/platform/sqlite"
 	tasksplatform "virtmgr/internal/platform/tasks"
@@ -251,7 +252,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			return nil, err
 		}
 	}
-	systemOptions := []systemapp.Option{systemapp.WithDatabasePath(cfg.DatabasePath)}
+	systemOptions := []systemapp.Option{
+		systemapp.WithDatabasePath(cfg.DatabasePath),
+		systemapp.WithReleaseProvider(releasecheck.NewGitHubClient()),
+	}
 	if tlsManager != nil {
 		systemOptions = append(systemOptions, systemapp.WithTLSStatus(tlsManager))
 	}

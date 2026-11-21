@@ -223,7 +223,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/events", "/events/stream", "/audit-events", "/audit-events/export",
 		"/users", "/users/{id}", "/users/me/password", "/users/{id}/password", "/users/{id}/sessions",
 		"/users/{id}/sessions/{sessionId}", "/settings", "/settings/audit-retention",
-		"/system/info", "/system/database-export", "/system/database-restore",
+		"/system/info", "/system/update", "/system/database-export", "/system/database-restore",
 		"/dataplane/operations", "/dataplane/operations/{id}", "/dataplane/operations/{id}/recheck", "/dataplane/operations/{id}/unblock",
 		"/backups", "/backups/summary", "/backups/import", "/backups/{id}", "/backups/{id}/export", "/backups/{id}/verify", "/backups/{id}/restore",
 		"/backup-repositories", "/backup-repositories/{id}", "/backup-schedules", "/backup-schedules/{id}",
@@ -236,7 +236,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 	}
 	components, _ := document["components"].(map[string]any)
 	schemas, _ := components["schemas"].(map[string]any)
-	for _, schema := range []string{"VMPlacement", "VMPlacementRequest", "GuestAgentPackage", "GuestAgentPackageInventory", "PortForward", "PortForwardRequest", "PortForwardList"} {
+	for _, schema := range []string{"VMPlacement", "VMPlacementRequest", "GuestAgentPackage", "GuestAgentPackageInventory", "PortForward", "PortForwardRequest", "PortForwardList", "UpdateCheck"} {
 		if _, ok := schemas[schema]; !ok {
 			t.Errorf("OpenAPI schema %q is missing", schema)
 		}

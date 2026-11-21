@@ -7,6 +7,21 @@ afterEach(() => {
 });
 
 describe("api client", () => {
+  it("requests a forced system update check", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      currentVersion: "v0.3.1", latestVersion: "v0.4.0", status: "update_available", updateAvailable: true,
+      releaseName: "VirtMgr 0.4.0", releaseUrl: "https://github.com/xuthus5/virtmgr/releases/tag/v0.4.0",
+      checkedAt: "2026-11-21T00:00:00Z", cached: false,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.systemUpdate(true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/system/update?refresh=true");
+    expect(result.updateAvailable).toBe(true);
+    expect(result.latestVersion).toBe("v0.4.0");
+  });
+
   it("emits an unauthorized event when a protected request loses its session", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       error: { code: "UNAUTHORIZED", message: "用户名或密码错误" },

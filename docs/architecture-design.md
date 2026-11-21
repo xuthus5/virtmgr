@@ -837,6 +837,7 @@ SQLite `vm_metadata` 只保存 libvirt 不表达的业务信息：文件夹、�
 | `GET` | `/audit-events/export?format=json|csv` | 按相同筛选条件导出最多 50,000 条审计记录并记录 `audit.export`，仅管理员 |
 | `GET` | `/settings` | 可管理设置 |
 | `PUT` | `/settings` | 更新设置（管理员，需 CSRF；当前支持 `readOnly`，已实现） |
+| `GET` | `/system/update?refresh=true` | 读取当前构建并检查 GitHub 稳定 Release；固定外呼地址、10 分钟缓存、有界响应，网络失败以 `unavailable` 状态返回 |
 | `GET` | `/system/database-restore` | 查看待重启、已应用或失败的数据库恢复状态（管理员） |
 | `POST` | `/system/database-restore` | 上传并校验最大 1 GiB 的 SQLite 数据库，保存为待重启恢复文件（管理员，需 CSRF） |
 | `DELETE` | `/system/database-restore` | 取消尚未应用的数据库恢复（管理员，需 CSRF） |

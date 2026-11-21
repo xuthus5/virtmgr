@@ -253,3 +253,43 @@ test("虚拟机详情、Guest Agent 状态与 ISO 入口在窄屏保持可读", 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   }
 });
+
+test("关于页面和更新结果在移动端无横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page);
+  await page.goto("/about");
+  await expect(page.getByRole("heading", { name: "关于 VirtMgr", exact: true })).toBeVisible();
+  await expect(page.getByTestId("about-update-check")).toBeVisible();
+
+  await page.route(/\/api\/v1\/system\/update\?refresh=true$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        currentVersion: "v0.3.1",
+        latestVersion: "v0.4.0",
+        status: "update_available",
+        updateAvailable: true,
+        releaseName: "VirtMgr 0.4.0",
+        releaseNotes: "较长的发布说明用于验证移动端换行和滚动边界。\n".repeat(20),
+        releaseUrl: "https://github.com/xuthus5/virtmgr/releases/tag/v0.4.0",
+        checkedAt: "2026-11-21T00:00:00Z",
+        cached: false,
+        message: "发现新版本，可前往发布页查看说明并安排升级。",
+      }),
+    });
+  });
+  await page.getByTestId("about-check-update").click();
+  await expect(page.getByTestId("about-update-result")).toContainText("发现新版本");
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }));
+    expect(layout.documentWidth, `${width}px 关于页面 document overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.bodyWidth, `${width}px 关于页面 body overflow`).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+});

@@ -1248,6 +1248,22 @@ export type SystemInfo = {
   };
 };
 
+export type UpdateCheckStatus = "update_available" | "up_to_date" | "ahead" | "unknown" | "no_release" | "unavailable";
+
+export type UpdateCheck = {
+  currentVersion: string;
+  latestVersion?: string;
+  status: UpdateCheckStatus;
+  updateAvailable: boolean;
+  releaseName?: string;
+  releaseNotes?: string;
+  releaseUrl?: string;
+  publishedAt?: string;
+  checkedAt: string;
+  cached: boolean;
+  message?: string;
+};
+
 export type DatabaseRestoreStatus = {
   state: "none" | "pending_restart" | "applied" | "failed";
   filename?: string;

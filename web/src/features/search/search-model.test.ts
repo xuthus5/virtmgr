@@ -87,6 +87,7 @@ describe("global search model", () => {
     expect(adminItems.map((item) => item.title)).toContain("用户管理");
     expect(adminItems.map((item) => item.title)).toContain("系统设置");
     expect(viewerItems.map((item) => item.title)).toContain("虚拟机模板");
+    expect(viewerItems.map((item) => item.title)).toContain("关于");
   });
 
   it("matches VMs by IP, UUID and state while keeping a useful description", () => {
@@ -126,5 +127,10 @@ describe("global search model", () => {
     expect(items.map((item) => item.testId)).toContain("global-search-page-host");
 
     expect(buildGlobalSearchItems("definitely-missing", "admin", { vms: [vm] })).toHaveLength(0);
+  });
+
+  it("finds the about page by version and update keywords", () => {
+    const items = buildGlobalSearchItems("update", "viewer", {});
+    expect(items.find((item) => item.kind === "page" && item.path === "/about")?.title).toBe("关于");
   });
 });

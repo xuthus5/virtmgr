@@ -66,7 +66,7 @@ All screenshots use the built-in demo backend, not production host data.
 | Host devices | PCI, USB, network, block, and DRM device inventory with PCI/USB passthrough attach and detach |
 | Observability | SSE events and task state, backup retry, seven-day host/running-VM history, Prometheus `/metrics`, CPU/memory threshold Webhook alerts, structured logs, and health endpoints |
 | Security | Local accounts, Argon2id passwords, self-service password change, admin password reset and session revocation, scoped and revocable Bearer API tokens, OpenAPI 3.1, HttpOnly/SameSite cookies, CSRF protection, role-based access, global read-only mode, filterable/exportable/retention-managed audit trail, CSP and security headers |
-| System management | Version/commit/build time, online SQLite export, audit retention, and global read-only settings |
+| System management | Version/commit/build time, project and stable-release update checks, online SQLite export/restore, audit retention, and global read-only settings |
 | User experience | Responsive layout, fixed and collapsible navigation, light/dark themes, keyboard-friendly global search, locally persisted list filters and favorites, accessible dialogs, and explicit confirmation for destructive actions |
 | Templates | Reusable VM specifications, optional image binding, firmware/network defaults, and interactive Cloud-init defaults (packages, commands, locale, sudo/SSH user) without instance names or disk paths |
 
@@ -336,7 +336,7 @@ Representative endpoint groups include:
 | Storage | `/api/v1/storage/pools`, `/volumes`, `/volumes/upload` |
 | Images | `GET/POST /api/v1/images`, `GET/DELETE /api/v1/images/{id}`, `POST /api/v1/images/{id}/refresh` |
 | Networking | `/api/v1/networks`, `/networks/bridges`, `/leases`, `/hosts`, `/diagnostics`, `/actions/{action}` |
-| System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/audit-events/export`, `/users`, `/users/me/password`, `/users/{id}/sessions`, `/settings` |
+| System | `/api/v1/events`, `/events/stream`, `/tasks`, `/templates`, `/audit-events`, `/audit-events/export`, `/users`, `/users/me/password`, `/users/{id}/sessions`, `/settings`, `/system/info`, `/system/update` |
 
 Task cancellation is available at `POST /api/v1/tasks/{id}/cancel` for supported task kinds and safe checkpoints.
 
@@ -396,6 +396,7 @@ scripts/                  Development and E2E helpers
 - VM import supports active-pool QCOW2/RAW system disks and ISO installation media. ISO imports create a blank system disk and retain the source ISO as a read-only CD-ROM. OVA/OVF, VMDK, and VHDX are not accepted directly; existing idle qcow2/raw volumes can be converted or copied to another pool from the storage page.
 - The image library supports qcow2/raw uploads, full clones, and same-pool qcow2 linked clones. The storage page supports idle-volume qcow2/raw conversion and cross-pool copies, but cross-pool linked clones, automatic linked-clone flattening, and automatic VM reference switching are not implemented.
 - Automatic backup content verification and DST-specific scheduling are out of scope; daily schedules use the server's local time zone.
+- The About page shows the running build, product positioning, and capability boundaries. Update checks read GitHub Releases from the server and cache the result; they only report the latest stable version, publication time, and release notes, and never download, install, or restart the service.
 - Managed NAT/isolated networks support IPv4-only, dual-stack, and IPv6-only addressing. IPv4 uses DHCP; IPv6 supports SLAAC (`/64`) and stateful DHCPv6 (`/64` to `/124`), with NAT66 enabled by default for NAT dual-stack networks. DNS forwarding, DHCPv6 DUID/Client-ID reservations, network diagnostics, and CSV import/export are available. NAT networks support TCP/UDP inbound port forwarding for IPv4 and IPv6 through the controlled `virtmgr_pf` nftables table; this requires `CAP_NET_ADMIN`. External bridge networks attach to an existing host Linux bridge and use upstream addressing/DHCP. Per-interface inbound/outbound bandwidth QoS is available. VirtMgr does not create host bridges and does not manage VLAN, bond, OVS, SR-IOV, explicit RA flags/prefix delegation, or security groups.
 - Alerts use the existing rule-level Webhook only. Notification centers, SMTP, Slack/Teams, PagerDuty, alert silencing, and escalation policies are not provided.
 - VM disk shrinking, arbitrary host shell access, and unrestricted libvirt API proxying are intentionally out of scope.

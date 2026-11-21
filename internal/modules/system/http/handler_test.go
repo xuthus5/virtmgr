@@ -20,6 +20,18 @@ type restoreRepository struct{}
 
 type tlsStatusProvider struct{ host string }
 
+type updateReleaseProvider struct {
+	calls int
+}
+
+func (provider *updateReleaseProvider) LatestRelease(context.Context) (domain.ReleaseInfo, error) {
+	provider.calls++
+	return domain.ReleaseInfo{
+		Version: "v0.4.0", Name: "VirtMgr 0.4.0", URL: "https://github.com/xuthus5/virtmgr/releases/tag/v0.4.0",
+		Notes: "release notes",
+	}, nil
+}
+
 func (provider *tlsStatusProvider) Status(host string) domain.TLSInfo {
 	provider.host = host
 	return domain.TLSInfo{Enabled: true, RequestHost: host, RequestHostMatched: false, Warnings: []string{"SAN mismatch"}}
@@ -101,5 +113,26 @@ func TestSystemInfoIncludesTLSStatusForRequestHost(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"tls":{"enabled":true`) || !strings.Contains(recorder.Body.String(), `"requestHostMatched":false`) {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestSystemUpdateReturnsReleaseMetadata(t *testing.T) {
+	provider := &updateReleaseProvider{}
+	router := chi.NewRouter()
+	New(systemapp.New(restoreRepository{}, nil, systemapp.WithReleaseProvider(provider))).Mount(router, func(next http.Handler) http.Handler { return next })
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, systemRequest(http.MethodGet, "/system/update?refresh=true", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var result domain.UpdateCheck
+	if err := json.NewDecoder(recorder.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.LatestVersion != "v0.4.0" || result.ReleaseName != "VirtMgr 0.4.0" || provider.calls != 1 {
+		t.Fatalf("result = %+v calls=%d", result, provider.calls)
+	}
+	if recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", recorder.Header().Get("Cache-Control"))
 	}
 }

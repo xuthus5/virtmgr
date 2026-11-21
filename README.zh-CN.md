@@ -66,7 +66,7 @@ VirtMgr 是面向单台 KVM/libvirt 宿主机的自托管管理控制台。它�
 | 主机设备 | 展示 PCI、USB、网络、块和 DRM 设备，并支持 PCI/USB 设备直通与移除 |
 | 可观测性 | SSE 实时事件与任务状态、任务失败重试、宿主机和运行中 VM 的 7 天历史指标、Prometheus `/metrics`、CPU/内存阈值 Webhook 告警、结构化日志和健康检查 |
 | 安全 | 本地账号、Argon2id 密码、自助改密、管理员重置密码与会话撤销、带作用域且可撤销的 Bearer API Token、OpenAPI 3.1、HttpOnly/SameSite Cookie、CSRF 防护、角色权限、全局只读模式、可筛选/导出/按保留期清理的审计、CSP 和安全响应头 |
-| 系统管理 | 版本/提交/构建时间、SQLite 在线导出、审计保留期和全局只读设置 |
+| 系统管理 | 版本/提交/构建时间、项目说明与稳定版本更新检查、SQLite 在线导出/恢复、审计保留期和全局只读设置 |
 | 使用体验 | 响应式布局、固定且可折叠的侧边导航、明暗主题、键盘友好的全局搜索、本地保存的列表筛选与收藏、可访问对话框和危险操作二次确认 |
 | 虚拟机模板 | 复用虚拟机规格、可选镜像绑定、固件/网络默认值和可交互 Cloud-init 默认配置（软件包、启动命令、区域、sudo/SSH 用户），不包含实例名称和磁盘路径 |
 
@@ -336,7 +336,7 @@ API 位于 `/api/v1`，使用 JSON。浏览器使用 Cookie，写操作还需要
 | 存储 | `/api/v1/storage/pools`、`/volumes`、`/volumes/upload` |
 | 镜像库 | `GET/POST /api/v1/images`、`GET/DELETE /api/v1/images/{id}`、`POST /api/v1/images/{id}/refresh` |
 | 网络 | `/api/v1/networks`、`/networks/bridges`、`/leases`、`/hosts`、`/diagnostics`、`/actions/{action}` |
-| 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/audit-events/export`、`/users`、`/users/me/password`、`/users/{id}/sessions`、`/settings` |
+| 系统 | `/api/v1/events`、`/events/stream`、`/tasks`、`/templates`、`/audit-events`、`/audit-events/export`、`/users`、`/users/me/password`、`/users/{id}/sessions`、`/settings`、`/system/info`、`/system/update` |
 
 允许类型的任务可在安全检查点通过 `POST /api/v1/tasks/{id}/cancel` 取消。
 
@@ -397,6 +397,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 镜像库支持上传 qcow2/raw、从镜像全量克隆，以及同存储池 qcow2 镜像的链接克隆；存储页支持空闲卷 qcow2/raw 格式转换、跨池复制和链接克隆展平。关机/异常停止虚拟机的数据盘可跨池迁移并自动切换持久域引用，但跨池链接克隆尚未实现。
 - 创建和导入虚拟机时，架构与机型来自宿主机 libvirt 能力探测；可显式选择架构和机型，并校验 UEFI、Secure Boot 与镜像架构兼容性。未指定时保持 x86_64/BIOS 兼容默认，ARM64 宿主默认使用 `virt` 机型。
 - 自动备份校验和夏令时特殊处理不在当前范围；每日调度使用服务端本地时区。
+- “关于”页面展示当前构建信息、产品定位和能力边界。更新检查由服务器访问 GitHub Releases 并缓存结果，只提示稳定版本、发布时间和发布说明，不自动下载、安装或重启服务。
 - 管理型 NAT/隔离网络支持 IPv4-only、双栈和 IPv6-only。IPv4 使用 DHCP；IPv6 支持 SLAAC（`/64`）和有状态 DHCPv6（`/64` 至 `/124`），NAT 双栈网络默认启用 NAT66。支持 DNS 转发、DHCPv6 DUID/Client ID 静态主机、网络诊断及 CSV 批量导入/导出。NAT 网络支持 IPv4/IPv6 TCP/UDP 入站端口转发，通过受控 `virtmgr_pf` nftables 表实现，运行服务需要 `CAP_NET_ADMIN`。外部桥接网络接入宿主机已有 Linux 网桥，并使用上游网络提供的地址/DHCP；单块网卡可设置入站/出站带宽 QoS。VirtMgr 不创建宿主机网桥，也不管理 VLAN、bond、OVS、SR-IOV、显式 RA 参数/前缀委派或安全组。
 - 告警仅支持现有规则级 Webhook；不提供通知中心、SMTP、Slack/Teams、PagerDuty、通知静默或升级策略。
 - 虚拟机磁盘缩容、任意宿主机 Shell 执行和不受限制的 libvirt API 代理不在当前范围内。

@@ -1,7 +1,7 @@
 import type { Role, StoragePool, StoragePoolState, StorageVolume, Task, TaskStatus, VM, VMImage, VMState, VMTemplate, VirtualNetwork } from "@/api/types";
 import { formatBytes } from "@/lib/utils";
 
-export type StaticSearchPath = "/" | "/vms" | "/templates" | "/storage" | "/networks" | "/host" | "/tasks" | "/events" | "/audit" | "/users" | "/settings";
+export type StaticSearchPath = "/" | "/vms" | "/templates" | "/storage" | "/networks" | "/host" | "/tasks" | "/events" | "/audit" | "/users" | "/settings" | "/about";
 
 type SearchItemBase = {
   id: string;
@@ -51,6 +51,7 @@ const pages: SearchPage[] = [
   { label: "审计日志", path: "/audit", description: "管理员写操作审计记录", keywords: ["audit", "security", "审计", "安全"], adminOnly: true },
   { label: "用户管理", path: "/users", description: "本地用户、角色和启用状态", keywords: ["user", "role", "rbac", "用户", "角色"], adminOnly: true },
   { label: "系统设置", path: "/settings", description: "全局只读模式和运行安全边界", keywords: ["settings", "readonly", "security", "设置", "只读", "安全"], adminOnly: true },
+  { label: "关于", path: "/about", description: "项目说明、运行版本和更新检查", keywords: ["about", "version", "release", "update", "关于", "版本", "更新"] },
 ];
 
 const vmStateLabels: Record<VMState, string> = {

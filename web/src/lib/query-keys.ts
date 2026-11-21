@@ -5,6 +5,7 @@ export const queryKeys = {
   overview: ["overview"] as const,
   settings: ["settings"] as const,
   systemInfo: ["system", "info"] as const,
+  systemUpdate: ["system", "update"] as const,
   databaseRestore: ["system", "database-restore"] as const,
   users: ["users"] as const,
   userSessions: (userId?: number) => ["user-sessions", userId] as const,

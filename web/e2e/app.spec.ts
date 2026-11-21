@@ -1027,3 +1027,42 @@ test("只读模式下可取消任务按钮禁用且任务状态支持已取消�
   await page.getByTestId("task-status-filter").selectOption("cancelled");
   await expect(page.getByTestId("tasks-empty")).toContainText("没有匹配的任务");
 });
+
+test("关于页面展示项目说明并通过只读接口检查更新", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "关于", exact: true }).click();
+  await expect(page).toHaveURL(/\/about$/);
+  await expect(page.getByRole("heading", { name: "关于 VirtMgr", exact: true })).toBeVisible();
+  await expect(page).toHaveTitle("关于 VirtMgr · VirtMgr");
+  await expect(page.getByTestId("about-hero")).toContainText("单机精品");
+  await expect(page.getByTestId("about-version")).not.toHaveText("");
+  await expect(page.getByText("项目说明", { exact: true })).toBeVisible();
+  await expect(page.getByText("核心能力", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("about-update-result")).toHaveCount(0);
+
+  await page.route(/\/api\/v1\/system\/update\?refresh=true$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        currentVersion: "v0.3.1",
+        latestVersion: "v0.4.0",
+        status: "update_available",
+        updateAvailable: true,
+        releaseName: "VirtMgr 0.4.0",
+        releaseNotes: "## 更新内容\n- 新增关于页面\n- 完善更新检查",
+        releaseUrl: "https://github.com/xuthus5/virtmgr/releases/tag/v0.4.0",
+        publishedAt: "2026-11-20T12:00:00Z",
+        checkedAt: "2026-11-21T00:00:00Z",
+        cached: false,
+        message: "发现新版本，可前往发布页查看说明并安排升级。",
+      }),
+    });
+  });
+  await page.getByTestId("about-check-update").click();
+  await expect(page.getByTestId("about-update-result")).toContainText("发现新版本");
+  await expect(page.getByTestId("about-update-result")).toContainText("v0.4.0");
+  await expect(page.getByTestId("about-update-result")).toContainText("新增关于页面");
+  await expect(page.getByTestId("about-release-link")).toHaveAttribute("href", "https://github.com/xuthus5/virtmgr/releases/tag/v0.4.0");
+  await expect(page.getByTestId("about-check-update")).toBeEnabled();
+});

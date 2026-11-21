@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"virtmgr/internal/domain"
@@ -44,13 +45,18 @@ type DatabaseExport struct {
 }
 
 type Service struct {
-	exporter     DatabaseExporter
-	restorer     DatabaseRestorer
-	audit        AuditRecorder
-	tlsStatus    TLSStatusProvider
-	tempDir      string
-	databasePath string
-	now          func() time.Time
+	exporter         DatabaseExporter
+	restorer         DatabaseRestorer
+	audit            AuditRecorder
+	tlsStatus        TLSStatusProvider
+	releaseProvider  ReleaseProvider
+	tempDir          string
+	databasePath     string
+	now              func() time.Time
+	updateMu         sync.Mutex
+	updateCache      domain.UpdateCheck
+	updateCheckedAt  time.Time
+	updateCacheValid bool
 }
 
 type Option func(*Service)

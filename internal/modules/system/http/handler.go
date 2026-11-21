@@ -27,6 +27,12 @@ func (h *Handler) Info(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, h.service.Info(r.Host))
 }
 
+func (h *Handler) CheckUpdate(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	refresh := r.URL.Query().Get("refresh") == "true" || r.URL.Query().Get("refresh") == "1"
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, stdhttp.StatusOK, h.service.CheckUpdate(r.Context(), refresh))
+}
+
 func (h *Handler) ExportDatabase(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	session, ok := authctx.Session(r.Context())
 	if !ok {
@@ -108,6 +114,7 @@ func (h *Handler) CancelDatabaseRestore(w stdhttp.ResponseWriter, r *stdhttp.Req
 
 func (h *Handler) Mount(r chi.Router, csrf func(stdhttp.Handler) stdhttp.Handler) {
 	r.Get("/system/info", h.Info)
+	r.Get("/system/update", h.CheckUpdate)
 	r.Get("/system/database-restore", h.GetDatabaseRestore)
 	r.Group(func(mutating chi.Router) {
 		mutating.Use(csrf)
