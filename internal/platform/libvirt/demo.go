@@ -296,6 +296,11 @@ func (d *DemoBackend) DefineVMXML(_ context.Context, uuid, xmlText string) (doma
 	vm.AgentConfigured = details.GuestAgent
 	vm.Firmware = details.Firmware
 	vm.SecureBoot = details.SecureBoot
+	vm.TPM = details.TPM
+	vm.RNG = details.RNG
+	vm.Watchdog = details.Watchdog
+	vm.ResourceQuota = details.ResourceQuota
+	vm.Placement = details.Placement
 	vm.Interfaces = details.Interfaces
 	d.vms[uuid] = vm
 	d.xmlConfig[uuid] = xmlText
@@ -689,6 +694,7 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 		VCPUs: spec.VCPUs, MaxVCPUs: spec.VCPUs, MemoryBytes: spec.MemoryMiB * 1024 * 1024, MaxMemoryBytes: spec.MemoryMiB * 1024 * 1024,
 		OSType: "hvm", Arch: architecture, Machine: machine,
 		Firmware: firmware, SecureBoot: spec.SecureBoot, TPM: spec.TPM, CloudInit: spec.CloudInit != nil,
+		ResourceQuota: spec.ResourceQuota, RNG: spec.RNG, Watchdog: spec.Watchdog,
 		Disks:       disks,
 		Interfaces:  []domain.NetworkInterface{{Type: "network", MAC: demoMAC(len(d.vms) + 1), Source: spec.Network, Model: "virtio"}},
 		Graphics:    []domain.Graphics{{Type: "vnc", Listen: "127.0.0.1", Port: 5900 + len(d.vms) + 1}},
@@ -709,6 +715,10 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 	if spec.Placement != nil {
 		xmlText, _ = domain.SetVMXMLPlacement(xmlText, *spec.Placement)
 	}
+	if spec.ResourceQuota != nil {
+		xmlText, _ = domain.SetVMResourceQuotaXML(xmlText, *spec.ResourceQuota)
+	}
+	xmlText, _ = domain.SetVMXMLHardware(xmlText, domain.VMHardware{RNG: spec.RNG, Watchdog: spec.Watchdog})
 	if spec.GuestAgentEnabled() {
 		xmlText, _ = addGuestAgentChannelXML(xmlText)
 	}
@@ -718,6 +728,35 @@ func (d *DemoBackend) CreateVM(_ context.Context, spec domain.VMCreateSpec) (dom
 	if spec.Start {
 		d.publish("domain.started", "info", "vm", uuid, vm.Name, "虚拟机已启动")
 	}
+	return cloneVM(vm), nil
+}
+
+func (d *DemoBackend) UpdateVMResourceQuota(_ context.Context, uuid string, quota domain.VMResourceQuota) (domain.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	vm, ok := d.vms[uuid]
+	if !ok {
+		return domain.VM{}, domain.ErrNotFound
+	}
+	if !vm.Persistent || vm.State == domain.VMStateShutdown || vm.State == domain.VMStateUnknown {
+		return domain.VM{}, domain.ErrActionNotAllowed
+	}
+	xmlText := d.xmlConfig[uuid]
+	if xmlText == "" {
+		xmlText = demoVMDomainXML(vm)
+	}
+	updatedXML, err := domain.SetVMResourceQuotaXML(xmlText, quota)
+	if err != nil {
+		return domain.VM{}, err
+	}
+	if quota.Empty() {
+		vm.ResourceQuota = nil
+	} else {
+		vm.ResourceQuota = &quota
+	}
+	d.vms[uuid] = vm
+	d.xmlConfig[uuid] = updatedXML
+	d.publish("domain.resources", "info", "vm", uuid, vm.Name, "虚拟机 CPU / 内存配额已更新")
 	return cloneVM(vm), nil
 }
 
@@ -2248,7 +2287,32 @@ func demoVMDomainXML(vm domain.VM) string {
 	var builder strings.Builder
 	builder.WriteString(xml.Header)
 	fmt.Fprintf(&builder, "<domain type='kvm'>\n  <name>%s</name>\n  <uuid>%s</uuid>\n", escapeXML(vm.Name), escapeXML(vm.UUID))
-	fmt.Fprintf(&builder, "  <memory unit='KiB'>%d</memory>\n  <vcpu>%d</vcpu>\n", vm.MemoryBytes/1024, vm.VCPUs)
+	fmt.Fprintf(&builder, "  <memory unit='KiB'>%d</memory>\n", vm.MemoryBytes/1024)
+	if vm.ResourceQuota != nil {
+		if vm.ResourceQuota.MemoryHardLimitMiB > 0 || vm.ResourceQuota.MemorySoftLimitMiB > 0 {
+			builder.WriteString("  <memtune>")
+			if vm.ResourceQuota.MemoryHardLimitMiB > 0 {
+				fmt.Fprintf(&builder, "<hard_limit unit='MiB'>%d</hard_limit>", vm.ResourceQuota.MemoryHardLimitMiB)
+			}
+			if vm.ResourceQuota.MemorySoftLimitMiB > 0 {
+				fmt.Fprintf(&builder, "<soft_limit unit='MiB'>%d</soft_limit>", vm.ResourceQuota.MemorySoftLimitMiB)
+			}
+			builder.WriteString("</memtune>\n")
+		}
+	}
+	fmt.Fprintf(&builder, "  <vcpu>%d</vcpu>\n", vm.VCPUs)
+	if vm.ResourceQuota != nil {
+		if vm.ResourceQuota.CPUShares > 0 || vm.ResourceQuota.CPUQuota > 0 {
+			builder.WriteString("  <cputune>")
+			if vm.ResourceQuota.CPUShares > 0 {
+				fmt.Fprintf(&builder, "<shares>%d</shares>", vm.ResourceQuota.CPUShares)
+			}
+			if vm.ResourceQuota.CPUQuota > 0 {
+				fmt.Fprintf(&builder, "<period>%d</period><quota>%d</quota>", vm.ResourceQuota.CPUPeriod, vm.ResourceQuota.CPUQuota)
+			}
+			builder.WriteString("</cputune>\n")
+		}
+	}
 	builder.WriteString("  <os")
 	if vm.Firmware == domain.VMFirmwareUEFI {
 		builder.WriteString(" firmware='efi'")
@@ -2280,6 +2344,12 @@ func demoVMDomainXML(vm domain.VM) string {
 	builder.WriteString("  <devices>\n")
 	if vm.TPM {
 		fmt.Fprintf(&builder, "    <tpm model='%s'><backend type='emulator' version='2.0'/></tpm>\n", vmTPMModel(vm.Arch))
+	}
+	if vm.RNG {
+		builder.WriteString("    <rng model='virtio'><backend model='random'>/dev/urandom</backend></rng>\n")
+	}
+	if vm.Watchdog != nil {
+		fmt.Fprintf(&builder, "    <watchdog model='%s' action='%s'/>\n", escapeXML(string(vm.Watchdog.Model)), escapeXML(string(vm.Watchdog.Action)))
 	}
 	for _, disk := range vm.Disks {
 		fmt.Fprintf(&builder, "    <disk type='file' device='%s'><driver name='qemu' type='%s'/><source file='%s'/><target dev='%s' bus='%s'/>", escapeXML(disk.Device), escapeXML(disk.Format), escapeXML(disk.Source), escapeXML(disk.Target), escapeXML(disk.Bus))

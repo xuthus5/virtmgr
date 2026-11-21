@@ -397,6 +397,7 @@ func normalizeImportSpec(spec domain.VMImportSpec) (domain.VMImportSpec, domain.
 		DiskPath: "/virtmgr-import/" + imageDiskName(spec.Name, targetFormat), DiskFormat: targetFormat,
 		TargetPool: spec.TargetPool, DiskBus: spec.DiskBus, Network: spec.Network, NICModel: spec.NICModel,
 		Firmware: spec.Firmware, SecureBoot: spec.SecureBoot, TPM: spec.TPM, GuestAgent: spec.GuestAgent,
+		ResourceQuota: spec.ResourceQuota, RNG: spec.RNG, Watchdog: spec.Watchdog,
 		Autostart: spec.Autostart, Start: spec.Start,
 	}
 	normalized, err := normalizeCreateSpec(createSpec)
@@ -411,6 +412,9 @@ func normalizeImportSpec(spec domain.VMImportSpec) (domain.VMImportSpec, domain.
 	spec.NICModel = normalized.NICModel
 	spec.Firmware = normalized.Firmware
 	spec.GuestAgent = normalized.GuestAgent
+	spec.ResourceQuota = normalized.ResourceQuota
+	spec.RNG = normalized.RNG
+	spec.Watchdog = normalized.Watchdog
 	return spec, normalized, nil
 }
 
@@ -422,7 +426,8 @@ func importSpecDetail(spec domain.VMImportSpec) map[string]any {
 		"diskCapacityBytes": spec.DiskCapacityBytes,
 		"diskBus":           spec.DiskBus, "network": spec.Network, "nicModel": spec.NICModel,
 		"firmware": spec.Firmware, "secureBoot": spec.SecureBoot, "guestAgent": spec.GuestAgentEnabled(),
-		"tpm":       spec.TPM,
+		"tpm":           spec.TPM,
+		"resourceQuota": spec.ResourceQuota, "rng": spec.RNG, "watchdog": spec.Watchdog,
 		"autostart": spec.Autostart, "start": spec.Start,
 	}
 }

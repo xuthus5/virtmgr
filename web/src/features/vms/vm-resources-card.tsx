@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Cpu, LoaderCircle, MemoryStick, Save, Settings2 } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { VMBootDevice, VM, VMCPUUpdateInput, VMPlacementInput } from "@/api/types";
+import type { VMBootDevice, VM, VMCPUUpdateInput, VMHardwareInput, VMPlacementInput, VMResourceQuota } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,8 +16,10 @@ import {
   validateVMResources,
 } from "@/features/vms/vm-resources-model";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
+import { buildVMHardware, emptyHardwareForm, hardwareFormFrom, hardwareSummary, type HardwareFormState } from "@/features/vms/vm-hardware-model";
 import { VMPlacementFields } from "@/features/vms/vm-placement-fields";
 import { buildPlacement, emptyPlacementForm, placementFormFrom, placementSummary, type PlacementFormState } from "@/features/vms/vm-placement-model";
+import { emptyQuotaForm, quotaFormFrom, quotaHasValues, quotaSummary, validateVMQuota, type QuotaFormState } from "@/features/vms/vm-quota-model";
 import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
@@ -43,10 +45,13 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
   const [cpuCores, setCpuCores] = useState("1");
   const [cpuThreads, setCpuThreads] = useState("1");
   const [placementForm, setPlacementForm] = useState<PlacementFormState>(emptyPlacementForm);
+  const [quotaForm, setQuotaForm] = useState<QuotaFormState>(emptyQuotaForm);
+  const [hardwareForm, setHardwareForm] = useState<HardwareFormState>(emptyHardwareForm);
   const [advancedError, setAdvancedError] = useState("");
 
   const bootDevices = availableBootDevices(vm);
   const cpuEditable = vm.state === "shutoff" || vm.state === "crashed";
+  const quotaEditable = vm.persistent && vm.state !== "shutting-down" && vm.state !== "unknown";
 
   useEffect(() => {
     setVcpus(String(vm.vcpus));
@@ -98,6 +103,24 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     onError: (error) => setAdvancedError(error instanceof ApiError ? error.message : "更新性能与拓扑失败，请稍后重试。"),
   });
 
+  const quotaMutation = useMutation({
+    mutationFn: (quota: VMResourceQuota) => api.updateVMResourceQuota(vm.uuid, quota),
+    onSuccess: (updated) => {
+      applyUpdatedVM(updated);
+      setNotice({ tone: "success", text: `CPU 与内存配额已更新：${quotaSummary(updated.resourceQuota)}。` });
+    },
+    onError: (error) => setAdvancedError(error instanceof ApiError ? error.message : "更新资源配额失败，请稍后重试。"),
+  });
+
+  const hardwareMutation = useMutation({
+    mutationFn: (hardware: VMHardwareInput) => api.updateVMHardware(vm.uuid, hardware),
+    onSuccess: (updated) => {
+      applyUpdatedVM(updated);
+      setNotice({ tone: "success", text: `硬件增强已更新：${hardwareSummary({ rng: Boolean(updated.rng), watchdog: updated.watchdog })}。` });
+    },
+    onError: (error) => setAdvancedError(error instanceof ApiError ? error.message : "更新 RNG/watchdog 失败，请稍后重试。"),
+  });
+
   function applyUpdatedVM(updated: VM) {
     queryClient.setQueryData(vmQueryKey(vm.uuid), updated);
     void queryClient.invalidateQueries({ queryKey: queryKeys.vms.root });
@@ -117,6 +140,8 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     setCpuCores(String(target.cpuCores || target.vcpus || 1));
     setCpuThreads(String(target.cpuThreads || 1));
     setPlacementForm(placementFormFrom(target.placement));
+    setQuotaForm(quotaFormFrom(target.resourceQuota));
+    setHardwareForm(hardwareFormFrom(target));
     setAdvancedError("");
   }
 
@@ -150,6 +175,18 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
     if (!result.input) return setAdvancedError(result.error ?? "请检查性能拓扑配置。");
     setAdvancedError("");
     placementMutation.mutate(result.input);
+  }
+
+  function submitQuota() {
+    const result = validateVMQuota(quotaForm, Math.round(vm.memoryBytes / (1024 * 1024)));
+    if (!result.input) return setAdvancedError(result.error ?? "请检查资源配额配置。");
+    setAdvancedError("");
+    quotaMutation.mutate(result.input);
+  }
+
+  function submitHardware() {
+    setAdvancedError("");
+    hardwareMutation.mutate(buildVMHardware(hardwareForm));
   }
 
   function submit() {
@@ -265,9 +302,9 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
 
       <Modal
         open={advancedOpen}
-        onClose={() => { if (!bootMutation.isPending && !cpuMutation.isPending && !placementMutation.isPending) setAdvancedOpen(false); }}
-        title="启动、CPU 与性能拓扑"
-        description="启动顺序可随时更新并在下次启动生效；CPU、NUMA、HugePages 与 CPU 绑定只允许在关机或异常停止状态下修改。"
+        onClose={() => { if (!bootMutation.isPending && !cpuMutation.isPending && !placementMutation.isPending && !quotaMutation.isPending && !hardwareMutation.isPending) setAdvancedOpen(false); }}
+        title="启动、性能与硬件增强"
+        description="启动顺序与资源配额可在线更新；CPU 拓扑、NUMA、HugePages、RNG 和 watchdog 只允许在关机或异常停止状态下修改。"
         testId="vm-advanced-config-modal"
       >
         <div className="space-y-5">
@@ -308,6 +345,36 @@ export function VMResourcesCard({ vm, canMutate, disabledReason }: {
             <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">NUMA、HugePages 与 CPU 绑定</p><p className="mt-0.5 text-xs text-muted-foreground">留空表示自动放置；显式 NUMA 会写入客户机拓扑和内存后端。</p></div><Badge variant={cpuEditable ? "outline" : "warning"}>{cpuEditable ? "可修改" : "需先关机"}</Badge></div>
             <VMPlacementFields form={placementForm} onChange={(next) => { setPlacementForm(next); setAdvancedError(""); }} vcpus={vm.vcpus} memoryMiB={Math.round(vm.memoryBytes / (1024 * 1024))} disabled={!cpuEditable || placementMutation.isPending} prefix="vm-placement" />
             <div className="flex justify-end"><Button type="button" size="sm" data-testid="vm-placement-save" disabled={!cpuEditable || placementMutation.isPending} onClick={submitPlacement}>{placementMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{placementMutation.isPending ? "正在保存..." : "保存性能拓扑"}</Button></div>
+          </section>
+
+          <section className="space-y-3 border-t pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">CPU 与内存配额</p><p className="mt-0.5 text-xs text-muted-foreground">配额通过 cgroup 限制调度权重与内存上下限；留空或 0 表示恢复默认。CPU 时间单位为微秒。</p></div><Badge variant={quotaEditable ? "outline" : "warning"}>{quotaEditable ? live ? "可在线更新" : "保存到持久配置" : "当前不可修改"}</Badge></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {[
+                { key: "cpuShares", label: "CPU shares (2-262144)", testId: "vm-quota-shares" },
+                { key: "cpuQuota", label: "CPU quota (微秒)", testId: "vm-quota-quota" },
+                { key: "cpuPeriod", label: "CPU period (1000-1000000 微秒)", testId: "vm-quota-period" },
+                { key: "memoryHardLimitMiB", label: "内存硬限制 (MiB)", testId: "vm-quota-memory-hard" },
+                { key: "memorySoftLimitMiB", label: "内存软限制 (MiB)", testId: "vm-quota-memory-soft" },
+              ].map((field) => (
+                <div key={field.key} className="space-y-2"><Label htmlFor={field.testId}>{field.label}</Label><Input id={field.testId} data-testid={field.testId} type="number" min={0} step={1} value={quotaForm[field.key as keyof QuotaFormState]} placeholder="默认" onChange={(event) => setQuotaForm((current) => ({ ...current, [field.key]: event.target.value }))} disabled={quotaMutation.isPending || !quotaEditable} /></div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">当前：{quotaSummary(vm.resourceQuota)}</p><Button type="button" size="sm" variant="outline" data-testid="vm-quota-save" disabled={quotaMutation.isPending || !quotaEditable} onClick={submitQuota}>{quotaMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{quotaMutation.isPending ? "正在保存..." : quotaHasValues(quotaForm) ? "保存配额" : "清除配额"}</Button></div>
+          </section>
+
+          <section className="space-y-3 border-t pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">RNG 与 watchdog</p><p className="mt-0.5 text-xs text-muted-foreground">RNG 使用宿主机 /dev/urandom；watchdog 在客户机失联时按动作触发。修改后从下次启动生效。</p></div><Badge variant={cpuEditable ? "outline" : "warning"}>{cpuEditable ? "可修改" : "需先关机"}</Badge></div>
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+              <input type="checkbox" aria-label="启用 RNG" className="mt-0.5 h-4 w-4" checked={hardwareForm.rng} onChange={(event) => setHardwareForm((current) => ({ ...current, rng: event.target.checked }))} disabled={!cpuEditable || hardwareMutation.isPending} />
+              <span><span className="block font-medium">随机数生成器 (RNG)</span><span className="mt-0.5 block text-xs text-muted-foreground">为使用 virtio-rng 的客户机提供熵源。</span></span>
+            </label>
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+              <input type="checkbox" aria-label="启用 watchdog" className="mt-0.5 h-4 w-4" checked={hardwareForm.watchdogEnabled} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogEnabled: event.target.checked }))} disabled={!cpuEditable || hardwareMutation.isPending} />
+              <span><span className="block font-medium">Watchdog</span><span className="mt-0.5 block text-xs text-muted-foreground">Watchdog 需要客户机驱动在启动后主动喂狗。</span></span>
+            </label>
+            {hardwareForm.watchdogEnabled ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="vm-watchdog-model">型号</Label><select id="vm-watchdog-model" data-testid="vm-watchdog-model" value={hardwareForm.watchdogModel} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogModel: event.target.value as HardwareFormState["watchdogModel"] }))} disabled={!cpuEditable || hardwareMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="i6300esb">i6300esb (PCI)</option><option value="ib700">ib700 (ISA)</option></select></div><div className="space-y-2"><Label htmlFor="vm-watchdog-action">超时动作</Label><select id="vm-watchdog-action" data-testid="vm-watchdog-action" value={hardwareForm.watchdogAction} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogAction: event.target.value as HardwareFormState["watchdogAction"] }))} disabled={!cpuEditable || hardwareMutation.isPending} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="reset">reset</option><option value="shutdown">shutdown</option><option value="poweroff">poweroff</option><option value="pause">pause</option><option value="dump">dump</option></select></div></div> : null}
+            <div className="flex justify-end"><Button type="button" size="sm" data-testid="vm-hardware-save" disabled={!cpuEditable || hardwareMutation.isPending} onClick={submitHardware}>{hardwareMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{hardwareMutation.isPending ? "正在保存..." : "保存硬件增强"}</Button></div>
           </section>
 
           {advancedError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{advancedError}</p> : null}

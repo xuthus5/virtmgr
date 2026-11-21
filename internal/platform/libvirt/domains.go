@@ -236,7 +236,9 @@ func mapVMResourceUpdateError(uuid, resource string, err error) error {
 		return domain.ErrNotFound
 	case errors.Is(err, libvirt.ERR_OPERATION_UNSUPPORTED),
 		errors.Is(err, libvirt.ERR_OPERATION_INVALID),
-		errors.Is(err, libvirt.ERR_INVALID_ARG):
+		errors.Is(err, libvirt.ERR_INVALID_ARG),
+		errors.Is(err, libvirt.ERR_XML_ERROR),
+		errors.Is(err, libvirt.ERR_INVALID_DOMAIN):
 		return errors.Join(domain.ErrActionNotAllowed, fmt.Errorf("update %s: %w", resource, err))
 	default:
 		return fmt.Errorf("update %s for domain %s: %w", resource, uuid, err)
@@ -401,6 +403,9 @@ func domainFromLibvirt(dom *libvirt.Domain) (domain.VM, error) {
 		IPAddresses:     []string{},
 		AgentConfigured: agentConfigured,
 		AgentState:      agentState,
+		ResourceQuota:   details.ResourceQuota,
+		RNG:             details.RNG,
+		Watchdog:        details.Watchdog,
 		AllowedActions:  allowedActions(state),
 		Placement:       details.Placement,
 	}, nil

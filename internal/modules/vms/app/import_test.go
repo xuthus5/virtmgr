@@ -140,6 +140,12 @@ func TestImportQCOW2AndRawStartsTaskAndKeepsSource(t *testing.T) {
 			service := New(repository, audit, false, WithTaskRecorder(tasks), WithImportVolumes(volumes))
 			spec := validImportSpec()
 			spec.SourceVolume = "base." + format
+			spec.ResourceQuota = &domain.VMResourceQuota{
+				CPUShares: 512, CPUQuota: 50_000, CPUPeriod: 100_000,
+				MemoryHardLimitMiB: 3072, MemorySoftLimitMiB: 2560,
+			}
+			spec.RNG = true
+			spec.Watchdog = &domain.VMWatchdog{Model: domain.VMWatchdogModelIB700, Action: domain.VMWatchdogActionShutdown}
 
 			task, err := service.Import(context.Background(), ImportCommand{
 				Spec: spec, Request: MutationContext{Session: operatorSession(), RequestID: "req-import", SourceIP: "127.0.0.1"},
@@ -159,6 +165,10 @@ func TestImportQCOW2AndRawStartsTaskAndKeepsSource(t *testing.T) {
 			expectedPath := fmt.Sprintf("/var/lib/libvirt/vms/web-import-disk.%s", format)
 			if created.DiskPath != expectedPath || created.DiskFormat != format || created.TargetPool != "vms" {
 				t.Fatalf("created spec = %+v", created)
+			}
+			if created.ResourceQuota == nil || created.ResourceQuota.CPUShares != 512 || created.ResourceQuota.MemorySoftLimitMiB != 2560 ||
+				!created.RNG || created.Watchdog == nil || created.Watchdog.Model != domain.VMWatchdogModelIB700 || created.Watchdog.Action != domain.VMWatchdogActionShutdown {
+				t.Fatalf("created hardware/quota = %+v", created)
 			}
 			if volumes.clonedSource != "base."+format || volumes.targetName != "web-import-disk."+format {
 				t.Fatalf("clone = %s -> %s/%s", volumes.clonedSource, volumes.targetPool, volumes.targetName)

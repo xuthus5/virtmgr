@@ -69,7 +69,25 @@ type handlerRepository struct {
 	diskQoSSpec      domain.VMDiskQoSSpec
 	networkQoSMAC    string
 	networkQoSSpec   domain.VMNetworkQoSSpec
+	quotaSeen        domain.VMResourceQuota
+	quotaUUID        string
+	quotaErr         error
 	qosErr           error
+}
+
+func (f *handlerRepository) UpdateVMResourceQuota(_ context.Context, uuid string, quota domain.VMResourceQuota) (domain.VM, error) {
+	f.quotaUUID = uuid
+	f.quotaSeen = quota
+	if f.quotaErr != nil {
+		return domain.VM{}, f.quotaErr
+	}
+	for i := range f.vms {
+		if f.vms[i].UUID == uuid {
+			f.vms[i].ResourceQuota = &quota
+			return f.vms[i], nil
+		}
+	}
+	return domain.VM{}, domain.ErrNotFound
 }
 
 type testConsoleConn struct{ *strings.Reader }
@@ -935,6 +953,30 @@ func TestUpdateResourcesRejectsAnonymousViewerAndActiveOverflow(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != stdhttp.StatusConflict || repository.resourcesUUID != "" {
 		t.Fatalf("overflow status = %d uuid=%q body=%s", recorder.Code, repository.resourcesUUID, recorder.Body.String())
+	}
+}
+
+func TestUpdateResourceQuotaAndHardware(t *testing.T) {
+	session := operatorSession()
+	repository := &handlerRepository{
+		vms:     []domain.VM{{UUID: "uuid-a", Name: "api-01", State: domain.VMStateShutoff, Persistent: true, MemoryBytes: 2 << 30}},
+		xmlText: `<domain><name>api-01</name><uuid>uuid-a</uuid><devices></devices></domain>`,
+	}
+	router := newHandlerRouter(repository, &session, true)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/quota", bytes.NewBufferString(`{"cpuShares":1024,"cpuQuota":50000,"cpuPeriod":100000,"memoryHardLimitMiB":4096,"memorySoftLimitMiB":3072}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || repository.quotaUUID != "uuid-a" || repository.quotaSeen.CPUShares != 1024 {
+		t.Fatalf("quota status = %d uuid=%q spec=%+v body=%s", recorder.Code, repository.quotaUUID, repository.quotaSeen, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(stdhttp.MethodPatch, "/vms/uuid-a/hardware", bytes.NewBufferString(`{"rng":true,"watchdog":{"model":"i6300esb","action":"reset"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || !strings.Contains(repository.definedXML, "watchdog model=\"i6300esb\"") || !strings.Contains(repository.definedXML, "<rng") {
+		t.Fatalf("hardware status = %d body=%s xml=%s", recorder.Code, recorder.Body.String(), repository.definedXML)
 	}
 }
 

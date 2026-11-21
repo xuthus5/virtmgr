@@ -27,6 +27,8 @@ const (
 	VMConfigSourceNetworkHotplug VMConfigVersionSource = "network_hotplug"
 	VMConfigSourceISOEject       VMConfigVersionSource = "iso_eject"
 	VMConfigSourceISOAttach      VMConfigVersionSource = "iso_attach"
+	VMConfigSourceQuota          VMConfigVersionSource = "quota"
+	VMConfigSourceHardware       VMConfigVersionSource = "hardware"
 	VMConfigSourceBaseline       VMConfigVersionSource = "baseline"
 )
 
@@ -35,7 +37,8 @@ func ValidVMConfigVersionSource(value VMConfigVersionSource) bool {
 	case VMConfigSourceManualXML, VMConfigSourceResources, VMConfigSourcePlacement, VMConfigSourcePassthrough,
 		VMConfigSourceSnapshotRevert, VMConfigSourceExternal, VMConfigSourceCreate,
 		VMConfigSourceClone, VMConfigSourceImport, VMConfigSourceBackupRestore, VMConfigSourceRollback,
-		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceDiskMigrate, VMConfigSourceBaseline:
+		VMConfigSourcePreRollback, VMConfigSourceDiskResize, VMConfigSourceDiskMigrate, VMConfigSourceQuota,
+		VMConfigSourceHardware, VMConfigSourceBaseline:
 		return true
 	case VMConfigSourceDiskHotplug, VMConfigSourceNetworkHotplug, VMConfigSourceISOEject, VMConfigSourceISOAttach:
 		return true

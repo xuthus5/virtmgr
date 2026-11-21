@@ -60,6 +60,10 @@ type VMPlacementRepository interface {
 	UpdateVMPlacement(ctx context.Context, uuid string, spec domain.VMPlacementSpec) (domain.VM, error)
 }
 
+type VMResourceQuotaRepository interface {
+	UpdateVMResourceQuota(ctx context.Context, uuid string, quota domain.VMResourceQuota) (domain.VM, error)
+}
+
 type VMMetadataRepository interface {
 	ListVMMetadata(ctx context.Context) (map[string]domain.VMMetadata, error)
 	GetVMMetadata(ctx context.Context, uuid string) (domain.VMMetadata, error)
@@ -311,6 +315,18 @@ type UpdatePlacementCommand struct {
 	UUID    string
 	Spec    domain.VMPlacementSpec
 	Request MutationContext
+}
+
+type UpdateResourceQuotaCommand struct {
+	UUID    string
+	Quota   domain.VMResourceQuota
+	Request MutationContext
+}
+
+type UpdateHardwareCommand struct {
+	UUID     string
+	Hardware domain.VMHardware
+	Request  MutationContext
 }
 
 type ResizeDiskCommand struct {
@@ -1721,6 +1737,22 @@ func normalizeCreateSpec(spec domain.VMCreateSpec) (domain.VMCreateSpec, error) 
 		}
 		spec.Placement = &normalized
 	}
+	if spec.ResourceQuota != nil {
+		normalized, err := domain.NormalizeVMResourceQuota(*spec.ResourceQuota, spec.MemoryMiB)
+		if err != nil {
+			return domain.VMCreateSpec{}, err
+		}
+		if normalized.Empty() {
+			spec.ResourceQuota = nil
+		} else {
+			spec.ResourceQuota = &normalized
+		}
+	}
+	watchdog, err := domain.NormalizeVMWatchdog(spec.Watchdog)
+	if err != nil {
+		return domain.VMCreateSpec{}, err
+	}
+	spec.Watchdog = watchdog
 	if spec.ImageID > 0 {
 		if spec.DiskPath != "" {
 			return domain.VMCreateSpec{}, fmt.Errorf("%w: disk path and image id are mutually exclusive", domain.ErrInvalidInput)
@@ -1875,6 +1907,15 @@ func specDetail(spec domain.VMCreateSpec) map[string]any {
 	if spec.CloudInit != nil {
 		detail["cloudInitPool"] = spec.CloudInit.Pool
 		detail["cloudInitUserDataBytes"] = len(spec.CloudInit.UserData)
+	}
+	if spec.ResourceQuota != nil {
+		detail["resourceQuota"] = spec.ResourceQuota
+	}
+	if spec.RNG {
+		detail["rng"] = true
+	}
+	if spec.Watchdog != nil {
+		detail["watchdog"] = spec.Watchdog
 	}
 	return detail
 }

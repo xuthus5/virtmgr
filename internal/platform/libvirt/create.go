@@ -155,7 +155,27 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 	builder.WriteString("<domain type='kvm'>")
 	fmt.Fprintf(&builder, "<name>%s</name>", escapeXML(spec.Name))
 	fmt.Fprintf(&builder, "<memory unit='MiB'>%d</memory>", spec.MemoryMiB)
+	if spec.ResourceQuota != nil && (spec.ResourceQuota.MemoryHardLimitMiB > 0 || spec.ResourceQuota.MemorySoftLimitMiB > 0) {
+		builder.WriteString("<memtune>")
+		if spec.ResourceQuota.MemoryHardLimitMiB > 0 {
+			fmt.Fprintf(&builder, "<hard_limit unit='MiB'>%d</hard_limit>", spec.ResourceQuota.MemoryHardLimitMiB)
+		}
+		if spec.ResourceQuota.MemorySoftLimitMiB > 0 {
+			fmt.Fprintf(&builder, "<soft_limit unit='MiB'>%d</soft_limit>", spec.ResourceQuota.MemorySoftLimitMiB)
+		}
+		builder.WriteString("</memtune>")
+	}
 	fmt.Fprintf(&builder, "<vcpu>%d</vcpu>", spec.VCPUs)
+	if spec.ResourceQuota != nil && (spec.ResourceQuota.CPUShares > 0 || spec.ResourceQuota.CPUQuota > 0) {
+		builder.WriteString("<cputune>")
+		if spec.ResourceQuota.CPUShares > 0 {
+			fmt.Fprintf(&builder, "<shares>%d</shares>", spec.ResourceQuota.CPUShares)
+		}
+		if spec.ResourceQuota.CPUQuota > 0 {
+			fmt.Fprintf(&builder, "<period>%d</period><quota>%d</quota>", spec.ResourceQuota.CPUPeriod, spec.ResourceQuota.CPUQuota)
+		}
+		builder.WriteString("</cputune>")
+	}
 	if firmware == domain.VMFirmwareUEFI {
 		fmt.Fprintf(&builder, "<os firmware='efi'><type arch='%s'%s>hvm</type><loader secure='", escapeXML(architecture), machineAttribute)
 		if spec.SecureBoot {
@@ -204,6 +224,12 @@ func buildDomainXMLWithCloudInit(spec domain.VMCreateSpec, cloudInitPath string)
 	}
 	if spec.TPM {
 		fmt.Fprintf(&builder, "<tpm model='%s'><backend type='emulator' version='2.0'/></tpm>", vmTPMModel(architecture))
+	}
+	if spec.RNG {
+		builder.WriteString("<rng model='virtio'><backend model='random'>/dev/urandom</backend></rng>")
+	}
+	if spec.Watchdog != nil {
+		fmt.Fprintf(&builder, "<watchdog model='%s' action='%s'/>", escapeXML(string(spec.Watchdog.Model)), escapeXML(string(spec.Watchdog.Action)))
 	}
 	builder.WriteString("</devices></domain>")
 	return builder.String()

@@ -15,6 +15,8 @@ import { useHostQuery } from "@/features/host/use-host-query";
 import { useNetworksQuery } from "@/features/networks/use-networks-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 import { buildVMImportInput, importDiskCapacityError, importFilenameError, importVolumeFormat, isSupportedImportVolume, vmImportTargetDiskName, type VMImportFormValues } from "@/features/vms/vm-import-model";
+import { buildVMHardware, emptyHardwareForm, hardwareSummary, type HardwareFormState } from "@/features/vms/vm-hardware-model";
+import { emptyQuotaForm, quotaHasValues, quotaSummary, validateVMQuota, type QuotaFormState } from "@/features/vms/vm-quota-model";
 import { queryKeys } from "@/lib/query-keys";
 import { formatBytes } from "@/lib/utils";
 
@@ -49,6 +51,8 @@ export function VMImportPage() {
   const [sourceMode, setSourceMode] = useState<"existing" | "upload">("existing");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState("");
+  const [quotaForm, setQuotaForm] = useState<QuotaFormState>(emptyQuotaForm);
+  const [hardwareForm, setHardwareForm] = useState<HardwareFormState>(emptyHardwareForm);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [task, setTask] = useState<Task | null>(null);
@@ -149,7 +153,18 @@ export function VMImportPage() {
         return;
       }
     }
-    importMutation.mutate(buildVMImportInput(form));
+    const quota = quotaHasValues(quotaForm) ? validateVMQuota(quotaForm, Number(form.memoryMiB)) : { input: undefined };
+    if (quota.error) {
+      setError(quota.error);
+      return;
+    }
+    const hardware = buildVMHardware(hardwareForm);
+    importMutation.mutate({
+      ...buildVMImportInput(form),
+      ...(quota.input ? { resourceQuota: quota.input } : {}),
+      rng: hardware.rng,
+      ...(hardware.watchdog ? { watchdog: hardware.watchdog } : {}),
+    });
   }
 
   return (
@@ -314,6 +329,32 @@ export function VMImportPage() {
                   <span className="font-medium">导入后立即启动</span>
                 </label>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="vm-import-hardware-quota-card">
+            <CardHeader>
+              <CardTitle>资源配额与硬件增强（可选）</CardTitle>
+              <CardDescription>配额在创建后持续生效；RNG 和 watchdog 会写入新域定义。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { key: "cpuShares", label: "CPU shares", testId: "vm-import-quota-shares" },
+                  { key: "cpuQuota", label: "CPU quota (微秒)", testId: "vm-import-quota-quota" },
+                  { key: "cpuPeriod", label: "CPU period (微秒)", testId: "vm-import-quota-period" },
+                  { key: "memoryHardLimitMiB", label: "内存硬限制 (MiB)", testId: "vm-import-quota-memory-hard" },
+                  { key: "memorySoftLimitMiB", label: "内存软限制 (MiB)", testId: "vm-import-quota-memory-soft" },
+                ].map((field) => (
+                  <div key={field.key} className="space-y-2"><Label htmlFor={field.testId}>{field.label}</Label><Input id={field.testId} data-testid={field.testId} type="number" min={0} step={1} value={quotaForm[field.key as keyof QuotaFormState]} placeholder="默认" onChange={(event) => setQuotaForm((current) => ({ ...current, [field.key]: event.target.value }))} disabled={!canImport} /></div>
+                ))}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm"><input aria-label="导入时启用 RNG" type="checkbox" className="mt-0.5 h-4 w-4" checked={hardwareForm.rng} onChange={(event) => setHardwareForm((current) => ({ ...current, rng: event.target.checked }))} disabled={!canImport} /><span><span className="block font-medium">RNG</span><span className="mt-0.5 block text-xs text-muted-foreground">virtio-rng，使用 /dev/urandom。</span></span></label>
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm"><input aria-label="导入时启用 watchdog" type="checkbox" className="mt-0.5 h-4 w-4" checked={hardwareForm.watchdogEnabled} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogEnabled: event.target.checked }))} disabled={!canImport} /><span><span className="block font-medium">Watchdog</span><span className="mt-0.5 block text-xs text-muted-foreground">需要客户机 watchdog 驱动。</span></span></label>
+              </div>
+              {hardwareForm.watchdogEnabled ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="vm-import-watchdog-model">Watchdog 型号</Label><select id="vm-import-watchdog-model" data-testid="vm-import-watchdog-model" value={hardwareForm.watchdogModel} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogModel: event.target.value as HardwareFormState["watchdogModel"] }))} disabled={!canImport} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="i6300esb">i6300esb (PCI)</option><option value="ib700">ib700 (ISA)</option></select></div><div className="space-y-2"><Label htmlFor="vm-import-watchdog-action">超时动作</Label><select id="vm-import-watchdog-action" data-testid="vm-import-watchdog-action" value={hardwareForm.watchdogAction} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogAction: event.target.value as HardwareFormState["watchdogAction"] }))} disabled={!canImport} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="reset">reset</option><option value="shutdown">shutdown</option><option value="poweroff">poweroff</option><option value="pause">pause</option><option value="dump">dump</option></select></div></div> : null}
+              <p className="text-xs text-muted-foreground">配额：{quotaHasValues(quotaForm) ? quotaSummary(validateVMQuota(quotaForm, Number(form.memoryMiB)).input) : "未设置"} · 硬件：{hardwareSummary(buildVMHardware(hardwareForm))}</p>
             </CardContent>
           </Card>
         </div>

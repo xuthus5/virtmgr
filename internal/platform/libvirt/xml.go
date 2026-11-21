@@ -110,7 +110,24 @@ type domainXML struct {
 			Nodeset string `xml:"nodeset,attr"`
 		} `xml:"hugepages>page"`
 	} `xml:"memoryBacking"`
+	MemoryTune struct {
+		HardLimit struct {
+			Unit  string `xml:"unit,attr"`
+			Value uint64 `xml:",chardata"`
+		} `xml:"hard_limit"`
+		SoftLimit struct {
+			Unit  string `xml:"unit,attr"`
+			Value uint64 `xml:",chardata"`
+		} `xml:"soft_limit"`
+		MinGuarantee struct {
+			Unit  string `xml:"unit,attr"`
+			Value uint64 `xml:",chardata"`
+		} `xml:"min_guarantee"`
+	} `xml:"memtune"`
 	CPUTune struct {
+		Shares   uint64 `xml:"shares"`
+		Period   uint64 `xml:"period"`
+		Quota    int64  `xml:"quota"`
 		VCPUPins []struct {
 			VCPU   uint   `xml:"vcpu,attr"`
 			Cpuset string `xml:"cpuset,attr"`
@@ -196,6 +213,16 @@ type domainXML struct {
 				Version string `xml:"version,attr"`
 			} `xml:"backend"`
 		} `xml:"tpm"`
+		RNG []struct {
+			Model   string `xml:"model,attr"`
+			Backend struct {
+				Model string `xml:"model,attr"`
+			} `xml:"backend"`
+		} `xml:"rng"`
+		Watchdog []struct {
+			Model  string `xml:"model,attr"`
+			Action string `xml:"action,attr"`
+		} `xml:"watchdog"`
 	} `xml:"devices"`
 }
 
@@ -206,27 +233,30 @@ type domainBandwidthXML struct {
 }
 
 type domainDetails struct {
-	OSType      string
-	Arch        string
-	Machine     string
-	VCPUs       uint
-	MemoryBytes uint64
-	Firmware    domain.VMFirmware
-	SecureBoot  bool
-	CloudInit   bool
-	GuestAgent  bool
-	TPM         bool
-	Disks       []domain.Disk
-	Interfaces  []domain.NetworkInterface
-	Graphics    []domain.Graphics
-	Serials     []domain.SerialConsole
-	Passthrough []domain.PassthroughDevice
-	BootDevices []domain.VMBootDevice
-	CPUModel    string
-	CPUSockets  uint
-	CPUCores    uint
-	CPUThreads  uint
-	Placement   *domain.VMPlacement
+	OSType        string
+	Arch          string
+	Machine       string
+	VCPUs         uint
+	MemoryBytes   uint64
+	Firmware      domain.VMFirmware
+	SecureBoot    bool
+	CloudInit     bool
+	GuestAgent    bool
+	TPM           bool
+	Disks         []domain.Disk
+	Interfaces    []domain.NetworkInterface
+	Graphics      []domain.Graphics
+	Serials       []domain.SerialConsole
+	Passthrough   []domain.PassthroughDevice
+	BootDevices   []domain.VMBootDevice
+	CPUModel      string
+	CPUSockets    uint
+	CPUCores      uint
+	CPUThreads    uint
+	Placement     *domain.VMPlacement
+	ResourceQuota *domain.VMResourceQuota
+	RNG           bool
+	Watchdog      *domain.VMWatchdog
 }
 
 func parseDomainXML(text string) (domainDetails, error) {
@@ -257,6 +287,24 @@ func parseDomainXML(text string) (domainDetails, error) {
 		CPUSockets:  parsed.CPU.Topology.Sockets,
 		CPUCores:    parsed.CPU.Topology.Cores,
 		CPUThreads:  parsed.CPU.Topology.Threads,
+		RNG:         len(parsed.Devices.RNG) > 0,
+	}
+	if len(parsed.Devices.Watchdog) > 0 {
+		watchdog := parsed.Devices.Watchdog[0]
+		details.Watchdog = &domain.VMWatchdog{Model: domain.VMWatchdogModel(strings.TrimSpace(watchdog.Model)), Action: domain.VMWatchdogAction(strings.TrimSpace(watchdog.Action))}
+	}
+	quota := domain.VMResourceQuota{
+		CPUShares:             parsed.CPUTune.Shares,
+		CPUPeriod:             parsed.CPUTune.Period,
+		MemoryHardLimitMiB:    domainMemoryMiB(parsed.MemoryTune.HardLimit.Unit, parsed.MemoryTune.HardLimit.Value),
+		MemorySoftLimitMiB:    domainMemoryMiB(parsed.MemoryTune.SoftLimit.Unit, parsed.MemoryTune.SoftLimit.Value),
+		MemoryMinGuaranteeMiB: domainMemoryMiB(parsed.MemoryTune.MinGuarantee.Unit, parsed.MemoryTune.MinGuarantee.Value),
+	}
+	if parsed.CPUTune.Quota > 0 {
+		quota.CPUQuota = uint64(parsed.CPUTune.Quota)
+	}
+	if !quota.Empty() {
+		details.ResourceQuota = &quota
 	}
 	placement := domain.VMPlacement{NUMACells: []domain.VMNUMACell{}, VCPUPins: []domain.VMCpuPin{}}
 	for _, cell := range parsed.CPU.NUMA.Cells {
@@ -382,6 +430,13 @@ func domainMemoryBytes(unit string, value uint64) uint64 {
 	default:
 		return value << 10
 	}
+}
+
+func domainMemoryMiB(unit string, value uint64) uint64 {
+	if value == 0 {
+		return 0
+	}
+	return (domainMemoryBytes(unit, value) + (1 << 20) - 1) >> 20
 }
 
 func cpuModelFromXML(mode, model string) string {

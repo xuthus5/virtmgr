@@ -197,7 +197,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 		"/vms", "/vms/import", "/vms/batch-actions", "/vms/{uuid}", "/vms/{uuid}/xml", "/vms/{uuid}/export",
 		"/vms/{uuid}/snapshots", "/vms/{uuid}/snapshots/{snapshot}", "/vms/{uuid}/snapshots/{snapshot}/revert",
 		"/vms/{uuid}/metrics", "/vms/{uuid}/clone", "/vms/{uuid}/backups", "/vms/{uuid}/iso/eject", "/vms/{uuid}/iso/attach",
-		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/placement", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
+		"/vms/{uuid}/autostart", "/vms/{uuid}/resources", "/vms/{uuid}/quota", "/vms/{uuid}/hardware", "/vms/{uuid}/placement", "/vms/{uuid}/boot", "/vms/{uuid}/cpu",
 		"/vms/{uuid}/disks", "/vms/{uuid}/disks/{target}", "/vms/{uuid}/disks/{target}/migrate", "/vms/{uuid}/disks/{target}/qos",
 		"/vms/{uuid}/network-interfaces", "/vms/{uuid}/network-interfaces/{mac}", "/vms/{uuid}/network-interfaces/{mac}/qos",
 		"/vms/{uuid}/devices", "/vms/{uuid}/devices/{device}",
@@ -236,7 +236,7 @@ func TestOpenAPIContractCoversMountedRoutesAndReferences(t *testing.T) {
 	}
 	components, _ := document["components"].(map[string]any)
 	schemas, _ := components["schemas"].(map[string]any)
-	for _, schema := range []string{"VMPlacement", "VMPlacementRequest", "GuestAgentPackage", "GuestAgentPackageInventory", "PortForward", "PortForwardRequest", "PortForwardList", "UpdateCheck"} {
+	for _, schema := range []string{"VMPlacement", "VMPlacementRequest", "VMResourceQuota", "VMWatchdog", "VMHardwareRequest", "GuestAgentPackage", "GuestAgentPackageInventory", "PortForward", "PortForwardRequest", "PortForwardList", "UpdateCheck"} {
 		if _, ok := schemas[schema]; !ok {
 			t.Errorf("OpenAPI schema %q is missing", schema)
 		}

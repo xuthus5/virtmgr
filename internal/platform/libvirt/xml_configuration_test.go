@@ -61,6 +61,31 @@ func TestParseDomainXMLMemoryUnits(t *testing.T) {
 	}
 }
 
+func TestParseDomainXMLQuotaRNGAndWatchdog(t *testing.T) {
+	details, err := parseDomainXML(`<domain>
+  <memory unit='MiB'>2048</memory>
+  <memtune><hard_limit unit='MiB'>4096</hard_limit><soft_limit unit='MiB'>3072</soft_limit><min_guarantee unit='MiB'>2048</min_guarantee></memtune>
+  <vcpu>2</vcpu>
+  <cputune><shares>2048</shares><period>100000</period><quota>50000</quota><vcpupin vcpu='0' cpuset='0'/></cputune>
+  <devices>
+    <rng model='virtio'><backend model='random'>/dev/urandom</backend></rng>
+    <watchdog model='i6300esb' action='reset'/>
+  </devices>
+</domain>`)
+	if err != nil {
+		t.Fatalf("parseDomainXML() error = %v", err)
+	}
+	if !details.RNG || details.Watchdog == nil || details.Watchdog.Model != domain.VMWatchdogModelI6300ESB || details.Watchdog.Action != domain.VMWatchdogActionReset {
+		t.Fatalf("hardware = RNG %v watchdog %+v", details.RNG, details.Watchdog)
+	}
+	if details.ResourceQuota == nil || details.ResourceQuota.CPUShares != 2048 || details.ResourceQuota.CPUQuota != 50_000 || details.ResourceQuota.MemoryHardLimitMiB != 4096 {
+		t.Fatalf("quota = %+v", details.ResourceQuota)
+	}
+	if details.Placement == nil || len(details.Placement.VCPUPins) != 1 {
+		t.Fatalf("placement = %+v", details.Placement)
+	}
+}
+
 func TestParseDomainXMLPreservesCPUAndDeviceBootSemantics(t *testing.T) {
 	details, err := parseDomainXML(`<domain type='kvm'>
   <os><type arch='x86_64'>hvm</type></os>

@@ -30,7 +30,23 @@ type configurationRepository struct {
 	definedXML     string
 	diskQoSSpec    domain.VMDiskQoSSpec
 	networkQoSSpec domain.VMNetworkQoSSpec
+	quotaSpec      domain.VMResourceQuota
+	quotaErr       error
 	qosErr         error
+}
+
+func (r *configurationRepository) UpdateVMResourceQuota(_ context.Context, uuid string, quota domain.VMResourceQuota) (domain.VM, error) {
+	r.quotaSpec = quota
+	if r.quotaErr != nil {
+		return domain.VM{}, r.quotaErr
+	}
+	for _, vm := range r.vms {
+		if vm.UUID == uuid {
+			vm.ResourceQuota = &quota
+			return vm, nil
+		}
+	}
+	return domain.VM{}, domain.ErrNotFound
 }
 
 func (r *configurationRepository) GetVMXML(_ context.Context, uuid string, format domain.VMXMLFormat) (domain.VMXML, error) {

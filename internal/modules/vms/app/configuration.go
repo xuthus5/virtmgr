@@ -415,3 +415,112 @@ func networkQoSDetail(spec domain.VMNetworkQoSSpec) map[string]any {
 		"outboundPeakBytes": spec.OutboundPeakBytes, "outboundBurstBytes": spec.OutboundBurstBytes,
 	}
 }
+
+func (s *Service) UpdateResourceQuota(ctx context.Context, command UpdateResourceQuotaCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	detail := quotaDetail(command.Quota)
+	if command.UUID == "" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, domain.ErrReadOnly)
+	}
+	repository, ok := s.repository.(VMResourceQuotaRepository)
+	if !ok {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, domain.ErrUnavailable)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	if !vm.Persistent || vm.State == domain.VMStateShutdown || vm.State == domain.VMStateUnknown {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, domain.ErrActionNotAllowed)
+	}
+	normalized, err := domain.NormalizeVMResourceQuota(command.Quota, vm.MemoryBytes/(1024*1024))
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, err)
+	}
+	detail = quotaDetail(normalized)
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	detail["previous"] = vm.ResourceQuota
+	updated, err := repository.UpdateVMResourceQuota(ctx, command.UUID, normalized)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.quota.update", command.UUID, detail, err)
+	}
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceQuota, 0, "更新 CPU 与内存配额后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.quota.update", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM resource quota audit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *Service) UpdateHardware(ctx context.Context, command UpdateHardwareCommand) (domain.VM, error) {
+	command.UUID = strings.TrimSpace(command.UUID)
+	detail := hardwareDetail(command.Hardware)
+	if command.UUID == "" {
+		return domain.VM{}, domain.ErrInvalidInput
+	}
+	if !domain.CanOperateVMs(command.Request.Session.User.Role) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, domain.ErrForbidden)
+	}
+	if s.isReadOnly() {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, domain.ErrReadOnly)
+	}
+	vm, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	if !vm.Persistent || (vm.State != domain.VMStateShutoff && vm.State != domain.VMStateCrashed) {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, domain.ErrActionNotAllowed)
+	}
+	normalized, err := domain.NormalizeVMHardware(command.Hardware)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	detail = hardwareDetail(normalized)
+	detail["name"] = vm.Name
+	detail["state"] = string(vm.State)
+	detail["previousRNG"] = vm.RNG
+	detail["previousWatchdog"] = vm.Watchdog
+	config, err := s.repository.GetVMXML(ctx, command.UUID, domain.VMXMLFormatConfig)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	updatedXML, err := domain.SetVMXMLHardware(config.XML, normalized)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	if _, err := s.repository.DefineVMXML(ctx, command.UUID, updatedXML); err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	updated, err := s.repository.GetVM(ctx, command.UUID)
+	if err != nil {
+		return domain.VM{}, s.mutationFailure(ctx, command.Request, "vm.hardware.update", command.UUID, detail, err)
+	}
+	updated.RNG = normalized.RNG
+	updated.Watchdog = normalized.Watchdog
+	s.captureConfigVersion(ctx, command.Request, command.UUID, domain.VMConfigSourceHardware, 0, "更新 RNG 与 watchdog 后保存持久配置")
+	if err := s.recordMutationAudit(ctx, command.Request, "vm.hardware.update", command.UUID, "success", detail, nil); err != nil {
+		return domain.VM{}, fmt.Errorf("record VM hardware audit: %w", err)
+	}
+	return updated, nil
+}
+
+func quotaDetail(quota domain.VMResourceQuota) map[string]any {
+	return map[string]any{
+		"cpuShares": quota.CPUShares, "cpuQuota": quota.CPUQuota, "cpuPeriod": quota.CPUPeriod,
+		"memoryHardLimitMiB": quota.MemoryHardLimitMiB, "memorySoftLimitMiB": quota.MemorySoftLimitMiB,
+	}
+}
+
+func hardwareDetail(hardware domain.VMHardware) map[string]any {
+	return map[string]any{"rng": hardware.RNG, "watchdog": hardware.Watchdog}
+}

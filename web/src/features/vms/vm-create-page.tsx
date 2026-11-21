@@ -20,6 +20,8 @@ import { overviewQueryKey } from "@/features/overview/use-overview-query";
 import { useStoragePoolsQuery, useStorageVolumesQuery } from "@/features/storage/use-storage-query";
 import { templateVMCreateDefaults } from "@/features/templates/template-form";
 import { useTemplatesQuery } from "@/features/templates/use-templates-query";
+import { buildVMHardware, emptyHardwareForm, hardwareSummary, type HardwareFormState } from "@/features/vms/vm-hardware-model";
+import { emptyQuotaForm, quotaHasValues, quotaSummary, validateVMQuota, type QuotaFormState } from "@/features/vms/vm-quota-model";
 import { vmQueryKey } from "@/features/vms/use-vm-query";
 import { VMPlacementFields } from "@/features/vms/vm-placement-fields";
 import { buildPlacement, emptyPlacementForm, placementHasValues, placementSummary, type PlacementFormState } from "@/features/vms/vm-placement-model";
@@ -96,6 +98,8 @@ export function VMCreatePage() {
   const [selectedTemplateID, setSelectedTemplateID] = useState("");
   const [guestAgentDistro, setGuestAgentDistro] = useState<"debian" | "rhel" | "suse">("debian");
   const [placementForm, setPlacementForm] = useState<PlacementFormState>(emptyPlacementForm);
+  const [quotaForm, setQuotaForm] = useState<QuotaFormState>(emptyQuotaForm);
+  const [hardwareForm, setHardwareForm] = useState<HardwareFormState>(emptyHardwareForm);
   const presetApplied = useRef(false);
   const activeNetworks = (networksQuery.data?.items ?? []).filter((network) => network.active);
   const selectedNetwork = activeNetworks.find((network) => network.name === form.network);
@@ -248,6 +252,12 @@ export function VMCreatePage() {
       setError(placement.error);
       return;
     }
+    const quota = quotaHasValues(quotaForm) ? validateVMQuota(quotaForm, Number(form.memoryMiB)) : { input: undefined };
+    if (quota.error) {
+      setError(quota.error);
+      return;
+    }
+    const hardware = buildVMHardware(hardwareForm);
     mutation.mutate({
       name: form.name.trim(),
       ...(form.architecture ? { architecture: form.architecture } : {}),
@@ -271,6 +281,9 @@ export function VMCreatePage() {
       } : undefined,
       guestAgent: form.guestAgent,
       ...(placement.input ? { placement: placement.input } : {}),
+      ...(quota.input ? { resourceQuota: quota.input } : {}),
+      rng: hardware.rng,
+      ...(hardware.watchdog ? { watchdog: hardware.watchdog } : {}),
       autostart: form.autostart,
       start: form.start,
     });
@@ -640,6 +653,38 @@ export function VMCreatePage() {
             </CardContent>
           </Card>
 
+          <Card className="mb-4" data-testid="vm-hardware-quota-card">
+            <CardHeader className="pb-3">
+              <CardTitle>资源配额与硬件增强（可选）</CardTitle>
+              <CardDescription>配额限制通过 cgroup 生效；RNG 和 watchdog 是客户机硬件模型，留空或关闭表示不创建。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { key: "cpuShares", label: "CPU shares", testId: "vm-create-quota-shares" },
+                  { key: "cpuQuota", label: "CPU quota (微秒)", testId: "vm-create-quota-quota" },
+                  { key: "cpuPeriod", label: "CPU period (微秒)", testId: "vm-create-quota-period" },
+                  { key: "memoryHardLimitMiB", label: "内存硬限制 (MiB)", testId: "vm-create-quota-memory-hard" },
+                  { key: "memorySoftLimitMiB", label: "内存软限制 (MiB)", testId: "vm-create-quota-memory-soft" },
+                ].map((field) => (
+                  <div key={field.key} className="space-y-2"><Label htmlFor={field.testId}>{field.label}</Label><Input id={field.testId} data-testid={field.testId} type="number" min={0} step={1} value={quotaForm[field.key as keyof QuotaFormState]} placeholder="默认" onChange={(event) => setQuotaForm((current) => ({ ...current, [field.key]: event.target.value }))} disabled={!canCreate} /></div>
+                ))}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <input aria-label="创建时启用 RNG" type="checkbox" className="mt-0.5 h-4 w-4" checked={hardwareForm.rng} onChange={(event) => setHardwareForm((current) => ({ ...current, rng: event.target.checked }))} disabled={!canCreate} />
+                  <span><span className="block font-medium">RNG</span><span className="mt-0.5 block text-xs text-muted-foreground">virtio-rng，使用 /dev/urandom。</span></span>
+                </label>
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <input aria-label="创建时启用 watchdog" type="checkbox" className="mt-0.5 h-4 w-4" checked={hardwareForm.watchdogEnabled} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogEnabled: event.target.checked }))} disabled={!canCreate} />
+                  <span><span className="block font-medium">Watchdog</span><span className="mt-0.5 block text-xs text-muted-foreground">客户机需要 watchdog 驱动并在启动后喂狗。</span></span>
+                </label>
+              </div>
+              {hardwareForm.watchdogEnabled ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="vm-create-watchdog-model">Watchdog 型号</Label><select id="vm-create-watchdog-model" data-testid="vm-create-watchdog-model" value={hardwareForm.watchdogModel} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogModel: event.target.value as HardwareFormState["watchdogModel"] }))} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="i6300esb">i6300esb (PCI)</option><option value="ib700">ib700 (ISA)</option></select></div><div className="space-y-2"><Label htmlFor="vm-create-watchdog-action">超时动作</Label><select id="vm-create-watchdog-action" data-testid="vm-create-watchdog-action" value={hardwareForm.watchdogAction} onChange={(event) => setHardwareForm((current) => ({ ...current, watchdogAction: event.target.value as HardwareFormState["watchdogAction"] }))} disabled={!canCreate} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm"><option value="reset">reset</option><option value="shutdown">shutdown</option><option value="poweroff">poweroff</option><option value="pause">pause</option><option value="dump">dump</option></select></div></div> : null}
+              <p className="text-xs text-muted-foreground">配额：{quotaHasValues(quotaForm) ? quotaSummary(validateVMQuota(quotaForm, Number(form.memoryMiB)).input) : "未设置"} · 硬件：{hardwareSummary(buildVMHardware(hardwareForm))}</p>
+            </CardContent>
+          </Card>
+
           <div className="space-y-4">
             <Card>
               <CardHeader>
@@ -669,6 +714,8 @@ export function VMCreatePage() {
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">系统盘</span><span className="max-w-52 truncate font-medium">{sourceMode === "image" ? (selectedImage?.name || "未选择镜像") : (form.diskPath || "未选择磁盘")}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">固件</span><span className="font-medium">{form.firmware === "uefi" ? "UEFI" : "BIOS"}{form.secureBoot ? " · Secure Boot" : ""}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">vTPM</span><span className="font-medium">{form.tpm ? "2.0 已启用" : "未启用"}</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">RNG / Watchdog</span><span className="max-w-52 text-right font-medium">{hardwareSummary(buildVMHardware(hardwareForm))}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">资源配额</span><span className="max-w-52 text-right font-medium">{quotaHasValues(quotaForm) ? quotaSummary(validateVMQuota(quotaForm, Number(form.memoryMiB)).input) : "未设置"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Cloud-init</span><span className="font-medium">{form.cloudInit ? "已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between"><span className="text-muted-foreground">Guest Agent</span><span className="font-medium">{form.guestAgent ? "通道已启用" : "未启用"}</span></div>
                 <div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">性能拓扑</span><span className="max-w-56 text-right font-medium">{placementHasValues(placementForm) ? placementSummary(placementForm) || "已配置" : "自动放置"}</span></div>

@@ -114,6 +114,24 @@ func TestBuildDomainXMLVirtualTPM(t *testing.T) {
 	}
 }
 
+func TestBuildDomainXMLResourceQuotaRNGAndWatchdog(t *testing.T) {
+	text := buildDomainXML(domain.VMCreateSpec{
+		Name: "quota-vm", VCPUs: 2, MemoryMiB: 2048,
+		DiskPath: "/var/lib/libvirt/images/quota-vm.qcow2", DiskFormat: "qcow2", Network: "default",
+		ResourceQuota: &domain.VMResourceQuota{CPUShares: 2048, CPUQuota: 50_000, CPUPeriod: 100_000, MemoryHardLimitMiB: 4096, MemorySoftLimitMiB: 3072},
+		RNG:           true, Watchdog: &domain.VMWatchdog{Model: domain.VMWatchdogModelI6300ESB, Action: domain.VMWatchdogActionReset},
+	})
+	for _, fragment := range []string{"<shares>2048</shares>", "<quota>50000</quota>", "<hard_limit unit='MiB'>4096</hard_limit>", "<rng model='virtio'>", "<watchdog model='i6300esb' action='reset'/>"} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("domain XML missing %q:\n%s", fragment, text)
+		}
+	}
+	details, err := parseDomainXML(text)
+	if err != nil || !details.RNG || details.Watchdog == nil || details.ResourceQuota == nil {
+		t.Fatalf("details = %+v, error = %v", details, err)
+	}
+}
+
 func TestBuildDomainXMLWithoutISO(t *testing.T) {
 	text := buildDomainXML(domain.VMCreateSpec{
 		Name: "web-01", VCPUs: 2, MemoryMiB: 2048,

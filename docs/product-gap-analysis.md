@@ -1,6 +1,6 @@
 # VirtMgr 产品差距分析与单机精品路线筛选
 
-> 状态：`SH-01` 至 `SH-09`、`SH-11` 至 `SH-16`、`NB-01`、`NB-02`、`NB-04`、`NR-01`、`NR-02`、`NR-03`、`NR-05` 至 `NR-09`、`NX-01`、`NX-02`、`NX-03`、`NX-09`、`NX-11` 至 `NX-24`、`NX-28`、`NX-29`、`NX-35` 至 `NX-38`、`NX-44` 已实现。最近一轮新增项目说明与更新检查页面：展示构建版本、产品定位和能力边界，并可由服务器读取 GitHub 最新稳定 Release 进行比较，不自动升级。`NR-04` 升级前预检安全包、`SH-10` 备份校验、夏令时处理和通知中心扩展按当前产品决定不实施。
+> 状态：`SH-01` 至 `SH-09`、`SH-11` 至 `SH-16`、`NB-01`、`NB-02`、`NB-04`、`NR-01`、`NR-02`、`NR-03`、`NR-05` 至 `NR-09`、`NX-01`、`NX-02`、`NX-03`、`NX-09`、`NX-11` 至 `NX-24`、`NX-28`、`NX-29`、`NX-35` 至 `NX-38`、`NX-44`、`NX-46`、`NX-54` 已实现。最近一轮补齐单虚拟机 CPU/内存 cgroup 配额，以及 RNG、watchdog 设备建模：创建、导入、详情和 API 均可配置，配额支持运行中同步 live/config，硬件增强仅允许关机态持久修改。`NR-04` 升级前预检安全包、`SH-10` 备份校验、夏令时处理和通知中心扩展按当前产品决定不实施。
 > 日期：2026-11-19。
 > 目标：以“单机精品 KVM/libvirt 管理平台”为当前产品定位，对比主流管理工具，区分值得优化的单机能力与暂不建议投入的平台级能力。
 
@@ -18,7 +18,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 当前主要短板：
 
-- 镜像库已支持已有卷登记、QCOW2/RAW 上传、全量克隆和同存储池 qcow2 链接克隆；存储页还可将空闲 qcow2/raw 卷转换格式、复制到其他活跃池，并把空闲链接克隆展平为独立卷。关机虚拟机支持带引用切换的磁盘跨池迁移，运行中虚拟机支持外部磁盘快照在线备份，性能拓扑已覆盖 NUMA、HugePages 和 CPU 绑定。内存快照、watchdog、RNG、vGPU 和 SR-IOV VF 等硬件建模仍需补强。
+- 镜像库已支持已有卷登记、QCOW2/RAW 上传、全量克隆和同存储池 qcow2 链接克隆；存储页还可将空闲 qcow2/raw 卷转换格式、复制到其他活跃池，并把空闲链接克隆展平为独立卷。关机虚拟机支持带引用切换的磁盘跨池迁移，运行中虚拟机支持外部磁盘快照在线备份，性能拓扑已覆盖 NUMA、HugePages 和 CPU 绑定。单虚拟机已支持 CPU shares/quota/period、内存 hard/soft 配额，以及 virtio-rng 和 i6300esb/ib700 watchdog；QEMU/KVM 不支持 libvirt 的内存最低保障参数。内存快照、vGPU/mdev 和 SR-IOV VF 等硬件建模仍需补强。
 - 身份联合、细粒度 RBAC、CLI、SDK 和 IaC Provider 偏弱；告警通知仅保留现有规则级 Webhook。
 - 与平台级产品相比，缺多主机、集群、迁移、HA、共享存储、SDN 和多租户；这些属于产品定位差异，不应零散补齐。
 
@@ -66,7 +66,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `GAP-01 镜像库与真模板`：已实现镜像登记、QCOW2/RAW 上传、容量/校验值刷新、模板绑定镜像、创建时全量克隆和同存储池 qcow2 链接克隆；存储卷支持空闲态格式转换、跨池复制和链接克隆展平，仍缺虚拟机引用自动重写和更完整的 Cloud image 治理。价值高，成本高。
 - `GAP-02 虚拟机导入与格式迁移`：已支持从活跃存储池选择或上传 QCOW2/RAW 系统盘，以及 ISO 安装介质；ISO 导入会创建空白 QCOW2 系统盘并以光盘优先启动。来源卷保留；缺 OVA/OVF、VMDK、VHDX、异构格式转换和磁盘/OVA 导出。按单机精品定位，异构图导入与格式转换不在当前范围。价值中，成本高。
 - `GAP-03 磁盘和网卡热插拔`：已支持数据磁盘和网卡热附加/移除、系统盘保护，以及关机/异常停止虚拟机的磁盘跨池复制和持久域引用原子切换；缺网卡型号修改和更完整的取消/回滚语义。价值高，成本中。
-- `GAP-04 高级硬件建模`：已支持 vTPM 2.0、启动顺序、宿主机能力驱动的 machine type、CPU model/topology、NUMA cell、HugePages、vCPU/emulator 绑定、UEFI 与 Secure Boot；缺 watchdog、RNG、vGPU/mdev 和 SR-IOV VF 的 GUI 管理。价值中高，成本中高。
+- `GAP-04 高级硬件建模`：已支持 vTPM 2.0、启动顺序、宿主机能力驱动的 machine type、CPU model/topology、NUMA cell、HugePages、vCPU/emulator 绑定、UEFI、Secure Boot、virtio-rng 和 i6300esb/ib700 watchdog，并支持单虚拟机 CPU/内存 cgroup 配额；缺 vGPU/mdev 和 SR-IOV VF 的 GUI 管理。价值中高，成本中高。
 - `GAP-05 控制台能力`：当前只有 VNC/串口；缺 SPICE、音频、客户端 USB 重定向、多显示器和文件传输。价值取决于是否服务 Windows/VDI，成本中高。
 - `GAP-06 Guest Agent 深度集成`：已实现通道探测、连接/无响应状态、诊断建议、时区/路由、操作系统/网络/文件系统信息、能力矩阵、Agent 关机/重启、时间同步、按文件系统 TRIM、关机态补齐通道、手动静默快照、受限文件读写、密码重置、SSH 公钥、登录用户、固定命令进程管理、systemd 服务只读诊断、只读软件包清单和期望状态健康历史；仍不提供通用任意命令执行。价值高，成本中高。
 - `GAP-07 快照成熟度`：缺内存状态快照、快照链可视化、合并/consolidation 和孤儿链清理；已支持静默标记追溯和固定间隔/每日时刻策略。价值中高，成本高。
@@ -79,7 +79,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 ### 4.2 团队化、安全与 API
 
 - `GAP-13 SSO 与多因素认证`：当前只有本地账号；缺 LDAP/AD、OIDC、SAML 和 MFA/TOTP。单机单人场景价值较低，团队共用时价值高，成本中。
-- `GAP-14 细粒度 RBAC 与配额`：当前是三个全局角色；缺按主机、虚拟机、存储池、网络分权，以及项目、租户、所有权和资源配额。价值高，成本中高。
+- `GAP-14 细粒度 RBAC 与配额`：当前是三个全局角色，并已支持单虚拟机 CPU/内存 cgroup 配额；缺按主机、虚拟机、存储池、网络分权，以及项目、租户、所有权和租户级配额。价值高，成本中高。
 - `GAP-15 API Token、OpenAPI 与 IaC`：已实现长期 API Token、read/write 作用域、撤销、Bearer 认证和覆盖全部已挂载路由的 OpenAPI 3.1 契约；仍缺管理 CLI、SDK、Ansible/Terraform Provider。价值高，成本中。
 - `GAP-16 外部事件订阅`：当前 SSE 主要服务前端，告警仅使用规则级 Webhook。按产品决定不扩展外部事件订阅、通知渠道管理、签名、重试历史和订阅管理。
 - `GAP-17 账号生命周期`：已支持自助改密、管理员重置密码、会话列表和撤销其他会话；缺密码过期/历史和 MFA。价值中，成本低到中。
@@ -172,6 +172,8 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 | `NX-37` | Guest Agent 只读软件包清单 | GAP-06 | S-M | 中高 | 固定 dpkg/rpm 查询和 apt/dnf/zypper 只读升级检查；最多 500 项，不安装、升级、卸载或刷新软件源 | 已实现 |
 | `NX-38` | NUMA、HugePages 与 CPU 绑定 | GAP-04 | M | 中高 | 创建和关机态持久域支持 NUMA cell、HugePages、vCPU/emulator pin；校验宿主机能力、CPU 范围、内存总和与拓扑一致性 | 已实现 |
 | `NX-44` | 项目说明与稳定版本更新检查 | GAP-19 | S | 中高 | 新增只读 `/system/update`，固定访问 GitHub Releases、10 分钟缓存和保守版本比较；前端 `/about` 展示产品定位、构建信息、能力边界和发布说明，不自动升级 | 已实现 |
+| `NX-46` | 单虚拟机 CPU/内存资源配额 | GAP-04/GAP-14 | S-M | 中高 | 创建、导入和详情支持 CPU shares/quota/period 与内存 hard/soft；运行域同步 live/config 并在失败时回滚 live，关机域更新持久配置；不引入项目/租户配额 | 已实现 |
+| `NX-54` | virtio-rng 与 watchdog 设备建模 | GAP-04 | S | 中高 | 创建、导入和关机态详情支持 virtio-rng，以及 i6300esb/ib700 watchdog 型号与 reset/shutdown/poweroff/pause/dump 动作；整体替换设备并回读持久 XML | 已实现 |
 
 ### 5.3 边界候选：成本略高但仍属单机精品范围
 
@@ -193,7 +195,7 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 
 ## 6. 已完成批次与下一轮建议
 
-第一轮 `SH-01` 至 `SH-05`、第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 以及第三轮 `SH-15` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2；第三轮完成 Guest Agent 首轮深度集成，第四轮补齐受控文件、密码、SSH、进程、登录用户、健康历史和静默快照追溯。后续完成 `NB-01` API Token/OpenAPI、`NB-02` 镜像库第一阶段、`NB-04` 任务引擎增强，以及 `NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07`、`NR-08` 和 `NR-09`。本轮进一步完成 `NX-01`、`NX-02`、`NX-03`、`NX-09`、`NX-11`、`NX-12` 至 `NX-24`、`NX-28`、`NX-29`、`NX-31` 至 `NX-34`，并完成 `NX-30` 的多发行版真实矩阵、WebKit 浏览器验收和 TLS 轮换演练；形成虚拟机在线上层扩容、启动诊断、存储格式迁移、CPU/启动配置、I/O QoS、数据面崩溃恢复、数据库恢复向导、存储卷下载、网卡型号修改、监控历史、IPv6 双栈网络、TLS 热重载、真实网络诊断、DHCPv6 租约保留和虚拟机组织能力闭环。`NX-25` 管理 CLI 按单机精品定位明确不实施。
+第一轮 `SH-01` 至 `SH-05`、第二轮 `SH-06` 至 `SH-09`、`SH-11` 至 `SH-14` 以及第三轮 `SH-15` 已完成。第二轮同时补齐了边界候选中的磁盘/网卡热插拔、VM 标签/备注/负责人、历史指标、基础告警，以及 Cloud-init network-config/vendor-data 和 Netplan v2；第三轮完成 Guest Agent 首轮深度集成，第四轮补齐受控文件、密码、SSH、进程、登录用户、健康历史和静默快照追溯。后续完成 `NB-01` API Token/OpenAPI、`NB-02` 镜像库第一阶段、`NB-04` 任务引擎增强，以及 `NR-01`、`NR-02`、`NR-03`、`NR-05`、`NR-06`、`NR-07`、`NR-08` 和 `NR-09`。本轮进一步完成 `NX-01`、`NX-02`、`NX-03`、`NX-09`、`NX-11`、`NX-12` 至 `NX-24`、`NX-28`、`NX-29`、`NX-31` 至 `NX-34`，并完成 `NX-30` 的多发行版真实矩阵、WebKit 浏览器验收和 TLS 轮换演练；形成虚拟机在线上层扩容、启动诊断、存储格式迁移、CPU/启动配置、I/O QoS、数据面崩溃恢复、数据库恢复向导、存储卷下载、网卡型号修改、监控历史、IPv6 双栈网络、TLS 热重载、真实网络诊断、DHCPv6 租约保留和虚拟机组织能力闭环。最新一轮完成 `NX-44` 项目说明与更新检查、`NX-46` 单虚拟机 CPU/内存配额和 `NX-54` RNG/watchdog 设备建模。`NX-25` 管理 CLI 按单机精品定位明确不实施。
 
 按当前“单机精品”定位，下一轮建议按以下顺序选择性投入：
 
@@ -242,6 +244,8 @@ VirtMgr 当前更接近“现代化、Web 化的 Cockpit / virt-manager 增强�
 - `NX-37`：当 Operator 或 Admin 读取已连接 Linux 客户机的软件包清单时，系统应仅通过 Guest Agent 执行固定路径的 dpkg/rpm 查询，并使用 apt/dnf/zypper 的只读模拟查询识别可升级与安全更新；结果最多 500 项、原始输出最多 4 MiB 且超时为 45 秒。系统不得安装、升级、卸载软件包或刷新软件源；Windows、Agent 未连接、缺少软件包能力或越权必须拒绝，审计只记录包管理器、数量、安全更新数和耗时，不记录完整包列表。
 - `NX-38`：当 Operator 或 Admin 创建虚拟机或修改关机/异常停止持久虚拟机的性能拓扑时，系统应符合宿主机 NUMA、HugePages 和在线 CPU 能力，校验 HugePage 单位及内存整除关系、NUMA CPU 集合不重叠且总数等于 vCPU、NUMA 内存总和等于虚拟机内存、vCPU 索引和绑定范围有效。成功应回读持久域 XML、保留既有非绑定类 `cputune` 配置、生成配置版本并写入审计；运行中、临时域、只读模式、越权和不支持的宿主机能力必须拒绝。
 - `NX-44`：当已登录用户打开关于页面时，系统应展示当前二进制的版本、提交、构建时间、产品定位和能力边界，并明确更新检查不会自动下载或安装更新。当用户请求检查更新时，系统应仅由服务器固定访问 VirtMgr 的 GitHub Releases API，使用有界响应和超时解析版本、发布时间、发布说明及发布页链接；默认复用 10 分钟进程内缓存，显式刷新应绕过缓存。网络失败、限流或无效响应应以 `unavailable` 状态返回而不是破坏页面；尚无稳定 Release 时应返回 `no_release`；当前版本高于最新发布时应返回 `ahead`，无法解析 `dev` 或非语义版本时应返回 `unknown`。发布说明必须按纯文本展示，接口不得接受用户提供的 URL，也不得泄露凭证或触发自动升级。
+- `NX-46`：当 Operator 或 Admin 在可写模式下为持久虚拟机设置 CPU/内存配额时，系统应校验 CPU shares、quota/period 和内存 hard/soft 的边界与相互关系；CPU period 可省略为 100000 微秒，period 存在而 quota 为空、内存硬限制低于虚拟机内存或软限制高于硬限制时必须拒绝。由于 QEMU/KVM 不支持 libvirt `min_guarantee`，非零内存最低保障必须拒绝。运行、暂停等活跃域应同步更新 live 与持久配置，live 或持久化失败时必须回滚已应用的 live 配额；关机或异常停止域应更新持久配置并在下次启动生效。临时域、关机中、未知状态、Viewer 和只读模式必须拒绝。创建与导入也应接受同一配额模型，成功写入配置版本与脱敏审计，且接口不得借用项目或租户级配额语义。
+- `NX-54`：当 Operator 或 Admin 创建、导入或修改关机/异常停止持久虚拟机的硬件增强时，系统应允许启用 virtio-rng，并允许配置 i6300esb 或 ib700 watchdog 及其 reset、shutdown、poweroff、pause、dump 动作；硬件更新应整体替换持久域中的 RNG/watchdog 设备，同时保留磁盘、网卡、直通和其他设备。创建与导入应把设备写入新域，详情与 API 应从持久 XML 回读；运行中、临时域、非法型号/动作、Viewer 和只读模式必须拒绝。系统不承诺这两类设备的热插拔，修改应在下次启动生效。
 - `GAP-03 热插拔`：当虚拟机运行且用户附加 qcow2/raw 数据磁盘或网卡时，系统应更新运行配置和持久配置并采集配置版本；移除磁盘时应拒绝系统盘和在用卷，移除网卡时应拒绝不存在的设备。
 - `GAP-09 Cloud-init`：当用户提供 user-data、network-config 或 vendor-data 时，系统应将全部文件写入 NoCloud ISO；Netplan v2 应支持 DHCP 和静态 IPv4/IPv6 地址、网关和 DNS，非法地址不得静默生成配置。
 - `GAP-12 组织能力`：当 Operator 或 Admin 更新虚拟机标签、备注或负责人时，系统应持久化元数据并记录 `vm.metadata.update`；删除虚拟机时应清理对应元数据，列表查询应支持标签、负责人和关键字过滤。

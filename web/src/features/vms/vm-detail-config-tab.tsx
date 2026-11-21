@@ -50,6 +50,15 @@ export function VMDetailConfigTab({ vm, role, readOnly, canMutate, resourcesDisa
           <DetailItem label="vTPM">
             <Badge variant={vm.tpm ? "success" : "secondary"} data-testid="vm-tpm">{vm.tpm ? "2.0 已启用" : "未启用"}</Badge>
           </DetailItem>
+          <DetailItem label="RNG">
+            <Badge variant={vm.rng ? "success" : "secondary"} data-testid="vm-rng">{vm.rng ? "virtio-rng 已启用" : "未启用"}</Badge>
+          </DetailItem>
+          <DetailItem label="Watchdog">
+            <Badge variant={vm.watchdog ? "success" : "secondary"} data-testid="vm-watchdog">{vm.watchdog ? `${vm.watchdog.model} / ${vm.watchdog.action}` : "未启用"}</Badge>
+          </DetailItem>
+          <DetailItem label="资源配额">
+            <span data-testid="vm-resource-quota">{vm.resourceQuota ? "已设置" : "未设置"}</span>
+          </DetailItem>
           <DetailItem label="Cloud-init">
             <Badge variant={vm.cloudInit ? "success" : "secondary"} data-testid="vm-cloud-init">{vm.cloudInit ? "已配置" : "未配置"}</Badge>
           </DetailItem>

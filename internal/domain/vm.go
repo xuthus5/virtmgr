@@ -247,6 +247,9 @@ type VMCreateSpec struct {
 	CloudInit      *CloudInitSpec   `json:"cloudInit,omitempty"`
 	GuestAgent     *bool            `json:"guestAgent,omitempty"`
 	Placement      *VMPlacementSpec `json:"placement,omitempty"`
+	ResourceQuota  *VMResourceQuota `json:"resourceQuota,omitempty"`
+	RNG            bool             `json:"rng,omitempty"`
+	Watchdog       *VMWatchdog      `json:"watchdog,omitempty"`
 	Autostart      bool             `json:"autostart"`
 	Start          bool             `json:"start"`
 }
@@ -256,24 +259,27 @@ func (spec VMCreateSpec) GuestAgentEnabled() bool {
 }
 
 type VMImportSpec struct {
-	Name              string     `json:"name"`
-	Architecture      string     `json:"architecture,omitempty"`
-	Machine           string     `json:"machine,omitempty"`
-	SourcePool        string     `json:"sourcePool"`
-	SourceVolume      string     `json:"sourceVolume"`
-	TargetPool        string     `json:"targetPool,omitempty"`
-	VCPUs             uint       `json:"vcpus"`
-	MemoryMiB         uint64     `json:"memoryMiB"`
-	DiskCapacityBytes uint64     `json:"diskCapacityBytes,omitempty"`
-	DiskBus           VMDiskBus  `json:"diskBus,omitempty"`
-	Network           string     `json:"network"`
-	NICModel          VMNICModel `json:"nicModel,omitempty"`
-	Firmware          VMFirmware `json:"firmware"`
-	SecureBoot        bool       `json:"secureBoot"`
-	TPM               bool       `json:"tpm,omitempty"`
-	GuestAgent        *bool      `json:"guestAgent,omitempty"`
-	Autostart         bool       `json:"autostart"`
-	Start             bool       `json:"start"`
+	Name              string           `json:"name"`
+	Architecture      string           `json:"architecture,omitempty"`
+	Machine           string           `json:"machine,omitempty"`
+	SourcePool        string           `json:"sourcePool"`
+	SourceVolume      string           `json:"sourceVolume"`
+	TargetPool        string           `json:"targetPool,omitempty"`
+	VCPUs             uint             `json:"vcpus"`
+	MemoryMiB         uint64           `json:"memoryMiB"`
+	DiskCapacityBytes uint64           `json:"diskCapacityBytes,omitempty"`
+	DiskBus           VMDiskBus        `json:"diskBus,omitempty"`
+	Network           string           `json:"network"`
+	NICModel          VMNICModel       `json:"nicModel,omitempty"`
+	Firmware          VMFirmware       `json:"firmware"`
+	SecureBoot        bool             `json:"secureBoot"`
+	TPM               bool             `json:"tpm,omitempty"`
+	GuestAgent        *bool            `json:"guestAgent,omitempty"`
+	ResourceQuota     *VMResourceQuota `json:"resourceQuota,omitempty"`
+	RNG               bool             `json:"rng,omitempty"`
+	Watchdog          *VMWatchdog      `json:"watchdog,omitempty"`
+	Autostart         bool             `json:"autostart"`
+	Start             bool             `json:"start"`
 }
 
 func (spec VMImportSpec) GuestAgentEnabled() bool {
@@ -518,6 +524,9 @@ type VM struct {
 	AgentConnected  bool                `json:"agentConnected"`
 	AgentConfigured bool                `json:"agentConfigured"`
 	AgentState      GuestAgentState     `json:"agentState,omitempty"`
+	ResourceQuota   *VMResourceQuota    `json:"resourceQuota,omitempty"`
+	RNG             bool                `json:"rng"`
+	Watchdog        *VMWatchdog         `json:"watchdog,omitempty"`
 	AllowedActions  []VMAction          `json:"allowedActions"`
 	Metadata        *VMMetadata         `json:"metadata,omitempty"`
 	Placement       *VMPlacement        `json:"placement,omitempty"`

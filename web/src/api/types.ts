@@ -161,6 +161,27 @@ export type VMResourcesInput = {
   memoryMiB: number;
 };
 
+export type VMResourceQuota = {
+  cpuShares: number;
+  cpuQuota: number;
+  cpuPeriod: number;
+  memoryHardLimitMiB: number;
+  memorySoftLimitMiB: number;
+};
+
+export type VMWatchdogModel = "i6300esb" | "ib700";
+export type VMWatchdogAction = "reset" | "shutdown" | "poweroff" | "pause" | "dump";
+
+export type VMWatchdog = {
+  model: VMWatchdogModel;
+  action: VMWatchdogAction;
+};
+
+export type VMHardwareInput = {
+  rng: boolean;
+  watchdog?: VMWatchdog;
+};
+
 export type VMNUMACell = {
   id: number;
   cpuset: string;
@@ -262,6 +283,9 @@ export type VMCreateInput = {
   cloudInit?: CloudInitInput;
   guestAgent?: boolean;
   placement?: VMPlacementInput;
+  resourceQuota?: VMResourceQuota;
+  rng?: boolean;
+  watchdog?: VMWatchdog;
   autostart: boolean;
   start: boolean;
 };
@@ -283,6 +307,9 @@ export type VMImportInput = {
   secureBoot: boolean;
   tpm?: boolean;
   guestAgent: boolean;
+  resourceQuota?: VMResourceQuota;
+  rng?: boolean;
+  watchdog?: VMWatchdog;
   autostart: boolean;
   start: boolean;
 };
@@ -596,6 +623,9 @@ export type VM = {
   agentConnected: boolean;
   agentConfigured?: boolean;
   agentState?: GuestAgentState;
+  resourceQuota?: VMResourceQuota;
+  rng?: boolean;
+  watchdog?: VMWatchdog;
   allowedActions: VMAction[];
   metadata?: VMMetadata;
   placement?: VMPlacement;
