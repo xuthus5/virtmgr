@@ -1,34 +1,30 @@
-name: Release Binary
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  build:
-    name: Build Linux ${{ matrix.arch }} binary
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Check out release tag
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -55,51 +51,180 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run frontend tests
+        working-directory: web
+        run: npm test
+
+  build-binaries:
+    name: Build Linux ${{ matrix.asset_arch }} binary
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goarch: amd64
+            asset_arch: x86_64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+            asset_arch: aarch64
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install libvirt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libvirt-dev \
+            pkg-config
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Resolve build metadata
+        id: buildmeta
+        run: |
+          set -euo pipefail
+          {
+            echo "version=${GITHUB_REF_NAME}"
+            echo "commit=${GITHUB_SHA:0:12}"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build release binary
         env:
           CGO_ENABLED: "1"
           GOOS: linux
-          GOARCH: ${{ matrix.arch }}
-          VERSION: ${{ github.event.release.tag_name }}
-          COMMIT: ${{ github.sha }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.buildmeta.outputs.version }}
+          COMMIT: ${{ steps.buildmeta.outputs.commit }}
+          BUILD_DATE: ${{ steps.buildmeta.outputs.build_date }}
+        run: make build
+
+      - name: Package release assets
+        env:
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          VERSION: ${{ steps.buildmeta.outputs.version }}
+          COMMIT: ${{ steps.buildmeta.outputs.commit }}
+          BUILD_DATE: ${{ steps.buildmeta.outputs.build_date }}
         run: |
           set -euo pipefail
 
-          make frontend
-
-          commit="${COMMIT:0:12}"
-          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -trimpath \
-            -ldflags "-s -w -X virtmgr/internal/version.Version=${VERSION} -X virtmgr/internal/version.Commit=${commit} -X virtmgr/internal/version.Date=${build_date}" \
-            -o bin/virtmgr ./cmd/virtmgr
-
           safe_version="${VERSION//\//-}"
-          asset_name="virtmgr_${safe_version}_linux_${GOARCH}"
+          asset_name="virtmgr_${safe_version}_linux_${ASSET_ARCH}"
           mkdir -p release
           cp bin/virtmgr "release/${asset_name}"
           chmod 0755 "release/${asset_name}"
           tar -C release -czf "release/${asset_name}.tar.gz" "${asset_name}"
 
-          ./bin/virtmgr version | tee "release/version_linux_${GOARCH}.txt"
-          test "$(./bin/virtmgr version)" = "virtmgr ${VERSION} (${commit}, ${build_date})"
+          ./bin/virtmgr version | tee "release/version_linux_${ASSET_ARCH}.txt"
+          test "$(./bin/virtmgr version)" = "virtmgr ${VERSION} (${COMMIT}, ${BUILD_DATE})"
 
-      - name: Upload workflow artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: virtmgr-linux-${{ matrix.arch }}
+          name: virtmgr-release-linux-${{ matrix.asset_arch }}
           path: release/
           if-no-files-found: error
+          retention-days: 7
+
+  container:
+    name: Publish multi-architecture container image
+    needs: verify
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image build metadata
+        id: buildmeta
+        run: |
+          set -euo pipefail
+          {
+            echo "version=${GITHUB_REF_NAME}"
+            echo "commit=${GITHUB_SHA:0:12}"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          flavor: |
+            latest=auto
+
+      - name: Build and push container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.buildmeta.outputs.version }}
+            COMMIT=${{ steps.buildmeta.outputs.commit }}
+            BUILD_DATE=${{ steps.buildmeta.outputs.build_date }}
+          cache-from: type=gha,scope=virtmgr-release
+          cache-to: type=gha,mode=max,scope=virtmgr-release
 
   publish:
-    name: Publish release assets
-    needs: build
+    name: Publish GitHub Release
+    needs:
+      - build-binaries
+      - container
     runs-on: ubuntu-24.04
 
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: virtmgr-linux-*
+          pattern: virtmgr-release-linux-*
           path: release
           merge-multiple: true
 
@@ -114,7 +239,16 @@ jobs:
           mv "${checksums_tmp}" checksums.txt
           ls -lh
 
-      - name: Attach assets to GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" release/* \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

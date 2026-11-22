@@ -10,4 +10,4 @@ web/playwright-report/
 *.db-shm
 *.db-wal
 /server.yaml
-/deploy/docker/server.yaml
+/deploy/container/server.yaml

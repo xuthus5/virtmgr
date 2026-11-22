@@ -37,7 +37,7 @@ VirtMgr 用于在浏览器中完成一台 KVM/libvirt 宿主机上的日常虚�
 2. **服务端判定能力**：虚拟机当前允许哪些操作由后端根据 libvirt 状态计算，前端不硬编码状态机。
 3. **危险操作显式化**：强制下电、删除虚拟机、删除磁盘、回滚快照必须二次确认，必要时输入名称。
 4. **默认可观测**：长任务、错误、事件和审计都有明确落点，不把失败静默成 toast。
-5. **单二进制交付**：前端通过 `go:embed` 打入 Go 二进制；默认连接本机 `/var/run/libvirt/libvirt-sock`。
+5. **单二进制交付**：前端通过 `go:embed` 打入 Go 二进制；默认连接本机 libvirt socket，兼容单体 `libvirt-sock` 和模块化 `virtqemud-sock`。
 
 ### 1.4 当前落地状态（MVP）
 
@@ -362,8 +362,10 @@ virtmgr/
 │       └── router.tsx
 ├── deploy/
 │   ├── systemd/virtmgr.service
-│   ├── docker/Dockerfile
-│   └── docker/compose.yaml
+│   ├── container/Dockerfile
+│   ├── container/compose.yaml
+│   ├── container/README.md
+│   └── container/README.zh-CN.md
 ├── docs/
 ├── scripts/
 ├── Makefile
@@ -405,7 +407,7 @@ domain              -> 标准库
 - 支持 `DomainOpenConsole`、`DomainOpenGraphics`、快照、域统计等控制台和可观测能力。
 - 比拼接 `virsh` 命令更安全、可测试，也避免命令注入。
 
-代价是构建机需要 `libvirt-dev`，运行机需要 `libvirt0`，并且部署位置需要能访问 libvirt socket。推荐首版直接以 systemd 服务运行在宿主机上；容器部署时挂载 `/var/run/libvirt/libvirt-sock` 并共享 `libvirt` 组。
+代价是构建机需要 `libvirt-dev`，运行机需要 `libvirt0`，并且部署位置需要能访问 libvirt socket。推荐首版直接以 systemd 服务运行在宿主机上；容器部署时挂载 `/run/libvirt` 并共享与 socket 匹配的补充组，以同时覆盖单体 libvirtd 和模块化 virtqemud/virtnetworkd/virtstoraged。
 
 适配层必须定义接口，测试使用 fake，不依赖真实 libvirt：
 
@@ -1222,10 +1224,11 @@ WantedBy=multi-user.target
 
 ### 11.2 容器化
 
-- 官方示例位于 `deploy/docker/Dockerfile` 和 `deploy/docker/compose.yaml`，采用 Node 前端、Go CGO 后端和 Debian runtime 三阶段构建；应用配置通过只读挂载的 `/etc/virtmgr/server.yaml` 提供。
-- 容器必须挂载 `/var/run/libvirt/libvirt-sock`，并通过 `group_add` 使用与宿主机 socket 组 ID 一致的补充组；不要以 `--privileged` 运行。
+- 官方示例位于 `deploy/container/`，包括 `Dockerfile`、`compose.yaml` 和中英文部署指南，采用 Node 前端、Go CGO 后端和 Debian runtime 三阶段构建；应用配置通过只读挂载的 `/etc/virtmgr/server.yaml` 提供。
+- 推荐挂载 `/run/libvirt:/run/libvirt`，以同时覆盖单体 `libvirt-sock` 和模块化 `virtqemud`、`virtnetworkd`、`virtstoraged`、`virtnodedevd`、`virtsecretd`、`virtnwfilterd`、`virtinterfaced` socket，并避免 daemon 重建 socket 后单文件 bind mount 失效。通过 `group_add` 使用与宿主机 socket 组 ID 一致的补充组；不要以 `--privileged` 运行。
 - 镜像包含 `libvirt0` 运行库、`ca-certificates`、`curl` 和时区数据，默认以非特权用户 `virtmgr` 运行，SQLite 数据持久化到 `/var/lib/virtmgr`。
-- 若备份或存储功能需要直接访问宿主机存储路径，应以相同路径挂载对应目录；优先通过 libvirt API 和受控 socket，而不是挂载整个宿主机根目录。
+- 若备份、镜像导入或存储功能需要直接访问宿主机路径，应以相同绝对路径挂载对应目录；原生 TLS 挂载证书目录；不要挂载 Docker/Podman socket、`/dev/kvm` 或整个宿主机根目录。
+- 默认 bridge 网络适合基础管理；入站端口转发、NAT66 防火墙检查和宿主机网络诊断需要 `CAP_NET_ADMIN`，并要求使用 host 网络才能作用于宿主机网络命名空间。
 - 前端静态资源由 Go `embed` 提供，无需单独部署 Node 服务。
 
 ## 12. 分阶段落地

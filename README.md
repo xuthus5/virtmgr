@@ -14,6 +14,7 @@
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache License 2.0" /></a>
     <a href="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml/badge.svg" alt="Release workflow" /></a>
+    <a href="https://github.com/xuthus5/virtmgr/actions/workflows/nightly.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/nightly.yml/badge.svg?branch=main" alt="Nightly workflow" /></a>
     <a href="https://github.com/xuthus5/virtmgr/releases/latest"><img src="https://img.shields.io/github/v/release/xuthus5/virtmgr" alt="Latest release" /></a>
     <img src="https://img.shields.io/badge/Go-1.27.4%2B-00ADD8?logo=go" alt="Go 1.27.4+" />
     <img src="https://img.shields.io/badge/React-19-149ECA?logo=react" alt="React 19" />
@@ -97,7 +98,7 @@ See [docs/architecture-design.md](docs/architecture-design.md) for the detailed 
 - Go `1.27.4+` (includes the standard-library `net/http` security fixes)
 - Node.js `24+` and npm
 - A C compiler, `pkg-config`, and libvirt development headers because the libvirt Go binding uses CGO
-- A Unix socket reachable through `qemu:///system`, normally `/var/run/libvirt/libvirt-sock`
+- A Unix socket reachable through `qemu:///system`, normally `/run/libvirt/libvirt-sock` or the modular daemon's `virtqemud-sock`
 
 On Fedora-based hosts, a typical development setup is:
 
@@ -242,13 +243,15 @@ Do not expose a writable VirtMgr instance directly to the public internet withou
 
 ## Container deployment
 
-The repository includes a multi-stage image and a Compose example. The container runs as an unprivileged user and mounts the host libvirt socket plus a persistent data volume.
+The repository includes a multi-stage image and a Compose example. The container runs as an unprivileged user and manages the local host only through libvirt sockets. It does not run QEMU and does not need `/dev/kvm`, the Docker socket, or `--privileged`. See the [container deployment guide](deploy/container/README.md) for the complete mount and operations reference.
 
 ```bash
-cd deploy/docker
+cd deploy/container
 cp ../../deploy/server.yaml.example server.yaml
 # Edit server.yaml for admin_password, host_name, and optional TLS paths.
-# Adjust the LIBVIRT_GID default in compose.yaml when needed.
+LIBVIRT_SOCK=/run/libvirt/virtqemud-sock
+[ -S "$LIBVIRT_SOCK" ] || LIBVIRT_SOCK=/run/libvirt/libvirt-sock
+export LIBVIRT_GID="$(stat -c '%g' "$LIBVIRT_SOCK")"
 
 # Docker Compose
 docker compose up -d --build
@@ -257,7 +260,7 @@ docker compose up -d --build
 podman compose up -d --build
 ```
 
-Set `LIBVIRT_GID` to the group ID that owns `/var/run/libvirt/libvirt-sock` on the host (`stat -c '%g' /var/run/libvirt/libvirt-sock`). For native TLS, uncomment the certificate mount in Compose and set `tls_cert_file` / `tls_key_file` in `server.yaml`. If backup or storage features need direct access to host storage paths, mount those directories at the same paths; do not use `--privileged`.
+The default Compose file mounts `/run/libvirt:/run/libvirt`, which supports both monolithic `libvirtd` and modular `virtqemud`/`virtnetworkd`/`virtstoraged`. `LIBVIRT_GID` must match the host socket group. The named volume `/var/lib/virtmgr` persists application data, and `server.yaml` is mounted read-only at `/etc/virtmgr/server.yaml`. Native TLS requires a certificate-directory mount and both TLS paths in `server.yaml`. Any storage pool, image, and ISO path accessed directly by VirtMgr must be mounted at the same absolute path. Port forwarding and NAT66 diagnostics require `CAP_NET_ADMIN` and are best run with host networking. See the [container deployment guide](deploy/container/README.md) for upgrades, account recovery, the mount matrix, and troubleshooting.
 
 ## Configuration
 
@@ -370,7 +373,9 @@ VIRTMGR_TEST_REAL_LIBVIRT=1 go test ./internal/platform/libvirt -run TestRealLib
 
 ### Release binaries
 
-Publishing a GitHub Release runs [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow builds Linux binaries for `amd64` and `arm64`, packages each binary as a tarball, generates `checksums.txt`, and attaches the artifacts to the release.
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow builds Linux binaries for `x86_64` and `aarch64`, packages tarballs, generates `checksums.txt`, creates or updates the GitHub Release, and pushes multi-architecture container images for `linux/amd64` and `linux/arm64` to GHCR. Release images use semantic-version tags such as `ghcr.io/xuthus5/virtmgr:0.3.1`, `:0.3`, `:0`, and `:latest`.
+
+Pushes to `main` run [`.github/workflows/nightly.yml`](.github/workflows/nightly.yml). The workflow builds both binary architectures and publishes them to the rolling [`nightly` prerelease](https://github.com/xuthus5/virtmgr/releases/tag/nightly). Every successful run rewrites the release notes, removes the previous attachments, and uploads the current assets. It also pushes the multi-architecture `ghcr.io/xuthus5/virtmgr:nightly` and `:sha-<short>` images. Pushes to other branches and tag pushes do not run Nightly.
 
 ## Project structure
 
@@ -384,7 +389,7 @@ web/                      React + TypeScript + Vite + Tailwind UI
 deploy/                   systemd, container image, Compose, and environment examples
 docs/                     Architecture documentation and screenshots
 scripts/                  Development and E2E helpers
-.github/workflows/        Release binary pipeline
+.github/workflows/        Release and Nightly pipelines
 ```
 
 ## Compatibility and limitations
@@ -392,7 +397,7 @@ scripts/                  Development and E2E helpers
 - One VirtMgr instance manages one libvirt endpoint. Cross-host scheduling, migration, and multi-cluster inventory are not implemented.
 - Linux with KVM/QEMU and the libvirt Go binding is the supported runtime. Building requires CGO and libvirt development headers.
 - Graphical consoles currently support VNC only; SPICE is not supported. Serial consoles support libvirt PTY devices, with one active browser session per serial device.
-- Container deployment requires the host libvirt socket and a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
+- Container deployment requires `/run/libvirt` so that monolithic or modular libvirt sockets are available, plus a supplementary group matching the socket GID. Mount any directly accessed storage paths at the same paths inside the container.
 - Backups are cold, full copies for persistent VMs and `file`-backed disks. Completed backups can be downloaded as self-contained ZIP packages and imported into the backup catalog; imports use new backup IDs and artifact names. Incremental backup, in-place restore, cross-host replication, and automatic content verification are not implemented.
 - VM import supports active-pool QCOW2/RAW system disks and ISO installation media. ISO imports create a blank system disk and retain the source ISO as a read-only CD-ROM. OVA/OVF, VMDK, and VHDX are not accepted directly; existing idle qcow2/raw volumes can be converted or copied to another pool from the storage page.
 - The image library supports qcow2/raw uploads, full clones, and same-pool qcow2 linked clones. The storage page supports idle-volume qcow2/raw conversion and cross-pool copies, but cross-pool linked clones, automatic linked-clone flattening, and automatic VM reference switching are not implemented.
@@ -408,8 +413,10 @@ scripts/                  Development and E2E helpers
 - [Architecture design](docs/architecture-design.md) — product boundaries, architecture, data model, routes, security, and deployment details (Chinese)
 - [Product gap analysis](docs/product-gap-analysis.md) — comparison with mainstream tools, single-host roadmap, and implemented capability status (Chinese)
 - [Backup and restore design](docs/backup-design.md) — implemented cold-backup catalog, restore, scheduling, and retention model (Chinese)
-- [Container image](deploy/docker/Dockerfile) and [Compose example](deploy/docker/compose.yaml) — libvirt socket and unprivileged runtime
-- [Release workflow](.github/workflows/release.yml) — amd64/arm64 binary build and release attachment
+- [Container deployment guide](deploy/container/README.md) — image build, socket/storage/TLS mounts, network modes, and troubleshooting
+- [Container image](deploy/container/Dockerfile) and [Compose example](deploy/container/compose.yaml) — libvirt socket and unprivileged runtime
+- [Release workflow](.github/workflows/release.yml) — x86_64/aarch64 binaries, multi-architecture GHCR image, and release attachment
+- [Nightly workflow](.github/workflows/nightly.yml) — rolling nightly release, binaries, and GHCR image
 - [server.yaml example](deploy/server.yaml.example) — production-oriented configuration template
 - [systemd unit](deploy/virtmgr.service) — hardened service definition
 

@@ -4,12 +4,12 @@ services:
   virtmgr:
     build:
       context: ../..
-      dockerfile: deploy/docker/Dockerfile
+      dockerfile: deploy/container/Dockerfile
       args:
         VERSION: ${VIRTMGR_VERSION:-local}
         COMMIT: ${VIRTMGR_COMMIT:-unknown}
         BUILD_DATE: ${VIRTMGR_BUILD_DATE:-unknown}
-    image: virtmgr:local
+    image: ${VIRTMGR_IMAGE:-virtmgr:local}
     restart: unless-stopped
     ports:
       - "8443:8443"
@@ -18,16 +18,22 @@ services:
     volumes:
       - virtmgr-data:/var/lib/virtmgr
       - ./server.yaml:/etc/virtmgr/server.yaml:ro
-      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+      # Mount the complete libvirt runtime directory so both monolithic
+      # libvirtd and modular daemons (virtqemud, virtnetworkd, virtstoraged,
+      # virtnodedevd, etc.) work and survive daemon socket recreation.
+      - /run/libvirt:/run/libvirt
       # Optional native TLS: mount the certificate directory and set both
       # tls_cert_file and tls_key_file in ./server.yaml.
       # - ./tls:/etc/virtmgr/tls:ro
-      # Mount storage directories that VirtMgr must read or write directly.
+      # Mount storage directories that VirtMgr must read or write directly at
+      # the same absolute paths used by the libvirt storage pools.
       # - /var/lib/libvirt/images:/var/lib/libvirt/images
-    # Match the GID that owns /var/run/libvirt/libvirt-sock on the host.
+    # Match the GID that owns the host's active libvirt control socket.
     group_add:
       - "${LIBVIRT_GID:-640}"
-    # Required only for read-only nftables/ip6tables diagnostics.
+    # Required for port forwarding and host nftables/ip6tables diagnostics.
+    # With bridge networking this capability is scoped to the container network
+    # namespace. Use network_mode: host for full host-level behavior.
     cap_add:
       - NET_ADMIN
     security_opt:

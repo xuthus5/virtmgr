@@ -14,6 +14,7 @@
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="Apache License 2.0" /></a>
     <a href="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/release.yml/badge.svg" alt="Release workflow" /></a>
+    <a href="https://github.com/xuthus5/virtmgr/actions/workflows/nightly.yml"><img src="https://github.com/xuthus5/virtmgr/actions/workflows/nightly.yml/badge.svg?branch=main" alt="Nightly workflow" /></a>
     <a href="https://github.com/xuthus5/virtmgr/releases/latest"><img src="https://img.shields.io/github/v/release/xuthus5/virtmgr" alt="Latest release" /></a>
     <img src="https://img.shields.io/badge/Go-1.27.4%2B-00ADD8?logo=go" alt="Go 1.27.4+" />
     <img src="https://img.shields.io/badge/React-19-149ECA?logo=react" alt="React 19" />
@@ -97,7 +98,7 @@ Go HTTP 服务与领域模块
 - Go `1.27.4+`（包含标准库 `net/http` 的安全修复）
 - Node.js `24+` 和 npm
 - C 编译器、`pkg-config` 和 libvirt 开发头文件，因为 libvirt Go binding 使用 CGO
-- 可通过 `qemu:///system` 访问 libvirt Socket，通常为 `/var/run/libvirt/libvirt-sock`
+- 可通过 `qemu:///system` 访问 libvirt Socket，通常为 `/run/libvirt/libvirt-sock`，模块化部署下为 `virtqemud-sock`
 
 Fedora 系发行版的典型开发环境安装命令：
 
@@ -242,13 +243,15 @@ cookie_secure: true
 
 ## 使用容器部署
 
-仓库提供多阶段镜像和 Compose 示例。镜像以非特权用户运行，挂载宿主机 libvirt socket 和持久化数据卷。
+仓库提供多阶段镜像和 Compose 示例。镜像以非特权用户运行，只通过宿主机 libvirt socket 管理本机资源，不运行 QEMU，也不需要 `/dev/kvm`、Docker socket 或 `--privileged`。完整说明见 [容器部署指南](deploy/container/README.zh-CN.md)。
 
 ```bash
-cd deploy/docker
+cd deploy/container
 cp ../../deploy/server.yaml.example server.yaml
 # 编辑 server.yaml，设置 admin_password、host_name 和可选的 TLS 路径
-# 按需编辑 compose.yaml 中的 LIBVIRT_GID 默认值
+LIBVIRT_SOCK=/run/libvirt/virtqemud-sock
+[ -S "$LIBVIRT_SOCK" ] || LIBVIRT_SOCK=/run/libvirt/libvirt-sock
+export LIBVIRT_GID="$(stat -c '%g' "$LIBVIRT_SOCK")"
 
 # Docker Compose
 docker compose up -d --build
@@ -257,7 +260,7 @@ docker compose up -d --build
 podman compose up -d --build
 ```
 
-`LIBVIRT_GID` 应与宿主机 `/var/run/libvirt/libvirt-sock` 的组 ID 一致：`stat -c '%g' /var/run/libvirt/libvirt-sock`。如需原生 TLS，取消 Compose 中的证书挂载注释并在 `server.yaml` 设置 `tls_cert_file` / `tls_key_file`。如果备份或存储功能需要直接读写宿主机存储目录，请把这些目录以相同路径挂载进容器；不要使用 `--privileged`。
+默认 Compose 挂载 `/run/libvirt:/run/libvirt`，同时兼容单体 `libvirtd` 和模块化 `virtqemud`/`virtnetworkd`/`virtstoraged`。`LIBVIRT_GID` 必须与宿主机 libvirt socket 的组 ID 一致。数据持久化到命名卷 `/var/lib/virtmgr`；配置文件只读挂载到 `/etc/virtmgr/server.yaml`。原生 TLS 需要挂载证书目录并设置 `tls_cert_file` / `tls_key_file`。所有需要直接访问的存储池、镜像和 ISO 目录必须以相同绝对路径挂载。端口转发和 NAT66 防火墙诊断需要 `CAP_NET_ADMIN`，并建议使用 host 网络。升级、账号恢复、挂载矩阵和故障排查参见 [容器部署指南](deploy/container/README.zh-CN.md)。
 
 ## 配置项
 
@@ -370,7 +373,9 @@ VIRTMGR_TEST_REAL_LIBVIRT=1 go test ./internal/platform/libvirt -run TestRealLib
 
 ### 发布产物
 
-发布 GitHub Release 时会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)，为 Linux `amd64` 和 `arm64` 构建二进制、生成 tar 包和 `checksums.txt`，并附加到 Release。
+推送 `v*` 标签会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)，为 Linux `x86_64` 和 `aarch64` 构建二进制、tar 包和 `checksums.txt`，创建或更新 GitHub Release，并将 `linux/amd64`、`linux/arm64` 多架构镜像推送到 GHCR。Release 镜像使用语义版本标签，例如 `ghcr.io/xuthus5/virtmgr:0.3.1`、`:0.3`、`:0` 和 `:latest`。
+
+推送到 `main` 分支会触发 [`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)，构建双架构二进制并发布到滚动 prerelease [`nightly`](https://github.com/xuthus5/virtmgr/releases/tag/nightly)。每次成功运行都会重写 Release 说明、删除旧附件并重新上传当前产物；同时推送 `ghcr.io/xuthus5/virtmgr:nightly` 和 `:sha-<短提交>` 多架构镜像。其他分支推送和标签推送不会触发 Nightly。
 
 ## 项目结构
 
@@ -384,7 +389,7 @@ web/                      React + TypeScript + Vite + Tailwind 前端
 deploy/                   systemd、容器镜像、Compose 和 server.yaml 示例
 docs/                     架构文档与项目截图
 scripts/                  本地开发和 E2E 辅助脚本
-.github/workflows/        发布二进制流水线
+.github/workflows/        Release 与 Nightly 流水线
 ```
 
 ## 兼容性与边界
@@ -392,7 +397,7 @@ scripts/                  本地开发和 E2E 辅助脚本
 - 一个 VirtMgr 实例管理一个 libvirt 端点。跨宿主机调度、迁移和多集群清单尚未实现。
 - 运行环境为 Linux + KVM/QEMU + libvirt Go binding；构建需要 CGO 和 libvirt 开发头文件。
 - 图形控制台当前仅支持 VNC，不支持 SPICE。串口控制台支持 libvirt PTY 设备，同一串口设备同时只允许一个交互会话。
-- 容器部署需要挂载宿主机 libvirt socket，并使用与 socket 组 ID 匹配的补充组；需要直接访问存储路径时还应以相同路径挂载对应目录。
+- 容器部署需要挂载 `/run/libvirt` 以覆盖单体或模块化 libvirt socket，并使用与 socket 组 ID 匹配的补充组；需要直接访问存储路径时还应以相同路径挂载对应目录。
 - 备份支持持久虚拟机的冷全量备份，以及运行中虚拟机的在线全量备份；在线模式仅支持文件型源存储池，使用外部磁盘快照和活动 block commit。已完成备份可下载为自包含 ZIP 包并重新导入备份目录，导入会生成新的备份 ID 和产物名称。增量备份、原地覆盖恢复、跨宿主机复制和自动内容校验未实现。
 - 虚拟机导入支持活跃存储池中的 QCOW2/RAW 系统盘和 ISO 安装介质；ISO 模式会创建空白系统盘并保留 ISO 作为只读光驱。导入不直接接受 OVA/OVF、VMDK 和 VHDX；已有空闲 qcow2/raw 卷可在存储页转换格式或复制到其他池。
 - 镜像库支持上传 qcow2/raw、从镜像全量克隆，以及同存储池 qcow2 镜像的链接克隆；存储页支持空闲卷 qcow2/raw 格式转换、跨池复制和链接克隆展平。关机/异常停止虚拟机的数据盘可跨池迁移并自动切换持久域引用，但跨池链接克隆尚未实现。
@@ -409,10 +414,12 @@ scripts/                  本地开发和 E2E 辅助脚本
 - [架构设计](docs/architecture-design.md)——产品边界、架构、数据模型、路由、安全和部署细节
 - [产品差距分析](docs/product-gap-analysis.md)——与主流管理工具的差异、单机精品路线和已实施能力状态
 - [备份与恢复方案](docs/backup-design.md)——冷备份、在线一致性备份、恢复、调度和保留策略
-- [发布流水线](.github/workflows/release.yml)——amd64/arm64 二进制构建与 Release 附件
+- [发布流水线](.github/workflows/release.yml)——x86_64/aarch64 二进制、多架构 GHCR 镜像与 Release 附件
+- [Nightly 流水线](.github/workflows/nightly.yml)——main 分支滚动 nightly Release、双架构二进制与 GHCR 镜像
 - [server.yaml 示例](deploy/server.yaml.example)——生产环境配置模板
 - [systemd 单元文件](deploy/virtmgr.service)——加固后的服务定义
-- [容器镜像](deploy/docker/Dockerfile) 与 [Compose 示例](deploy/docker/compose.yaml)——libvirt socket 和非特权运行
+- [容器部署指南](deploy/container/README.zh-CN.md)——镜像构建、socket/存储/TLS 挂载、网络模式和故障排查
+- [容器镜像](deploy/container/Dockerfile) 与 [Compose 示例](deploy/container/compose.yaml)——libvirt socket 和非特权运行
 
 ## 许可证
 
