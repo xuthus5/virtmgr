@@ -44,7 +44,7 @@ export function HostPage() {
       <PageHeader
         title="物理主机"
         breadcrumb="总览 / 物理主机"
-        description={<span className="flex flex-wrap items-center gap-2"><span className="h-2 w-2 rounded-full bg-success" />{data.host.name} · libvirt {data.host.libvirtVersion}</span>}
+        description="宿主机资源趋势、存储网络和硬件设备巡检。"
         actions={<Button variant="outline" onClick={() => void Promise.all([hostQuery.refetch(), devicesQuery.refetch()])} disabled={hostQuery.isFetching || devicesQuery.isFetching}><RefreshCw className={hostQuery.isFetching || devicesQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />刷新</Button>}
       />
 
@@ -57,7 +57,7 @@ export function HostPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="CPU 线程" value={data.host.cpus} hint={`${data.host.cpuSockets} 插槽 · ${data.host.cpuCores} 核`} icon={Cpu} tone="primary" testId="host-cpu" />
-        <MetricCard label="物理内存" value={formatBytes(data.host.memoryBytes)} hint={`${data.host.cpuMhz} MHz`} icon={MemoryStick} tone="success" testId="host-memory" />
+        <MetricCard label="物理内存" value={formatBytes(data.host.memoryBytes)} icon={MemoryStick} tone="success" testId="host-memory" />
         <MetricCard label="存储池" value={data.storagePools.length} hint={`${formatBytes(poolCapacity)} 总容量`} icon={Database} tone="neutral" testId="host-pools" />
         <MetricCard label="虚拟网络" value={data.networks.length} hint={`${activeNetworks} 个活跃`} icon={NetworkIcon} tone="neutral" testId="host-networks" />
       </div>
@@ -101,13 +101,10 @@ export function HostPage() {
         <Card>
           <CardHeader><CardTitle>主机信息</CardTitle><CardDescription>libvirt 节点信息与运行状态。</CardDescription></CardHeader>
           <CardContent>
-            <DetailItem label="主机名">{data.host.name}</DetailItem>
             <DetailItem label="libvirt 版本">{data.host.libvirtVersion}</DetailItem>
             <DetailItem label="CPU 型号">{data.host.cpuModel}</DetailItem>
             <DetailItem label="拓扑">{data.host.cpuSockets} 插槽 · {data.host.cpuCores} 核 · {data.host.cpuThreads} 线程</DetailItem>
             <DetailItem label="CPU 频率">{data.host.cpuMhz} MHz</DetailItem>
-            <DetailItem label="物理内存">{formatBytes(data.host.memoryBytes)}</DetailItem>
-            <DetailItem label="虚拟机">{data.counts.total} 台 · {data.counts.running} 运行 · {data.counts.paused} 暂停 · {data.counts.shutoff} 关机</DetailItem>
           </CardContent>
         </Card>
       </div>

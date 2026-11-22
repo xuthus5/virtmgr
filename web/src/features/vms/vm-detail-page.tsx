@@ -334,7 +334,7 @@ export function VMDetailPage({ uuid }: { uuid: string }) {
             );
           }) : <span className="text-sm text-muted-foreground">当前状态没有可用的电源操作。</span>}
         </div>
-        {unavailableReason ? <p className="mt-2 text-xs text-muted-foreground">{unavailableReason}。</p> : null}
+        {unavailableReason && !readOnly && !viewer ? <p className="mt-2 text-xs text-muted-foreground">{unavailableReason}。</p> : null}
         {notice ? <p className={cn("mt-2 rounded-md border px-3 py-2 text-xs", notice.tone === "success" ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/5 text-destructive")} role="status">{notice.text}</p> : null}
       </section>
 

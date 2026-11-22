@@ -890,9 +890,11 @@ test("管理员创建、调整和禁用用户并验证访问控制", async ({ pa
   await loginAs(page, "e2e-viewer", "viewer-secret-123");
   await expect(page.getByRole("link", { name: "用户管理", exact: true })).toHaveCount(0);
   await page.goto("/users");
-  await expect(page.getByRole("heading", { name: "账号安全", exact: true })).toBeVisible();
-  await expect(page.getByTestId("change-password-card")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "用户管理", exact: true })).toBeVisible();
   await expect(page.getByText("用户管理仅对管理员开放", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "前往账号安全", exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByTestId("change-password-card")).toBeVisible();
 });
 
 test("可写模式创建、启停和删除虚拟网络", async ({ page }) => {

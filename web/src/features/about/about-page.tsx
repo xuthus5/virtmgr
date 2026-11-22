@@ -192,10 +192,7 @@ export function AboutPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">当前运行版本</p><p className="mt-1 break-all font-mono text-sm font-medium">{build?.version || "正在读取"}</p></div>
-            <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">最近检查</p><p className="mt-1 text-sm">{updateResult ? formatTime(updateResult.checkedAt) : "尚未检查"}</p></div>
-          </div>
+          <div className="rounded-md border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">最近检查</p><p className="mt-1 text-sm">{updateResult ? formatTime(updateResult.checkedAt) : "尚未检查"}</p></div>
 
           {updateError ? <p role="alert" className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{updateError}</p> : null}
           {!updateResult && !updateError ? <div className="mt-4 rounded-lg border border-dashed p-5 text-sm text-muted-foreground"><p className="font-medium text-foreground">尚未检查更新</p><p className="mt-1">点击“检查更新”后，VirtMgr 将读取 GitHub 最新稳定发布版本并比较当前构建。</p></div> : null}

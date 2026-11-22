@@ -254,19 +254,6 @@ export function AppShell() {
               );
             })}
           </nav>
-          <div className={cn("shrink-0 border-t", compactSidebar ? "p-2" : "p-3")}>
-            <div
-              className={cn("rounded-md bg-muted/55 text-xs", compactSidebar ? "flex h-9 items-center justify-center" : "p-3")}
-              aria-label={`宿主机连接状态：${hostOnline ? "libvirt 连接正常" : "libvirt 连接异常"}`}
-              title={compactSidebar ? (hostOnline ? "libvirt 连接正常" : "libvirt 连接异常") : undefined}
-            >
-              <div className={cn("flex items-center", compactSidebar ? "justify-center" : "gap-2 font-medium")}>
-                <span className={cn("h-2 w-2 shrink-0 rounded-full", hostOnline ? "bg-success" : "bg-destructive")} />
-                {compactSidebar ? <span className="sr-only">{hostOnline ? "libvirt 连接正常" : "libvirt 连接异常"}</span> : (hostOnline ? "libvirt 连接正常" : "libvirt 连接异常")}
-              </div>
-              {compactSidebar ? null : <p className="mt-1 text-muted-foreground">{overview.data ? `libvirt ${overview.data.host.libvirtVersion}` : "正在读取宿主机状态"}</p>}
-            </div>
-          </div>
         </aside>
         {mobileOpen ? <button type="button" tabIndex={-1} aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 lg:hidden" onClick={() => closeMobileNavigation(true)} /> : null}
         <main id="main-content" tabIndex={-1} aria-label="主要内容" className="min-w-0 w-full overflow-x-hidden p-4 outline-none md:p-6">

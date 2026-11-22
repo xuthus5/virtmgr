@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, DatabaseBackup, FileUp, Info, LoaderCircle, LockKeyhole, ShieldCheck, Unlock, XCircle } from "lucide-react";
+import { AlertTriangle, Archive, DatabaseBackup, FileUp, LoaderCircle, LockKeyhole, ShieldCheck, Unlock, XCircle } from "lucide-react";
 import { ApiError, api } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,8 +110,8 @@ export function SettingsPage() {
 
   return (
     <div data-testid="settings-page">
-      <PageHeader title="系统设置" breadcrumb="管理 / 系统设置" description="管理全局运行模式。设置会持久化到 SQLite，并在当前进程内立即生效。" />
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
+      <PageHeader title="系统设置" breadcrumb="管理 / 系统设置" description="管理运行模式、管理面 TLS、数据库备份恢复和 API Token。" />
+      <div className="grid gap-4">
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -148,32 +148,9 @@ export function SettingsPage() {
             ) : null}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>权限边界</CardTitle>
-            <CardDescription>运行模式不会改变账号角色。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="rounded-md border bg-muted/30 p-3"><p className="font-medium">Viewer</p><p className="mt-1 text-xs text-muted-foreground">始终只读，不能执行写操作或打开交互式控制台。</p></div>
-            <div className="rounded-md border bg-muted/30 p-3"><p className="font-medium">Operator</p><p className="mt-1 text-xs text-muted-foreground">可管理虚拟机、存储池、卷、网络和控制台，但不能修改设置或用户。</p></div>
-            <div className="rounded-md border bg-muted/30 p-3"><p className="font-medium">Admin</p><p className="mt-1 text-xs text-muted-foreground">可修改全局运行模式和用户权限；仍受 CSRF 与会话校验保护。</p></div>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-4">
-        <Card data-testid="settings-system-info">
-          <CardHeader><CardTitle className="flex items-center gap-2"><Info className="h-4 w-4 text-primary" />版本信息</CardTitle><CardDescription>用于确认当前部署的二进制版本和升级结果。</CardDescription></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {systemQuery.isLoading ? <p className="text-muted-foreground">正在读取版本信息…</p> : null}
-            {systemQuery.isError ? <p className="text-destructive">{systemQuery.error instanceof Error ? systemQuery.error.message : "无法读取版本信息"}</p> : null}
-            {systemQuery.data ? <>
-              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">版本</span><span className="font-mono font-medium" data-testid="settings-version">{systemQuery.data.build.version || "dev"}</span></div>
-              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">提交</span><span className="font-mono text-xs">{systemQuery.data.build.commit || "unknown"}</span></div>
-              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/25 px-3 py-2"><span className="text-muted-foreground">构建时间</span><span className="font-mono text-xs">{systemQuery.data.build.date || "-"}</span></div>
-            </> : null}
-          </CardContent>
-        </Card>
         <Card data-testid="settings-tls">
           <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" />管理面 TLS</CardTitle><CardDescription>证书 SAN、到期时间和热重载状态。证书文件变化后新连接会自动使用新证书，无需重启。</CardDescription></CardHeader>
           <CardContent className="space-y-2 text-sm">

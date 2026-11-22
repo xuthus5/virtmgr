@@ -53,7 +53,7 @@ export function NetworkTableCard({ networks, total, active, bridges, nat, role, 
             <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>模式</TableHead><TableHead>状态</TableHead><TableHead>桥接</TableHead><TableHead>地址 / DHCP</TableHead><TableHead>自动启动</TableHead><TableHead>操作</TableHead></TableRow></TableHeader>
             <TableBody>
               {networks.map((network) => {
-                const hint = networkActionHint(role, readOnly, network);
+                const hint = canManage ? networkActionHint(role, readOnly, network) : "";
                 const editReason = networkEditDisabledReason(role, readOnly, network);
                 const hintID = `network-action-hint-${network.name}`;
                 const actionInFlight = actionPendingName !== undefined;

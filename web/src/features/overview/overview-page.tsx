@@ -26,8 +26,8 @@ export function OverviewPage() {
     <>
       <PageHeader
         title="总览"
-        breadcrumb="总览 / 物理机"
-        description={<span className="flex flex-wrap items-center gap-2"><span className="h-2 w-2 rounded-full bg-success" />{data.host.name} · libvirt {data.host.libvirtVersion}</span>}
+        breadcrumb="总览"
+        description="单机运行概况、资源分配和虚拟机状态。"
         actions={<Button variant="outline" onClick={() => void overview.refetch()} disabled={overview.isFetching}><RefreshCw className={overview.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />{overview.isFetching ? "刷新中" : "刷新"}</Button>}
       />
 
@@ -60,11 +60,9 @@ export function OverviewPage() {
         <Card>
           <CardHeader>
             <CardTitle>宿主机</CardTitle>
-            <CardDescription>libvirt 报告的物理资源与版本信息。</CardDescription>
+            <CardDescription>处理器、内存和频率等物理资源摘要。</CardDescription>
           </CardHeader>
           <CardContent>
-            <DetailItem label="主机名">{data.host.name}</DetailItem>
-            <DetailItem label="libvirt">{data.host.libvirtVersion}</DetailItem>
             <DetailItem label="CPU 型号">{data.host.cpuModel}</DetailItem>
             <DetailItem label="CPU">{data.host.cpus} 线程 · {data.host.cpuCores} 核</DetailItem>
             <DetailItem label="CPU 频率">{data.host.cpuMhz} MHz</DetailItem>

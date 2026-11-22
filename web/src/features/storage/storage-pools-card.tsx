@@ -250,7 +250,7 @@ export function StoragePoolsCard({
                 const active = pool.state === "active";
                 const inactive = pool.state === "inactive";
                 const pending = actionMutation.isPending || deleteMutation.isPending;
-                const hint = poolActionHint(canManage, manageDisabledReason, pool);
+                const hint = canManage ? poolActionHint(canManage, manageDisabledReason, pool) : "";
                 const hintID = `storage-pool-action-hint-${pool.name}`;
                 return (
                   <TableRow key={pool.uuid || pool.name} className={cn("cursor-pointer", selectedPool === pool.name && "bg-primary/5")} onClick={() => onSelect(pool.name)} data-testid={`storage-pool-row-${pool.name}`}>
@@ -269,29 +269,29 @@ export function StoragePoolsCard({
                         <div className="flex flex-wrap items-center gap-1.5">
                           {active ? (
                             <>
-                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-refresh-${pool.name}`} aria-label={`刷新存储池 ${pool.name}`} aria-describedby={hintID} title={canManage ? "重新扫描存储池，刷新卷列表和容量信息" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "refresh")}>
+                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-refresh-${pool.name}`} aria-label={`刷新存储池 ${pool.name}`} aria-describedby={hint ? hintID : undefined} title={canManage ? "重新扫描存储池，刷新卷列表和容量信息" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "refresh")}>
                                 <RotateCw className="h-3.5 w-3.5" />刷新
                               </Button>
-                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-stop-${pool.name}`} aria-label={`停止存储池 ${pool.name}`} aria-describedby={hintID} title={canManage ? "停止存储池；停止后才能删除其定义" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "stop")}>
+                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-stop-${pool.name}`} aria-label={`停止存储池 ${pool.name}`} aria-describedby={hint ? hintID : undefined} title={canManage ? "停止存储池；停止后才能删除其定义" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "stop")}>
                                 <Square className="h-3.5 w-3.5" />停止
                               </Button>
                             </>
                           ) : null}
                           {inactive ? (
                             <>
-                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-start-${pool.name}`} aria-label={`启动存储池 ${pool.name}`} aria-describedby={hintID} title={canManage ? "启动存储池并使其中的卷可用" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "start")}>
+                              <Button type="button" variant="outline" size="sm" data-testid={`storage-pool-start-${pool.name}`} aria-label={`启动存储池 ${pool.name}`} aria-describedby={hint ? hintID : undefined} title={canManage ? "启动存储池并使其中的卷可用" : manageDisabledReason} disabled={!canManage || pending} onClick={() => runAction(pool, "start")}>
                                 <Play className="h-3.5 w-3.5" />启动
                               </Button>
-                              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" data-testid={`storage-pool-delete-${pool.name}`} aria-label={`删除存储池 ${pool.name}`} aria-describedby={hintID} title={canManage ? "删除存储池定义，不会删除磁盘文件" : manageDisabledReason} disabled={!canManage || pending} onClick={() => openDelete(pool)}>
+                              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" data-testid={`storage-pool-delete-${pool.name}`} aria-label={`删除存储池 ${pool.name}`} aria-describedby={hint ? hintID : undefined} title={canManage ? "删除存储池定义，不会删除磁盘文件" : manageDisabledReason} disabled={!canManage || pending} onClick={() => openDelete(pool)}>
                                 <Trash2 className="h-3.5 w-3.5" />删除
                               </Button>
                             </>
                           ) : null}
                           {!active && !inactive ? <span className="text-xs text-muted-foreground">当前状态不支持操作</span> : null}
                         </div>
-                        <p id={hintID} data-testid={`storage-pool-action-hint-${pool.name}`} className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                        {hint ? <p id={hintID} data-testid={`storage-pool-action-hint-${pool.name}`} className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
                           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />{hint}
-                        </p>
+                        </p> : null}
                       </div>
                     </TableCell>
                   </TableRow>

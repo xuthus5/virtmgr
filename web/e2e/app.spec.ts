@@ -56,7 +56,7 @@ test("顶部账号安全入口可直接打开修改密码", async ({ page }) => 
 
 test("本地管理员登录后展示 libvirt 总览", async ({ page }) => {
   await login(page);
-  await expect(page.getByRole("main").getByText("virtmgr-demo", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("app-header").getByText("virtmgr-demo", { exact: true })).toBeVisible();
   await expect(page).toHaveTitle("总览 · VirtMgr");
   await expect(page.getByText("只读模式")).toBeVisible();
   await expect(page.getByTestId("metric-total-value")).toHaveText("4");
@@ -217,7 +217,7 @@ test("存储页展示存储池和卷", async ({ page }) => {
   await expect(page.getByTestId("storage-pool-start-archive")).toContainText("启动");
   await expect(page.getByTestId("storage-pool-refresh-default")).toBeDisabled();
   await expect(page.getByTestId("storage-pool-refresh-default")).toContainText("刷新");
-  await expect(page.getByTestId("storage-pool-action-hint-default")).toContainText("只读模式");
+  await expect(page.getByTestId("storage-manage-disabled-notice")).toContainText("只读模式");
   await expect(page.getByTestId("delete-volume-demo-build-01.qcow2")).toBeDisabled();
 
   await page.getByRole("button", { name: "iso-store", exact: true }).click();
@@ -259,7 +259,7 @@ test("网络页展示虚拟网络和 DHCP 配置", async ({ page }) => {
   await expect(page.getByTestId("network-stop-default")).toHaveCount(0);
   await expect(page.getByTestId("network-delete-lab-isolated")).toHaveCount(0);
   await expect(page.getByTestId("network-edit-lab-isolated")).toHaveCount(0);
-  await expect(page.getByTestId("network-action-hint-default")).toContainText("只读模式");
+  await expect(page.getByTestId("network-manage-disabled-notice")).toContainText("只读模式");
   await expect(page.getByTestId("network-leases-default")).toBeEnabled();
   await expect(page.getByTestId("network-hosts-default")).toBeEnabled();
 

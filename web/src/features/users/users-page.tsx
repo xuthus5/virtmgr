@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle2, KeyRound, LoaderCircle, LogOut, Monitor, ShieldAlert, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { ApiError, api } from "@/api/client";
@@ -12,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChangePasswordCard } from "@/features/account/change-password-card";
 import { useSessionQuery } from "@/features/auth/use-session";
 import { useUsersQuery, usersQueryKey } from "@/features/users/use-users-query";
 import { queryKeys } from "@/lib/query-keys";
@@ -88,13 +88,13 @@ export function UsersPage() {
   if (!isAdmin) {
     return (
       <>
-        <PageHeader title="账号安全" breadcrumb="总览 / 账号安全" description="修改当前账号密码；修改成功后会撤销其他设备上的登录会话。" />
-        <ChangePasswordCard readOnly={readOnly} />
+        <PageHeader title="用户管理" breadcrumb="总览 / 用户管理" description="用户管理仅对管理员开放。" />
         <Card className="mt-4">
           <CardContent className="flex flex-col items-center py-12 text-center">
             <ShieldAlert className="h-8 w-8 text-warning" />
             <p className="mt-4 font-medium">用户管理仅对管理员开放</p>
-            <p className="mt-1 text-sm text-muted-foreground">你仍可在上方维护自己的本地账号密码。</p>
+            <p className="mt-1 text-sm text-muted-foreground">当前账号的密码与会话请在账号安全页面维护。</p>
+            <Button asChild variant="outline" className="mt-4"><Link to="/account">前往账号安全</Link></Button>
           </CardContent>
         </Card>
       </>
@@ -129,8 +129,6 @@ export function UsersPage() {
           </Button>
         )}
       />
-
-      <ChangePasswordCard readOnly={readOnly} />
 
       {actionMessage ? <div className="mb-4 mt-4 flex items-center gap-2 rounded-md border border-success/30 bg-success/5 px-3 py-2 text-xs text-success" data-testid="user-action-success"><CheckCircle2 className="h-4 w-4" />{actionMessage}</div> : null}
       {actionErrorText ? <div className="mb-4 mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{actionErrorText}</div> : null}
@@ -293,7 +291,7 @@ function UserSecurityModal({ user, readOnly, currentUserID, onClose, onNotice }:
         <form id="user-reset-password-form" className="space-y-2" onSubmit={(event) => { event.preventDefault(); if (!self && !readOnly) resetMutation.mutate(); }}>
           <Label htmlFor="reset-user-password">设置新密码</Label>
           <Input id="reset-user-password" type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} disabled={self || readOnly} required />
-          <p className="text-xs text-muted-foreground">{self ? "当前账号请使用上方“修改我的密码”，需验证当前密码。" : readOnly ? "系统处于只读模式，密码重置已禁用。" : "新密码至少 12 个字符；操作不会记录密码内容。"}</p>
+          <p className="text-xs text-muted-foreground">{self ? "当前账号请前往“账号安全”页面修改密码，需验证当前密码。" : readOnly ? "系统处于只读模式，密码重置已禁用。" : "新密码至少 12 个字符；操作不会记录密码内容。"}</p>
         </form>
 
         <div>

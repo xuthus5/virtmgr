@@ -332,6 +332,13 @@ export function StoragePage() {
     <>
       <PageHeader title="存储" breadcrumb="总览 / 存储" description="读取 libvirt 存储池、容量和卷元数据。所有存储操作仍以 libvirt 为权威来源。" />
 
+      {!canManage ? (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning" role="status" data-testid="storage-manage-disabled-notice">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{readOnly ? "只读模式已开启，存储写操作已禁用。管理员可在系统设置中关闭只读模式。" : "当前账号没有管理存储的权限，仅可查看存储池和卷。"}</span>
+        </div>
+      ) : null}
+
       {successMessage ? (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm text-success" role="status" data-testid={successTestId}>
           <CheckCircle2 className="h-4 w-4" />{successMessage}

@@ -359,6 +359,13 @@ export function NetworksPage() {
         )}
       />
 
+      {!canManage ? (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning" role="status" data-testid="network-manage-disabled-notice">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{readOnly ? "只读模式已开启，网络写操作已禁用，仍可查看 DHCP 租约和诊断信息。" : "当前账号没有管理网络的权限，仍可查看 DHCP 租约和诊断信息。"}</span>
+        </div>
+      ) : null}
+
       <datalist id="network-bridge-options">
         {hostBridges.map((bridge) => <option key={bridge.name} value={bridge.name} />)}
       </datalist>
