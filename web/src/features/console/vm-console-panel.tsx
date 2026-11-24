@@ -26,7 +26,7 @@ import {
   type ConsoleConnectionState,
   type VNCScaleMode,
 } from "@/features/console/console-model";
-import { consoleSocketTimeoutMs, consoleSocketTimeoutSeconds } from "@/features/console/console-socket";
+import { consoleSocketOverallTimeoutMs, consoleSocketOverallTimeoutSeconds } from "@/features/console/console-socket";
 import { useSerialSession } from "@/features/console/use-serial-session";
 import { useVNCSession } from "@/features/console/use-vnc-session";
 import { VNCInputPad } from "@/features/console/vnc-input-pad";
@@ -97,6 +97,7 @@ export function VMConsolePanel({
   const active = activeKind === "vnc" ? vnc : serial;
   const activeState = activeKind ? active.state : "idle";
   const activeError = activeKind ? active.error : "";
+  const activeNote = activeKind === "vnc" ? vnc.connectionNote : "";
   const busy = activeState === "authorizing" || activeState === "connecting";
   const connected = activeState === "connected";
   const showBusy = busy && !connectionStalled;
@@ -104,7 +105,9 @@ export function VMConsolePanel({
     ? "连接超时，未收到 WebSocket 握手"
     : activeError && activeState !== "connected"
       ? activeError
-      : consoleStateText[activeState];
+      : busy && activeNote
+        ? activeNote
+        : consoleStateText[activeState];
 
   useEffect(() => {
     if (!busy) {
@@ -112,7 +115,7 @@ export function VMConsolePanel({
       return;
     }
     setConnectionStalled(false);
-    const timeout = window.setTimeout(() => setConnectionStalled(true), consoleSocketTimeoutMs + 5_000);
+    const timeout = window.setTimeout(() => setConnectionStalled(true), consoleSocketOverallTimeoutMs + 5_000);
     return () => window.clearTimeout(timeout);
   }, [busy, activeKind, uuid]);
 
@@ -379,13 +382,13 @@ export function VMConsolePanel({
               {showBusy ? <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-sky-300" /> : activeError || connectionStalled ? <AlertTriangle className="mx-auto h-7 w-7 text-rose-300" /> : <Monitor className="mx-auto h-7 w-7 text-slate-300" />}
               <p className="mt-3 text-sm text-slate-300" data-testid="vm-console-message">
                 {showBusy
-                  ? `正在准备${activeKind === "serial" ? "串口" : "图形"}控制台，请稍候。`
+                  ? activeNote || `正在准备${activeKind === "serial" ? "串口" : "图形"}控制台，请稍候。`
                   : connectionStalled
                     ? "控制台 WebSocket 连接已超时。公网代理或 Cloudflare Tunnel 链路可能短暂抖动，请稍后重新连接。"
                     : overlayText || "控制台尚未连接。"}
               </p>
               {showBusy ? (
-                <p className="mt-2 text-xs text-slate-500">WebSocket 建连最多等待 {consoleSocketTimeoutSeconds} 秒，超时后会显示具体原因。</p>
+                <p className="mt-2 text-xs text-slate-500">链路较慢时会自动并行增加连接尝试，整体最多等待 {consoleSocketOverallTimeoutSeconds} 秒。</p>
               ) : null}
               {canOpen && activeKind && !showBusy ? (
                 <Button type="button" size="sm" className="mt-4" onClick={connect}>

@@ -4,12 +4,13 @@ import { ApiError, api } from "@/api/client";
 import { analyzeConsoleTextInput, CONSOLE_SHIFT_KEYSYM } from "@/features/console/console-input";
 import type { ConsoleConnectionState, VNCScaleMode } from "@/features/console/console-model";
 import { consoleWebSocketURL } from "@/features/console/console-model";
-import { openConsoleSocket } from "@/features/console/console-socket";
+import { openHedgedConsoleSocket } from "@/features/console/console-socket";
 
 type VNCStateEvent = CustomEvent<{ clean?: boolean }>;
 type VNCSecurityEvent = CustomEvent<{ reason?: string }>;
 
 const DEFAULT_TYPE_DELAY_MS = 8;
+const VNC_HANDSHAKE_TIMEOUT_MS = 30_000;
 
 type TypeTextOptions = {
   signal?: AbortSignal;
@@ -44,6 +45,7 @@ export function useVNCSession({
   scaleModeRef.current = scaleMode;
   const [state, setState] = useState<ConsoleConnectionState>("idle");
   const [error, setError] = useState("");
+  const [connectionNote, setConnectionNote] = useState("");
   const [attempt, setAttempt] = useState(0);
 
   const reconnect = useCallback(() => setAttempt((value) => value + 1), []);
@@ -100,26 +102,43 @@ export function useVNCSession({
       connectedRef.current = false;
       setState("idle");
       setError("");
+      setConnectionNote("");
       return;
     }
     let disposed = false;
     let rfb: RFB | null = null;
+    let handshakeTimer: number | undefined;
+    let vncHandshakeTimedOut = false;
+    const controller = new AbortController();
 
     async function connect() {
       connectedRef.current = false;
       setError("");
+      setConnectionNote("正在申请一次性控制台凭证…");
       setState("authorizing");
       try {
-        const ticket = await api.issueConsoleToken(uuid, { kind: "vnc" });
-        if (disposed || !screenRef.current) return;
-        setState("connecting");
         const { default: RFBClient } = await import("@novnc/novnc");
         if (disposed || !screenRef.current) return;
-        const socket = await openConsoleSocket(consoleWebSocketURL(ticket.path));
+        const socket = await openHedgedConsoleSocket(async () => {
+          const ticket = await api.issueConsoleToken(uuid, { kind: "vnc" });
+          const nextSocket = new WebSocket(consoleWebSocketURL(ticket.path));
+          nextSocket.binaryType = "arraybuffer";
+          return nextSocket;
+        }, {
+          signal: controller.signal,
+          onAttempt: (current, total) => {
+            if (disposed) return;
+            setState("connecting");
+            setConnectionNote(current === 1
+              ? "正在申请凭证并建立安全 WebSocket 通道…"
+              : `公网链路较慢，正在并行建立第 ${current}/${total} 条连接…`);
+          },
+        });
         if (disposed || !screenRef.current) {
           socket.close();
           return;
         }
+        setConnectionNote("WebSocket 已建立，正在等待 VNC 协议握手…");
         screenRef.current.replaceChildren();
         rfb = new RFBClient(screenRef.current, socket, { shared: true });
         rfb.scaleViewport = scaleModeRef.current === "fit";
@@ -131,27 +150,45 @@ export function useVNCSession({
         rfb.showDotCursor = true;
         rfb.addEventListener("connect", () => {
           connectedRef.current = true;
-          if (!disposed) setState("connected");
+          if (handshakeTimer) window.clearTimeout(handshakeTimer);
+          if (!disposed) {
+            setConnectionNote("");
+            setState("connected");
+          }
         });
         rfb.addEventListener("disconnect", (_event: Event) => {
           connectedRef.current = false;
+          if (handshakeTimer) window.clearTimeout(handshakeTimer);
           const event = _event as VNCStateEvent;
-          if (disposed) return;
+          if (disposed || vncHandshakeTimedOut) return;
           setState("disconnected");
           if (!event.detail.clean) setError("控制台连接已中断，请重新连接。");
         });
         rfb.addEventListener("securityfailure", (event: Event) => {
           connectedRef.current = false;
+          if (handshakeTimer) window.clearTimeout(handshakeTimer);
           if (disposed) return;
           const failure = event as VNCSecurityEvent;
           setState("error");
           setError(failure.detail.reason || "VNC 安全协商失败，请重新连接。");
         });
+        handshakeTimer = window.setTimeout(() => {
+          if (disposed || connectedRef.current) return;
+          vncHandshakeTimedOut = true;
+          setState("error");
+          setError(`WebSocket 已建立，但 ${VNC_HANDSHAKE_TIMEOUT_MS / 1_000} 秒内未收到 VNC 协议握手。请重新连接；若频繁出现，说明代理链路能建连但数据通道不稳定。`);
+          try {
+            rfb?.disconnect();
+          } catch {
+            // noVNC may already have torn down the socket.
+          }
+        }, VNC_HANDSHAKE_TIMEOUT_MS);
         rfbRef.current = rfb;
       } catch (cause) {
         connectedRef.current = false;
         if (disposed) return;
         setState("error");
+        setConnectionNote("");
         setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "无法建立 VNC 连接。");
       }
     }
@@ -160,6 +197,8 @@ export function useVNCSession({
     return () => {
       disposed = true;
       connectedRef.current = false;
+      controller.abort();
+      if (handshakeTimer) window.clearTimeout(handshakeTimer);
       try {
         rfb?.disconnect();
       } catch {
@@ -178,5 +217,5 @@ export function useVNCSession({
     rfbRef.current.dragViewport = scaleMode !== "fit";
   }, [scaleMode]);
 
-  return { screenRef, state, error, reconnect, disconnect, typeText, copyToClipboard, screenTestId };
+  return { screenRef, state, error, connectionNote, reconnect, disconnect, typeText, copyToClipboard, screenTestId };
 }
