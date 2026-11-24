@@ -388,7 +388,11 @@ export function VMConsolePanel({
                     : overlayText || "控制台尚未连接。"}
               </p>
               {showBusy ? (
-                <p className="mt-2 text-xs text-slate-500">链路较慢时会自动并行增加连接尝试，整体最多等待 {consoleSocketOverallTimeoutSeconds} 秒。</p>
+                <p className="mt-2 text-xs text-slate-500">
+                  {activeKind === "vnc"
+                    ? `连接失败时会按退避策略顺序重试，整体最多等待 ${consoleSocketOverallTimeoutSeconds} 秒。`
+                    : `WebSocket 建连最多等待 ${consoleSocketOverallTimeoutSeconds} 秒，超时后会显示具体原因。`}
+                </p>
               ) : null}
               {canOpen && activeKind && !showBusy ? (
                 <Button type="button" size="sm" className="mt-4" onClick={connect}>

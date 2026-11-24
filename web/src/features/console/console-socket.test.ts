@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConsoleSocketError, openConsoleSocket, openHedgedConsoleSocket } from "@/features/console/console-socket";
+import { ApiError } from "@/api/client";
+import { ConsoleSocketError, openConsoleSocket, openRetryingConsoleSocket } from "@/features/console/console-socket";
 
 class FakeSocket extends EventTarget {
   binaryType: BinaryType = "blob";
@@ -66,15 +67,17 @@ describe("openConsoleSocket", () => {
   });
 });
 
-describe("openHedgedConsoleSocket", () => {
+describe("openRetryingConsoleSocket", () => {
   it("does not start a second attempt when the first socket opens quickly", async () => {
     vi.useFakeTimers();
     const { socket, createSocket } = fakeSocket();
     const factory = vi.fn(async () => createSocket());
-    const pending = openHedgedConsoleSocket(factory, {
-      hedgeDelaysMs: [0, 1_000],
-      timeoutMs: 5_000,
+    const pending = openRetryingConsoleSocket(factory, {
+      maxAttempts: 2,
+      retryDelaysMs: [1_000],
+      attemptTimeoutMs: 5_000,
       overallTimeoutMs: 10_000,
+      random: () => 0.5,
     });
     await vi.advanceTimersByTimeAsync(0);
     socket.open();
@@ -83,49 +86,96 @@ describe("openHedgedConsoleSocket", () => {
     expect(factory).toHaveBeenCalledOnce();
   });
 
-  it("hedges a stalled handshake and keeps the first socket that opens", async () => {
+  it("retries sequentially after a retryable handshake failure", async () => {
     vi.useFakeTimers();
     const first = new FakeSocket();
     const second = new FakeSocket();
     const sockets = [first, second];
     const factory = vi.fn(async () => sockets.shift() as unknown as WebSocket);
-    const pending = openHedgedConsoleSocket(factory, {
-      hedgeDelaysMs: [0, 2_000],
-      timeoutMs: 10_000,
+    const onRetry = vi.fn();
+    const pending = openRetryingConsoleSocket(factory, {
+      maxAttempts: 2,
+      retryDelaysMs: [2_000],
+      attemptTimeoutMs: 10_000,
       overallTimeoutMs: 20_000,
+      random: () => 0.5,
+      onRetry,
     });
+    await vi.advanceTimersByTimeAsync(0);
+    first.error();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(factory).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledWith(1, 2, 2_000, expect.any(ConsoleSocketError));
     second.open();
     await expect(pending).resolves.toBe(second);
     expect(first.close).toHaveBeenCalledOnce();
   });
 
-  it("reports a distinct overall timeout after all attempts stall", async () => {
+  it("does not retry deterministic API errors", async () => {
+    vi.useFakeTimers();
+    const factory = vi.fn(async () => {
+      throw new ApiError(403, "FORBIDDEN", "没有控制台权限");
+    });
+    const pending = openRetryingConsoleSocket(factory, {
+      maxAttempts: 2,
+      retryDelaysMs: [2_000],
+      attemptTimeoutMs: 10_000,
+      overallTimeoutMs: 20_000,
+      random: () => 0.5,
+    });
+    await expect(pending).rejects.toThrow("没有控制台权限");
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("reports the attempt count after retry exhaustion", async () => {
     vi.useFakeTimers();
     const first = new FakeSocket();
     const second = new FakeSocket();
     const sockets = [first, second];
     const factory = vi.fn(async () => sockets.shift() as unknown as WebSocket);
-    const pending = openHedgedConsoleSocket(factory, {
-      hedgeDelaysMs: [0, 2_000],
-      timeoutMs: 20_000,
-      overallTimeoutMs: 5_000,
+    const pending = openRetryingConsoleSocket(factory, {
+      maxAttempts: 2,
+      retryDelaysMs: [2_000],
+      attemptTimeoutMs: 10_000,
+      overallTimeoutMs: 20_000,
+      random: () => 0.5,
     });
-    const expectation = expect(pending).rejects.toThrow("5 秒内尝试了 2 条连接");
+    const expectation = expect(pending).rejects.toThrow("已尝试 2 次");
+    await vi.advanceTimersByTimeAsync(0);
+    first.error();
+    await vi.advanceTimersByTimeAsync(2_000);
+    second.error();
+    await expectation;
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a distinct overall timeout while an attempt is still pending", async () => {
+    vi.useFakeTimers();
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const sockets = [first, second];
+    const factory = vi.fn(async () => sockets.shift() as unknown as WebSocket);
+    const pending = openRetryingConsoleSocket(factory, {
+      maxAttempts: 2,
+      retryDelaysMs: [2_000],
+      attemptTimeoutMs: 20_000,
+      overallTimeoutMs: 5_000,
+      random: () => 0.5,
+    });
+    const expectation = expect(pending).rejects.toThrow("5 秒内未能完成 2 次尝试");
     await vi.advanceTimersByTimeAsync(5_000);
     await expectation;
     expect(first.close).toHaveBeenCalledOnce();
-    expect(second.close).toHaveBeenCalledOnce();
   });
 
   it("stops waiting as soon as the caller aborts", async () => {
     vi.useFakeTimers();
     const { socket, createSocket } = fakeSocket();
     const controller = new AbortController();
-    const pending = openHedgedConsoleSocket(async () => createSocket(), {
-      hedgeDelaysMs: [0, 2_000],
-      timeoutMs: 10_000,
+    const pending = openRetryingConsoleSocket(async () => createSocket(), {
+      maxAttempts: 2,
+      retryDelaysMs: [2_000],
+      attemptTimeoutMs: 10_000,
       overallTimeoutMs: 20_000,
       signal: controller.signal,
     });

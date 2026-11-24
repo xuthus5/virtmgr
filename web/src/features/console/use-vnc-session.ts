@@ -4,7 +4,7 @@ import { ApiError, api } from "@/api/client";
 import { analyzeConsoleTextInput, CONSOLE_SHIFT_KEYSYM } from "@/features/console/console-input";
 import type { ConsoleConnectionState, VNCScaleMode } from "@/features/console/console-model";
 import { consoleWebSocketURL } from "@/features/console/console-model";
-import { openHedgedConsoleSocket } from "@/features/console/console-socket";
+import { openRetryingConsoleSocket } from "@/features/console/console-socket";
 
 type VNCStateEvent = CustomEvent<{ clean?: boolean }>;
 type VNCSecurityEvent = CustomEvent<{ reason?: string }>;
@@ -119,7 +119,7 @@ export function useVNCSession({
       try {
         const { default: RFBClient } = await import("@novnc/novnc");
         if (disposed || !screenRef.current) return;
-        const socket = await openHedgedConsoleSocket(async () => {
+        const socket = await openRetryingConsoleSocket(async () => {
           const ticket = await api.issueConsoleToken(uuid, { kind: "vnc" });
           const nextSocket = new WebSocket(consoleWebSocketURL(ticket.path));
           nextSocket.binaryType = "arraybuffer";
@@ -131,7 +131,11 @@ export function useVNCSession({
             setState("connecting");
             setConnectionNote(current === 1
               ? "正在申请凭证并建立安全 WebSocket 通道…"
-              : `公网链路较慢，正在并行建立第 ${current}/${total} 条连接…`);
+              : `正在进行第 ${current}/${total} 次连接尝试…`);
+          },
+          onRetry: (failedAttempt, total, delayMs) => {
+            if (disposed) return;
+            setConnectionNote(`上次连接未完成，${Math.ceil(delayMs / 1_000)} 秒后进行第 ${failedAttempt + 1}/${total} 次尝试…`);
           },
         });
         if (disposed || !screenRef.current) {

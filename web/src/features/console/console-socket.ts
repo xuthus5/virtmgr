@@ -1,26 +1,37 @@
-export const consoleSocketTimeoutMs = 75_000;
-export const consoleSocketTimeoutSeconds = consoleSocketTimeoutMs / 1_000;
+import { ApiError } from "@/api/client";
+
+const consoleSocketAttemptTimeoutMs = 45_000;
 export const consoleSocketOverallTimeoutMs = 100_000;
 export const consoleSocketOverallTimeoutSeconds = consoleSocketOverallTimeoutMs / 1_000;
-export const consoleSocketHedgeDelaysMs = [0, 6_000, 15_000] as const;
+const consoleSocketMaxAttempts = 2;
+const consoleSocketRetryDelaysMs = [2_000] as const;
+const consoleSocketRetryJitterRatio = 0.2;
 
 type ConsoleSocketOptions = {
   timeoutMs?: number;
   createSocket?: (url: string) => WebSocket;
 };
 
-type HedgedConsoleSocketOptions = {
-  timeoutMs?: number;
+type RetryingConsoleSocketOptions = {
+  attemptTimeoutMs?: number;
   overallTimeoutMs?: number;
-  hedgeDelaysMs?: readonly number[];
+  maxAttempts?: number;
+  retryDelaysMs?: readonly number[];
   signal?: AbortSignal;
+  random?: () => number;
   onAttempt?: (attempt: number, total: number) => void;
+  onRetry?: (failedAttempt: number, total: number, delayMs: number, error: unknown) => void;
 };
 
+type ConsoleSocketErrorOptions = ErrorOptions & { retryable?: boolean };
+
 export class ConsoleSocketError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly retryable: boolean;
+
+  constructor(message: string, options: ConsoleSocketErrorOptions = {}) {
     super(message, options);
     this.name = "ConsoleSocketError";
+    this.retryable = options.retryable ?? false;
   }
 }
 
@@ -32,7 +43,7 @@ export function openConsoleSocket(url: string, options: ConsoleSocketOptions = {
   } catch (cause) {
     return Promise.reject(new ConsoleSocketError("无法创建控制台 WebSocket 连接。", { cause }));
   }
-  return waitForConsoleSocket(socket, options.timeoutMs ?? consoleSocketTimeoutMs);
+  return waitForConsoleSocket(socket, options.timeoutMs ?? consoleSocketAttemptTimeoutMs);
 }
 
 function waitForConsoleSocket(socket: WebSocket, timeoutMs: number): Promise<WebSocket> {
@@ -57,7 +68,7 @@ function waitForConsoleSocket(socket: WebSocket, timeoutMs: number): Promise<Web
       } catch {
         // The socket may already be closed or never have opened.
       }
-      reject(new ConsoleSocketError(message));
+      reject(new ConsoleSocketError(message, { retryable: true }));
     };
     const handleOpen = () => {
       if (settled) return;
@@ -88,59 +99,40 @@ function waitForConsoleSocket(socket: WebSocket, timeoutMs: number): Promise<Web
   });
 }
 
-export function openHedgedConsoleSocket(
+export function openRetryingConsoleSocket(
   createSocket: (attempt: number) => WebSocket | Promise<WebSocket>,
-  options: HedgedConsoleSocketOptions = {},
+  options: RetryingConsoleSocketOptions = {},
 ): Promise<WebSocket> {
-  const hedgeDelaysMs = options.hedgeDelaysMs ?? consoleSocketHedgeDelaysMs;
-  const timeoutMs = options.timeoutMs ?? consoleSocketTimeoutMs;
+  const timeoutMs = options.attemptTimeoutMs ?? consoleSocketAttemptTimeoutMs;
   const overallTimeoutMs = options.overallTimeoutMs ?? consoleSocketOverallTimeoutMs;
-  const total = hedgeDelaysMs.length;
+  const total = Math.max(1, options.maxAttempts ?? consoleSocketMaxAttempts);
+  const retryDelaysMs = options.retryDelaysMs ?? consoleSocketRetryDelaysMs;
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let failedAttempts = 0;
-    let lastError: unknown;
-    const pending = new Set<WebSocket>();
-    const startTimers = new Set<ReturnType<typeof setTimeout>>();
+    let currentSocket: WebSocket | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const random = options.random ?? Math.random;
     const overallTimer = setTimeout(() => {
       fail(new ConsoleSocketError(
-        `控制台 WebSocket 连接超时：${overallTimeoutMs / 1_000} 秒内尝试了 ${total} 条连接，仍未完成握手。当前到公网入口的链路不稳定，请切换 Wi-Fi/移动网络或稍后重试。`,
-        { cause: lastError },
+        `控制台 WebSocket 连接超时：${overallTimeoutMs / 1_000} 秒内未能完成 ${total} 次尝试。当前到公网入口的链路不稳定，请切换 Wi-Fi/移动网络或稍后重试。`,
       ));
     }, overallTimeoutMs);
 
     const cleanup = () => {
       clearTimeout(overallTimer);
-      for (const timer of startTimers) clearTimeout(timer);
-      startTimers.clear();
+      if (retryTimer) clearTimeout(retryTimer);
       options.signal?.removeEventListener("abort", handleAbort);
-    };
-
-    const closePending = () => {
-      for (const socket of pending) {
-        try {
-          socket.close();
-        } catch {
-          // Ignore sockets that are already closed or never opened.
-        }
-      }
-      pending.clear();
     };
 
     const finish = (socket: WebSocket) => {
       if (settled) {
-        try {
-          socket.close();
-        } catch {
-          // The winning socket may have closed immediately after resolving.
-        }
+        socket.close();
         return;
       }
       settled = true;
+      currentSocket = null;
       cleanup();
-      pending.delete(socket);
-      closePending();
       resolve(socket);
     };
 
@@ -148,42 +140,64 @@ export function openHedgedConsoleSocket(
       if (settled) return;
       settled = true;
       cleanup();
-      closePending();
+      if (currentSocket) {
+        try {
+          currentSocket.close();
+        } catch {
+          // Ignore a socket that is already closed.
+        }
+        currentSocket = null;
+      }
       reject(error instanceof Error ? error : new ConsoleSocketError("无法建立控制台 WebSocket 连接。", { cause: error }));
     };
 
-    const noteFailure = (error: unknown) => {
-      failedAttempts += 1;
-      lastError = error;
-      if (failedAttempts >= total) {
-        fail(error);
-      }
-    };
+    const toError = (error: unknown) => error instanceof Error
+      ? error
+      : new ConsoleSocketError("无法建立控制台 WebSocket 连接。", { cause: error, retryable: true });
 
-    const start = (attempt: number) => {
-      if (settled) return;
-      options.onAttempt?.(attempt + 1, total);
-      Promise.resolve()
-        .then(() => createSocket(attempt))
-        .then((socket) => {
+    const wait = (delayMs: number) => new Promise<void>((done) => {
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        done();
+      }, delayMs);
+    });
+
+    async function run() {
+      for (let attempt = 0; attempt < total && !settled; attempt += 1) {
+        options.onAttempt?.(attempt + 1, total);
+        try {
+          const socket = await createSocket(attempt);
           if (settled) {
             socket.close();
             return;
           }
-          pending.add(socket);
-          void waitForConsoleSocket(socket, timeoutMs).then(
-            (opened) => {
-              pending.delete(opened);
-              finish(opened);
-            },
-            (error) => {
-              pending.delete(socket);
-              noteFailure(error);
-            },
-          );
-        })
-        .catch(noteFailure);
-    };
+          currentSocket = socket;
+          const opened = await waitForConsoleSocket(socket, timeoutMs);
+          currentSocket = null;
+          if (settled) {
+            opened.close();
+            return;
+          }
+          finish(opened);
+          return;
+        } catch (cause) {
+          currentSocket = null;
+          if (settled) return;
+          const error = toError(cause);
+          if (!isRetryableConsoleError(error)) {
+            fail(error);
+            return;
+          }
+          if (attempt + 1 >= total) {
+            fail(new ConsoleSocketError(`${error.message}（已尝试 ${attempt + 1} 次）`, { cause: error }));
+            return;
+          }
+          const delayMs = consoleSocketRetryDelayMs(attempt, retryDelaysMs, random);
+          options.onRetry?.(attempt + 1, total, delayMs, error);
+          await wait(delayMs);
+        }
+      }
+    }
 
     function handleAbort() {
       fail(new ConsoleSocketError("控制台连接已取消。"));
@@ -194,17 +208,21 @@ export function openHedgedConsoleSocket(
       return;
     }
     options.signal?.addEventListener("abort", handleAbort, { once: true });
-
-    hedgeDelaysMs.forEach((delay, attempt) => {
-      if (delay <= 0) {
-        start(attempt);
-        return;
-      }
-      const timer = setTimeout(() => {
-        startTimers.delete(timer);
-        start(attempt);
-      }, delay);
-      startTimers.add(timer);
-    });
+    void run();
   });
+}
+
+function isRetryableConsoleError(error: unknown): boolean {
+  if (error instanceof ConsoleSocketError) return error.retryable;
+  if (error instanceof ApiError) {
+    return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  return true;
+}
+
+function consoleSocketRetryDelayMs(attempt: number, delays: readonly number[], random: () => number): number {
+  const base = delays[attempt] ?? delays[delays.length - 1] ?? 2_000;
+  const jitter = base * consoleSocketRetryJitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
 }
