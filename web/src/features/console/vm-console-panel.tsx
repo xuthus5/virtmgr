@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ExternalLink,
   Expand,
+  Keyboard,
   LoaderCircle,
   Maximize2,
   Monitor,
@@ -27,6 +28,7 @@ import {
 import { consoleSocketTimeoutMs } from "@/features/console/console-socket";
 import { useSerialSession } from "@/features/console/use-serial-session";
 import { useVNCSession } from "@/features/console/use-vnc-session";
+import { VNCInputPad } from "@/features/console/vnc-input-pad";
 import { cn } from "@/lib/utils";
 
 type ConsolePanelProps = {
@@ -70,6 +72,7 @@ export function VMConsolePanel({
   const [connectionRequested, setConnectionRequested] = useState(false);
   const [connectionStalled, setConnectionStalled] = useState(false);
   const [keyNotice, setKeyNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [inputOpen, setInputOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const serialDevices = serials ?? EMPTY_SERIALS;
   const [serialDevice, setSerialDevice] = useState<string | undefined>(() => serialDevices[0]?.device);
@@ -133,6 +136,10 @@ export function VMConsolePanel({
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
+
+  useEffect(() => {
+    if (activeKind !== "vnc" || !connected) setInputOpen(false);
+  }, [activeKind, connected]);
 
   const sendKeyMutation = useMutation({
     mutationFn: (key: Parameters<typeof api.sendConsoleKey>[1]["key"]) => api.sendConsoleKey(uuid, { key }),
@@ -272,6 +279,20 @@ export function VMConsolePanel({
                 <option value="actual">原始大小</option>
                 <option value="remote">远端调整</option>
               </select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-slate-300 hover:bg-slate-800 hover:text-white"
+                data-testid="vm-console-input-open"
+                aria-label="打开 VNC 输入板"
+                aria-haspopup="dialog"
+                title="输入板：粘贴命令并逐字键入客户机"
+                disabled={!connected}
+                onClick={() => setInputOpen(true)}
+              >
+                <Keyboard className="h-3.5 w-3.5" /><span className="hidden sm:inline">输入板</span>
+              </Button>
             </>
           ) : null}
           {activeKind === "serial" && serialDevices.length > 1 ? (
@@ -372,6 +393,15 @@ export function VMConsolePanel({
               {!interactiveState && canConnect ? <p className="mt-2 text-xs text-slate-500">虚拟机启动后即可连接控制台。</p> : null}
             </div>
           </div>
+        ) : null}
+
+        {activeKind === "vnc" && inputOpen ? (
+          <VNCInputPad
+            connected={connected}
+            onClose={() => setInputOpen(false)}
+            onType={vnc.typeText}
+            onSendClipboard={vnc.copyToClipboard}
+          />
         ) : null}
       </div>
 

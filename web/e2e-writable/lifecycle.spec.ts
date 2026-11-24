@@ -278,6 +278,33 @@ test("虚拟机详情内嵌控制台支持发送按键、断开和重连", async
   await expect(panel).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
 });
 
+test("VNC 输入板支持逐字键入和远端剪贴板", async ({ page }) => {
+  await login(page);
+  await page.goto("/vms/22222222-2222-4222-8222-222222222222");
+  await expect(page.getByTestId("vm-console-panel")).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+
+  const trigger = page.getByTestId("vm-console-input-open");
+  await trigger.click();
+  const pad = page.getByTestId("vnc-input-pad");
+  await expect(pad).toBeVisible();
+  const input = page.getByTestId("vnc-input-textarea");
+  await expect(input).toBeFocused();
+
+  await input.fill("echo e2e-input");
+  await page.getByTestId("vnc-input-type").click();
+  await expect(page.getByTestId("vnc-input-notice")).toHaveText("已键入 14 个字符。", { timeout: 5_000 });
+
+  await input.fill("echo 你好");
+  await expect(page.getByTestId("vnc-input-unsupported")).toContainText("逐字键入仅支持 ASCII");
+  await expect(page.getByTestId("vnc-input-type")).toBeDisabled();
+  await page.getByTestId("vnc-input-send-clipboard").click();
+  await expect(page.getByTestId("vnc-input-notice")).toContainText("已写入远端剪贴板");
+
+  await page.getByRole("button", { name: "关闭输入板" }).click();
+  await expect(pad).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 test("虚拟机详情内嵌串口控制台可连接并收发数据", async ({ page }) => {
   await login(page);
   await page.goto("/vms/22222222-2222-4222-8222-222222222222");
