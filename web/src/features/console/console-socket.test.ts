@@ -35,12 +35,21 @@ describe("openConsoleSocket", () => {
     await expect(pending).resolves.toBe(socket);
   });
 
+  it("keeps waiting beyond 15 seconds for a slow public tunnel handshake", async () => {
+    vi.useFakeTimers();
+    const { socket, createSocket } = fakeSocket();
+    const pending = openConsoleSocket("wss://example.test/console", { createSocket });
+    await vi.advanceTimersByTimeAsync(16_000);
+    socket.open();
+    await expect(pending).resolves.toBe(socket);
+  });
+
   it("turns a stalled handshake into an actionable timeout", async () => {
     vi.useFakeTimers();
     const { socket, createSocket } = fakeSocket();
     const pending = openConsoleSocket("wss://example.test/console", { timeoutMs: 1_000, createSocket });
     const expectation = expect(pending).rejects.toEqual(expect.any(ConsoleSocketError));
-    const message = expect(pending).rejects.toThrow("自签名证书");
+    const message = expect(pending).rejects.toThrow("Cloudflare Tunnel 链路可能短暂抖动");
     await vi.advanceTimersByTimeAsync(1_000);
     await expectation;
     await message;

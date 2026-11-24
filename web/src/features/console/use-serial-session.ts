@@ -5,7 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { ApiError, api } from "@/api/client";
 import type { ConsoleConnectionState } from "@/features/console/console-model";
 import { consoleWebSocketURL } from "@/features/console/console-model";
-import { consoleSocketTimeoutMs } from "@/features/console/console-socket";
+import { consoleSocketTimeoutMs, consoleSocketTimeoutSeconds } from "@/features/console/console-socket";
 
 export function useSerialSession({
   uuid,
@@ -92,7 +92,7 @@ export function useSerialSession({
         const timeout = window.setTimeout(() => {
           if (disposed || opened) return;
           setState("error");
-          setError("串口控制台 WebSocket 连接超时。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问却拦截 wss；请改用受信任的 HTTPS 域名，刷新页面后重试。");
+          setError(`串口控制台 WebSocket 连接超时（等待 ${consoleSocketTimeoutSeconds} 秒）。公网代理或 Cloudflare Tunnel 链路可能短暂抖动，请稍后重试。`);
           socket?.close();
         }, consoleSocketTimeoutMs);
         socket.addEventListener("open", () => {

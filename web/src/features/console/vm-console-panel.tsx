@@ -25,7 +25,7 @@ import {
   type ConsoleConnectionState,
   type VNCScaleMode,
 } from "@/features/console/console-model";
-import { consoleSocketTimeoutMs } from "@/features/console/console-socket";
+import { consoleSocketTimeoutMs, consoleSocketTimeoutSeconds } from "@/features/console/console-socket";
 import { useSerialSession } from "@/features/console/use-serial-session";
 import { useVNCSession } from "@/features/console/use-vnc-session";
 import { VNCInputPad } from "@/features/console/vnc-input-pad";
@@ -379,11 +379,11 @@ export function VMConsolePanel({
                 {showBusy
                   ? `正在准备${activeKind === "serial" ? "串口" : "图形"}控制台，请稍候。`
                   : connectionStalled
-                    ? "控制台 WebSocket 连接已超时。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问，却拦截 wss 握手；请改用受信任的 HTTPS 域名。"
+                    ? "控制台 WebSocket 连接已超时。公网代理或 Cloudflare Tunnel 链路可能短暂抖动，请稍后重新连接。"
                     : overlayText || "控制台尚未连接。"}
               </p>
               {showBusy ? (
-                <p className="mt-2 text-xs text-slate-500">WebSocket 建连最多等待 15 秒，超时后会显示具体原因。</p>
+                <p className="mt-2 text-xs text-slate-500">WebSocket 建连最多等待 {consoleSocketTimeoutSeconds} 秒，超时后会显示具体原因。</p>
               ) : null}
               {canOpen && activeKind && !showBusy ? (
                 <Button type="button" size="sm" className="mt-4" onClick={connect}>

@@ -1,4 +1,5 @@
-export const consoleSocketTimeoutMs = 15_000;
+export const consoleSocketTimeoutMs = 45_000;
+export const consoleSocketTimeoutSeconds = consoleSocketTimeoutMs / 1_000;
 
 type ConsoleSocketOptions = {
   timeoutMs?: number;
@@ -51,7 +52,7 @@ export function openConsoleSocket(url: string, options: ConsoleSocketOptions = {
       resolve(socket);
     };
     const handleError = () => {
-      fail("控制台 WebSocket 建连失败。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问却拦截 wss；请改用受信任的 HTTPS 域名，并确认网络或反向代理允许 WebSocket。");
+      fail("控制台 WebSocket 建连失败。请确认网络或反向代理允许 WebSocket；若当前地址是 IP 且使用自签名证书，也请改用受信任的 HTTPS 域名。");
     };
     const handleClose = (event: CloseEvent) => {
       const detail = event.code ? `（code ${event.code}${event.reason ? `，${event.reason}` : ""}）` : "";
@@ -62,7 +63,7 @@ export function openConsoleSocket(url: string, options: ConsoleSocketOptions = {
     socket.addEventListener("error", handleError);
     socket.addEventListener("close", handleClose);
     timer = setTimeout(() => {
-      fail("控制台 WebSocket 连接超时。若当前地址是 IP 且使用自签名证书，浏览器可能只允许页面访问却拦截 wss；请改用受信任的 HTTPS 域名，刷新页面后重试。");
+      fail("控制台 WebSocket 连接超时。公网代理或 Cloudflare Tunnel 链路可能短暂抖动，请稍后重试。");
     }, timeoutMs);
 
     if (socket.readyState === WebSocket.OPEN) {
