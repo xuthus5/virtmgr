@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   consoleKeyOptions,
+  consolePageURL,
   consoleStateText,
   resolveConsoleKind,
   type ConsoleConnectionState,
@@ -80,6 +81,7 @@ export function VMConsolePanel({
   const interactiveState = vmState === "running" || vmState === "blocked" || vmState === "paused";
   const canOpen = canConnect && interactiveState;
   const selectedSerial = serialDevices.find((device) => device.device === serialDevice) ?? serialDevices[0];
+  const shareableConsoleURL = consolePageURL(uuid);
 
   const vnc = useVNCSession({
     uuid,
@@ -408,10 +410,22 @@ export function VMConsolePanel({
       {activeKind === "vnc" && graphics.length ? (
         <details className="border-t border-slate-800 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-400">
           <summary className="cursor-pointer select-none">连接信息</summary>
-          <div className="mt-1.5 flex flex-wrap gap-3 font-mono">
-            {graphics.filter((device) => device.type.toLowerCase() === "vnc").map((device, index) => (
-              <span key={index}>{device.listen || "*"}:{device.port || "-"}</span>
-            ))}
+          <div className="mt-2 space-y-2">
+            <div>
+              <p className="text-slate-500">Web 控制台（远程访问使用）</p>
+              <a href={shareableConsoleURL} target="_blank" rel="noreferrer" className="break-all font-mono text-sky-300 hover:text-sky-200 hover:underline">
+                {shareableConsoleURL}
+              </a>
+            </div>
+            <div>
+              <p className="text-slate-500">宿主机 VNC 监听（仅供本机、VirtMgr 代理或 SSH 隧道）</p>
+              <div className="mt-1 flex flex-wrap gap-3 font-mono text-slate-300">
+                {graphics.filter((device) => device.type.toLowerCase() === "vnc").map((device, index) => (
+                  <span key={index}>{device.listen || "*"}:{device.port || "-"}</span>
+                ))}
+              </div>
+              <p className="mt-1 text-slate-500">远程客户端请使用上方 Web 控制台；如使用原生 VNC，请通过 SSH 隧道转发此地址，不要直接暴露到公网。</p>
+            </div>
           </div>
         </details>
       ) : null}

@@ -48,6 +48,10 @@ export function consoleWebSocketURL(path: string): string {
   return socketURL.toString();
 }
 
+export function consolePageURL(uuid: string): string {
+  return new URL(`/console/vms/${encodeURIComponent(uuid)}`, window.location.href).toString();
+}
+
 export function consoleKindLabel(kind: ConsoleKind): string {
   return kind === "vnc" ? "图形控制台" : "串口控制台";
 }

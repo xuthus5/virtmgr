@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consoleKeyOptions, consoleWebSocketURL, defaultConsoleKind, hasVNCConsole, resolveConsoleKind } from "@/features/console/console-model";
+import { consoleKeyOptions, consolePageURL, consoleWebSocketURL, defaultConsoleKind, hasVNCConsole, resolveConsoleKind } from "@/features/console/console-model";
 
 describe("console model", () => {
   it("prefers VNC and falls back to a serial console", () => {
@@ -16,6 +16,10 @@ describe("console model", () => {
     const url = consoleWebSocketURL("/api/v1/vms/demo/console?token=test");
     expect(url.startsWith("ws://")).toBe(true);
     expect(url).toContain("/api/v1/vms/demo/console?token=test");
+  });
+
+  it("builds the shareable Web console URL", () => {
+    expect(consolePageURL("demo vm")).toBe(`${window.location.origin}/console/vms/demo%20vm`);
   });
 
   it("exposes Cockpit-style key combinations", () => {
